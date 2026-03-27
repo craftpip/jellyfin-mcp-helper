@@ -1,0 +1,26 @@
+{
+  "provider": "ollama",
+  "mode": "external-classifier",
+  "baseUrl": "http://10.69.1.131:11434",
+  "model": "gpt-oss:20b-ctx",
+  "temperature": 0,
+  "classifyConfidenceThreshold": 0.65,
+  "pathConfidenceThreshold": 0.6,
+  "requestTimeoutSeconds": 120,
+  "retryAttempts": 2,
+  "promptPolicy": {
+    "classifyAs": [
+      "movie",
+      "series",
+      "skip"
+    ],
+    "extractFields": [
+      "title",
+      "year",
+      "season",
+      "episode",
+      "confidence",
+      "reason"
+    ]
+  }
+}

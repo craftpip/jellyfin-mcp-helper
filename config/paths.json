@@ -1,0 +1,19 @@
+{
+  "torrentRoots": [
+    "/mnt/media1t/downloads/torrents",
+    "/mnt/media2t/downloads/torrents"
+  ],
+  "movieRoots": {
+    "media1t": "/mnt/media1t/downloads/movies",
+    "media2t": "/mnt/media2t/downloads/movies"
+  },
+  "seriesRoots": {
+    "media1t": "/mnt/media1t/downloads/series",
+    "media2t": "/mnt/media2t/downloads/series"
+  },
+  "libraryLayout": {
+    "movieFolderStyle": "Movie Title (Year)",
+    "seasonFolderStyle": "Season 01",
+    "episodeFileStyle": "Show Name - S01E01"
+  }
+}

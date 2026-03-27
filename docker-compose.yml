@@ -1,0 +1,15 @@
+services:
+  organizer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: jellyfin-torrent-organizer
+    restart: unless-stopped
+    ports:
+      - "18327:18327"
+    volumes:
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./reports:/app/reports
+      - /mnt/media1t:/mnt/media1t
+      - /mnt/media2t:/mnt/media2t
