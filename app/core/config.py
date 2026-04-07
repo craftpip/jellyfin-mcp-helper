@@ -16,13 +16,23 @@ REPORT_DIR = BASE_DIR / "reports"
 
 class Settings(BaseSettings):
     openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
+    
+    # Integration toggles
+    enable_download_client_check: bool = Field(default=True, alias="ENABLE_DOWNLOAD_CLIENT_CHECK")
+    enable_jellyfin_integration: bool = Field(default=True, alias="ENABLE_JELLYFIN_INTEGRATION")
+    
+    # Download client settings (qBittorrent, etc.)
+    download_client: str = Field(default="", alias="DOWNLOAD_CLIENT")
     qbt_mcp_url: str | None = Field(default=None, alias="QBT_MCP_URL")
     qbt_mcp_api_key: str | None = Field(default=None, alias="QBT_MCP_API_KEY")
+    
+    # Jellyfin settings
     jellyfin_base_url: str | None = Field(default=None, alias="JELLYFIN_BASE_URL")
     jellyfin_api_key: str | None = Field(default=None, alias="JELLYFIN_API_KEY")
     jellyfin_movie_library_name: str = Field(default="Movies", alias="JELLYFIN_MOVIE_LIBRARY_NAME")
     jellyfin_series_library_name: str = Field(default="Shows", alias="JELLYFIN_SERIES_LIBRARY_NAME")
 
+    # Model settings
     model_provider: str = Field(default="ollama", alias="MODEL_PROVIDER")
     model_mode: str = Field(default="external-classifier", alias="MODEL_MODE")
     model_base_url: str | None = Field(default=None, alias="MODEL_BASE_URL")
@@ -33,6 +43,7 @@ class Settings(BaseSettings):
     model_request_timeout_seconds: float = Field(default=120.0, alias="MODEL_REQUEST_TIMEOUT_SECONDS")
     model_retry_attempts: int = Field(default=2, alias="MODEL_RETRY_ATTEMPTS")
 
+    # Paths settings
     download_roots: str = Field(default="", alias="DOWNLOAD_ROOTS")
     movie_roots: str = Field(default="", alias="MOVIE_ROOTS")
     series_roots: str = Field(default="", alias="SERIES_ROOTS")

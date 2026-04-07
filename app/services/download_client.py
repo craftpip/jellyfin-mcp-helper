@@ -23,6 +23,10 @@ class QbittorrentClient:
 
     @classmethod
     def from_env(cls, paths_config: PathsConfig | None = None) -> "QbittorrentClient | None":
+        enable_check = os.getenv("ENABLE_DOWNLOAD_CLIENT_CHECK", "true").strip().lower() in ("true", "1", "yes")
+        if not enable_check:
+            return None
+        
         download_client = os.getenv("DOWNLOAD_CLIENT", "").strip().lower()
         if download_client != "qbittorrent":
             return None

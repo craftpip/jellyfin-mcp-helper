@@ -14,6 +14,10 @@ class JellyfinClient:
 
     @classmethod
     def from_env(cls) -> "JellyfinClient | None":
+        enable_jellyfin = os.getenv("ENABLE_JELLYFIN_INTEGRATION", "true").strip().lower() in ("true", "1", "yes")
+        if not enable_jellyfin:
+            return None
+        
         api_key = os.getenv("JELLYFIN_API_KEY", "").strip()
         if not api_key:
             return None
