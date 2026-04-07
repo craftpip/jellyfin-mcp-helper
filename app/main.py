@@ -66,6 +66,9 @@ def _format_scan_report(scan: ScanPlan) -> dict:
             for item in items_by_action["skip"]
         ]
 
+    if scan.service_errors:
+        report["service_errors"] = scan.service_errors
+
     report["next"] = f"To apply: call 'confirm scan' with scanId={scan.scan_id}. To re-scan: call 'scan media library'."
     return report
 

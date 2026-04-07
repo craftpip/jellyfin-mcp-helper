@@ -53,6 +53,7 @@ class ScanPlan(BaseModel):
     created_at: datetime
     confirmed_at: datetime | None = None
     error: str | None = None
+    service_errors: dict[str, str] = Field(default_factory=dict)
 
 
 class ScanLogEntry(BaseModel):

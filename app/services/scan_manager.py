@@ -215,8 +215,14 @@ class ScanManager:
 
         try:
             await client.stop_seeding_for_paths(candidate_paths)
-        except Exception:
-            pass
+        except Exception as exc:
+            error_msg = f"Error stopping seeding in qBittorrent: {str(exc)}"
+            logger.error(error_msg, exc_info=True)
+            if self._current_scan:
+                if "qBittorrent" not in self._current_scan.service_errors:
+                    self._current_scan.service_errors["qBittorrent"] = error_msg
+                else:
+                    self._current_scan.service_errors["qBittorrent"] += f"; {error_msg}"
 
     def _cleanup_empty_parents(self, original_path: Path) -> None:
         if not self._config.paths.download_roots:
@@ -245,7 +251,10 @@ class ScanManager:
             logger.info(f"Found {len(paths)} in-progress paths: {paths}")
             return paths
         except Exception as exc:
-            logger.error(f"Error loading in-progress paths: {exc}", exc_info=True)
+            error_msg = f"Error loading in-progress paths from qBittorrent: {str(exc)}"
+            logger.error(error_msg, exc_info=True)
+            if self._current_scan:
+                self._current_scan.service_errors["qBittorrent"] = str(exc)
             return []
 
     @staticmethod
@@ -270,8 +279,15 @@ class ScanManager:
         for library_name in sorted(touched_libraries):
             try:
                 await client.scan_library(library_name)
-            except Exception:
-                pass
+                logger.info(f"Triggered Jellyfin scan for library: {library_name}")
+            except Exception as exc:
+                error_msg = f"Error triggering Jellyfin scan for library '{library_name}': {str(exc)}"
+                logger.error(error_msg, exc_info=True)
+                if self._current_scan:
+                    if "Jellyfin" not in self._current_scan.service_errors:
+                        self._current_scan.service_errors["Jellyfin"] = error_msg
+                    else:
+                        self._current_scan.service_errors["Jellyfin"] += f"; {error_msg}"
 
     def delete_scan(self) -> None:
         self._current_scan = None
