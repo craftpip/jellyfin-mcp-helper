@@ -1,217 +1,114 @@
-# Jellyfin Torrent Organizer API Skill
+---
+name: jellyfin-download-organizer
+description: Manage the Jellyfin Download Organizer API service via HTTP when you need to plan or execute download reorganizations, monitor the active scan, or trigger status/summary checks (health, current scan, MCP tools).
+---
 
-Use this guide when another LLM or agent needs to control the organizer service over HTTP.
+# Jellyfin Download Organizer API Skill
 
-## Base URL
+## Running the service
+- The service runs as a Docker container
+- **Always check if the container is running first** using `docker ps --filter name=jellyfin-download-organizer`
+- If not running, start it with: `docker compose up -d` (from the project root)
+- Port: `18328` (from docker-compose.yml)
 
-- Local: `http://127.0.0.1:18327`
-- LAN: `http://10.69.1.164:18327`
+## base configuration
+- local base URL: `http://127.0.0.1:18328`
+- LAN base URL: `http://10.69.1.164:18328`
+- only one scan can be active at a time
+- service loads config from `config/`, logs to `logs/`, and writes reports to `reports/`
+- required env in `.env`: `OPENROUTER_API_KEY`, `QBT_MCP_URL`, `QBT_WEBUI_USER`, `QBT_WEBUI_PASS`, `JELLYFIN_BASE_URL`, `JELLYFIN_API_KEY`, `JELLYFIN_MOVIE_LIBRARY_NAME`, `JELLYFIN_SERIES_LIBRARY_NAME`
 
-## Purpose
+## endpoints
 
-This service scans configured torrent folders, uses Ollama to classify media, resolves Jellyfin target paths, and then either:
-
-- plans moves in `dryRun` mode, or
-- performs real moves when `dryRun` is `false`
-
-Only one run can be active at a time.
-
-## Endpoints
-
-### Health
-
+### health
 - `GET /health`
+- quick check the API is up before any scan or polling
+- example: `curl http://10.69.1.164:18327/health`
 
-Example:
+### create scan (`POST /scans`)
+- body: `{"replaceExisting": true/false}` (default: true)
+- creates a scan plan (does NOT move files)
+- returns scan_id and list of items with planned actions
+- example: `curl -X POST http://10.69.1.164:18327/scans -H 'content-type: application/json' -d '{"replaceExisting":true}'`
 
+### current scan (`GET /scans/current`)
+- poll progress or get latest scan details
+- response fields: `scan_id`, `status`, `operation`, `items[]`, `counts.{total,movies,series,skipped,moved,replaced,failed}`, `created_at`, `confirmed_at`, `error`
+- example: `curl http://10.69.1.164:18327/scans/current`
+
+### specific scan (`GET /scans/{scan_id}`)
+- fetch a specific scan by ID
+- example: `curl http://10.69.1.164:18327/scans/648e797cf283494487dc2aaf28854af1`
+
+### confirm scan (`POST /scans/{scan_id}/confirm`)
+- apply the scan plan: move files, stop seeding torrents
+- triggers Jellyfin library scan after files are moved
+- example: `curl -X POST http://10.69.1.164:18327/scans/648e797cf283494487dc2aaf28854af1/confirm`
+
+### delete current scan (`DELETE /scans/current`)
+- cancel and delete the current scan
+- example: `curl -X DELETE http://10.69.1.164:18327/scans/current`
+
+### MCP wrapper (`POST /mcp`)
+- implements JSON-RPC 2.0 protocol for MCP clients
+
+#### supported methods
+- `initialize` – handshake, returns protocol version and capabilities
+- `ping` – health check
+- `notifications/initialized` – acknowledgment (returns 204)
+- `tools/list` – returns available tools
+- `tools/call` – execute a tool by name
+
+#### available tools
+- `scan media library` – scans torrent folders and creates an organization plan
+  - arguments: `{"replaceExisting": boolean}` (default: true)
+- `confirm scan` – apply a previously created scan plan
+  - arguments: `{"scanId": string}` (required)
+- `get scan report` – review the current scan plan
+  - arguments: `{"scanId": string}` (optional, returns current scan if omitted)
+
+#### MCP tool call examples
 ```bash
-curl http://10.69.1.164:18327/health
+# List available tools
+curl -X POST http://10.69.1.164:18328/mcp \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+# Scan media library
+curl -X POST http://10.69.1.164:18328/mcp \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scan media library","arguments":{"replaceExisting":true}}}'
+
+# Get scan report
+curl -X POST http://10.69.1.164:18328/mcp \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get scan report"}}'
+
+# Confirm scan
+curl -X POST http://10.69.1.164:18328/mcp \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"confirm scan","arguments":{"scanId":"abc123"}}}'
 ```
 
-### Start a run
+## workflow guidance
+1. call `scan media library` or `POST /scans` to create a scan plan (does NOT move files)
+2. review the scan report - each item shows: name, destination, reason
+3. if satisfied, call `confirm scan` or `POST /scans/{scan_id}/confirm` to apply the plan
+4. if not satisfied, call `scan media library` again to re-scan
+5. warn before confirming; explain what will happen
 
-- `POST /runs`
+## scan report format
+The scan returns a structured report with:
+- **summary**: scan_id, status, counts (total/movies/series/skipped/moved/replaced/failed/skipped_in_progress)
+- **files_to_move**: list of files to move, each with:
+  - `name`: original file name
+  - `destination`: target path where file will be moved
+  - `reason`: why it was matched (e.g., "Matched movie pattern")
+- **skipped**: files that were skipped with reason (e.g., "In-progress download")
+- **skipped_in_progress**: count of incomplete torrents found in qBittorrent (progress < 99.9%) - their files are automatically skipped during scan if they match media being organized
+- **next**: instructions for next steps
 
-Request body:
-
-```json
-{
-  "dryRun": true,
-  "replaceExisting": true
-}
-```
-
-Notes:
-
-- `dryRun: true` means plan only, do not move files.
-- `dryRun: false` means execute real moves.
-- `replaceExisting: true` allows replacing an existing target file.
-- If another run is already active, the API returns `409`.
-
-Examples:
-
-```bash
-curl -X POST http://10.69.1.164:18327/runs \
-  -H 'Content-Type: application/json' \
-  -d '{"dryRun":true,"replaceExisting":true}'
-```
-
-```bash
-curl -X POST http://10.69.1.164:18327/runs \
-  -H 'Content-Type: application/json' \
-  -d '{"dryRun":false,"replaceExisting":true}'
-```
-
-### Get current run summary
-
-- `GET /runs/current`
-
-Use this to check live progress or latest run state.
-
-`GET /runs/current` now includes live fields while a run is active:
-
-- `active_step`
-- `active_item_path`
-- `ai_output`
-- `logs`
-
-Example:
-
-```bash
-curl http://10.69.1.164:18327/runs/current
-```
-
-Response fields include:
-
-- `run_id`
-- `status`: `queued`, `running`, `completed`, `failed`, `cancelled`
-- `counts.scanned`
-- `counts.classified`
-- `counts.moved`
-- `counts.replaced`
-- `counts.skipped`
-- `counts.failed`
-- `summary_path`
-- `log_path`
-
-### Get current run logs
-
-- `GET /runs/current/logs`
-
-Example:
-
-```bash
-curl http://10.69.1.164:18327/runs/current/logs
-```
-
-### Stream raw AI output
-
-- `GET /runs/current/ai`
-
-This is a plain text streaming endpoint. It prints the live Ollama output as it is generated.
-
-Example:
-
-```bash
-curl -N http://10.69.1.164:18327/runs/current/ai
-```
-
-The stream includes small separator headers when the run, item, or AI step changes.
-
-### Stream live logs and AI output
-
-- `GET /logs`
-
-This is an SSE endpoint. It streams the full current run snapshot whenever anything changes.
-
-Example:
-
-```bash
-curl -N http://10.69.1.164:18327/logs
-```
-
-Each SSE message uses:
-
-- event: `current`
-- data: full JSON for the current run, including `ai_output` and `logs`
-
-### Get a specific run summary
-
-- `GET /runs/{run_id}`
-
-Example:
-
-```bash
-curl http://10.69.1.164:18327/runs/<run_id>
-```
-
-### Get a specific run logs
-
-- `GET /runs/{run_id}/logs`
-
-Example:
-
-```bash
-curl http://10.69.1.164:18327/runs/<run_id>/logs
-```
-
-## Recommended LLM Workflow
-
-### Safe mode
-
-1. Call `POST /runs` with `{"dryRun": true}`.
-2. Poll `GET /runs/current` until `status` is `completed` or `failed`.
-3. Read `GET /runs/current/logs`.
-4. Summarize what would move, what would be skipped, and any suspicious path choices.
-
-### Real move mode
-
-1. First do a dry run.
-2. Inspect the logs for bad movie/series classification, wrong season/episode extraction, or ugly target paths.
-3. Only then call `POST /runs` with `{"dryRun": false}`.
-4. Poll `GET /runs/current` until finished.
-5. Read `GET /runs/current/logs` and report the final moved paths.
-
-## How to Interpret Logs
-
-Each log entry has:
-
-- `timestamp`
-- `level`
-- `event`
-- `message`
-- `item_path`
-- `details`
-
-Common events:
-
-- `scan.started`
-- `candidate.classified`
-- `candidate.skipped`
-- `target.resolved`
-- `action.planned`
-- `candidate.failed`
-
-Important interpretation rules:
-
-- `candidate.classified` tells you whether the item was treated as `movie`, `series`, or `skip`.
-- `target.resolved` contains the chosen `target_dir` and `target_path`.
-- `action.planned` is emitted for both dry runs and real runs; check `details.dryRun`.
-- `candidate.failed` means the item was not processed successfully.
-
-## LLM Behavior Guidance
-
-When using this API, the LLM should:
-
-- prefer dry run first
-- warn before using `dryRun: false`
-- mention the exact target paths from the logs
-- mention classification confidence when it looks weak
-- call out suspicious season/episode guesses
-- call out ugly existing folder matches that may hurt Jellyfin naming
-
-## Quick Links
-
-- Health: `http://10.69.1.164:18327/health`
-- Current summary: `http://10.69.1.164:18327/runs/current`
-- Current logs: `http://10.69.1.164:18327/runs/current/logs`
+## quick links
+- health: `http://10.69.1.164:18328/health`
+- current scan: `http://10.69.1.164:18328/scans/current`
+- create scan: `POST http://10.69.1.164:18328/scans`

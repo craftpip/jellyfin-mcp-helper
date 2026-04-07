@@ -7,19 +7,21 @@ from pathlib import Path
 
 from app.core.config import AppConfig
 from app.models.schemas import CandidateItem, ClassificationResult, ResolvedTarget, RunLogEntry, RunState
-from app.services.ollama import OllamaClient
+from app.services.classifier import classify_candidate
+from app.services.jellyfin import JellyfinClient
+from app.services.download_client import QbittorrentClient
 from app.services.resolver import PathResolver
 from app.services.scanner import scan_candidates
 
 
 class OrganizerService:
-    def __init__(self, config: AppConfig, ollama: OllamaClient) -> None:
+    def __init__(self, config: AppConfig) -> None:
         self._config = config
-        self._ollama = ollama
-        self._resolver = PathResolver(config, ollama)
+        self._resolver = PathResolver(config)
 
     async def execute(self, run_state: RunState) -> RunState:
         candidates = scan_candidates(self._config.paths)
+        touched_libraries: set[str] = set()
         run_state.active_step = "scan"
         run_state.active_item_path = None
         run_state.ai_thinking = ""
@@ -28,13 +30,26 @@ class OrganizerService:
         run_state.counts.scanned = len(candidates)
         run_state.updated_at = datetime.now(UTC)
 
+        in_progress_paths = await self._load_in_progress_paths(run_state)
+
         for candidate in candidates:
             try:
+                if in_progress_paths and self._is_in_progress(candidate.source_path, in_progress_paths):
+                    run_state.counts.skipped += 1
+                    self._log(
+                        run_state,
+                        "info",
+                        "candidate.in_progress",
+                        f"Skipped in-progress download {candidate.name}",
+                        item_path=candidate.source_path,
+                        details={"reason": "download.in-progress"},
+                    )
+                    continue
                 run_state.active_item_path = candidate.source_path
                 run_state.active_step = "classify"
                 run_state.ai_thinking = ""
                 run_state.ai_output = ""
-                classification = await self._classify_candidate(candidate)
+                classification = self._classify_candidate(candidate)
                 run_state.counts.classified += 1
                 self._log(
                     run_state,
@@ -71,7 +86,9 @@ class OrganizerService:
                     item_path=candidate.source_path,
                     details=resolved.model_dump(),
                 )
-                await self._apply_action(run_state, candidate, classification, resolved)
+                changed = await self._apply_action(run_state, candidate, classification, resolved)
+                if changed:
+                    self._track_touched_library(touched_libraries, classification)
             except Exception as exc:  # noqa: BLE001
                 run_state.counts.failed += 1
                 self._log(
@@ -87,50 +104,53 @@ class OrganizerService:
         run_state.ai_thinking = ""
         run_state.ai_output = ""
 
+        await self._trigger_jellyfin_scans(run_state, touched_libraries)
+
         return run_state
 
-    async def _classify_candidate(self, candidate: CandidateItem) -> ClassificationResult:
-        schema = {
-            "type": "object",
-            "properties": {
-                "type": {"type": "string", "enum": ["movie", "series", "skip"]},
-                "title": {"type": ["string", "null"]},
-                "year": {"type": ["integer", "null"]},
-                "season": {"type": ["integer", "null"]},
-                "episode": {"type": ["integer", "null"]},
-                "confidence": {"type": "number"},
-                "reason": {"type": "string"},
-            },
-            "required": ["type", "title", "year", "season", "episode", "confidence", "reason"],
-        }
-        prompt = (
-            "Classify this torrent candidate for Jellyfin organization.\n"
-            f"Source path: {candidate.source_path}\n"
-            f"Name: {candidate.name}\n"
-            f"Extension: {candidate.extension}\n"
-            f"Torrent container path: {candidate.container_path}\n"
-            f"Relative path inside container: {candidate.relative_path}\n"
-            "Use the filename/path semantics to decide if this is a movie, a series episode/season pack, or should be skipped. "
-            "Extract the title, year, season, and episode when possible."
-        )
-        response = await self._ollama.generate_json(
-            prompt,
-            schema,
-            on_chunk=lambda chunk: self._update_ai_output(
-                candidate_state_label="classify",
-                item_path=candidate.source_path,
-                thinking=chunk.get("thinking", ""),
-                content=chunk.get("content", ""),
-            ),
-            on_retry=lambda attempt, exc: self._log_ai_retry(
-                event="ai.classify.retry",
-                message=f"Retrying classification for {candidate.name}",
-                item_path=candidate.source_path,
-                attempt=attempt,
-                exc=exc,
-            ),
-        )
-        return ClassificationResult.model_validate(response)
+    async def _load_in_progress_paths(self, run_state: RunState) -> list[str]:
+        client = QbittorrentClient.from_env()
+         if not client:
+             self._log(
+                 run_state,
+                 "warning",
+                 "download.mcp.missing",
+                 "QBT_MCP_URL not set; skipping in-progress download check",
+             )
+            return []
+
+        try:
+            paths = await client.list_in_progress_paths()
+            if paths:
+                self._log(
+                    run_state,
+                    "info",
+                     "download.mcp.loaded",
+                     f"Loaded {len(paths)} in-progress download paths",
+                )
+            return paths
+        except Exception as exc:  # noqa: BLE001
+            self._log(
+                run_state,
+                "warning",
+                "download.mcp.failed",
+                f"Failed to load in-progress downloads: {exc}",
+            )
+            return []
+
+    @staticmethod
+    def _is_in_progress(candidate_path: str, in_progress_paths: list[str]) -> bool:
+        candidate_norm = str(Path(candidate_path)).rstrip("/")
+        for path in in_progress_paths:
+            active_norm = str(Path(path)).rstrip("/")
+            if candidate_norm == active_norm:
+                return True
+            if candidate_norm.startswith(active_norm + "/"):
+                return True
+        return False
+
+    def _classify_candidate(self, candidate: CandidateItem) -> ClassificationResult:
+        return classify_candidate(candidate)
 
     async def _update_ai_output(self, candidate_state_label: str, item_path: str, thinking: str, content: str) -> None:
         # Placeholder, rebound per run in _classify_candidate/_resolve calls.
@@ -143,7 +163,7 @@ class OrganizerService:
         item_path: str,
         attempt: int,
         exc: Exception,
-    ) -> None:
+    ) -> bool:
         return None
 
     async def _apply_action(
@@ -169,7 +189,7 @@ class OrganizerService:
                 item_path=candidate.source_path,
                 details={"targetPath": str(target_path)},
             )
-            return
+            return False
 
         self._log(
             run_state,
@@ -190,7 +210,9 @@ class OrganizerService:
                 run_state.counts.replaced += 1
             else:
                 run_state.counts.moved += 1
-            return
+            return True
+
+        await self._stop_seeding_if_needed(run_state, candidate)
 
         target_dir.mkdir(parents=True, exist_ok=True)
         if target_exists:
@@ -203,6 +225,82 @@ class OrganizerService:
             run_state.counts.moved += 1
 
         self._cleanup_empty_parents(source_path, Path(candidate.source_root))
+        return True
+
+    def _track_touched_library(self, touched_libraries: set[str], classification: ClassificationResult) -> None:
+        client = JellyfinClient.from_env()
+        if not client:
+            return
+        library_name = client.library_name_for_kind(classification.kind)
+        if library_name:
+            touched_libraries.add(library_name)
+
+    async def _trigger_jellyfin_scans(self, run_state: RunState, touched_libraries: set[str]) -> None:
+        if run_state.dry_run or not touched_libraries:
+            return
+
+        client = JellyfinClient.from_env()
+        if not client:
+            self._log(
+                run_state,
+                "warning",
+                "jellyfin.scan.missing",
+                "JELLYFIN_API_KEY not set; skipping Jellyfin library scan",
+            )
+            return
+
+        for library_name in sorted(touched_libraries):
+            try:
+                target = await client.scan_library(library_name)
+                self._log(
+                    run_state,
+                    "info",
+                    "jellyfin.scan.started",
+                    f"Triggered Jellyfin scan for {target['name']}",
+                    details={"library": target["name"], "libraryId": target["id"]},
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._log(
+                    run_state,
+                    "error",
+                    "jellyfin.scan.failed",
+                    f"Failed to trigger Jellyfin scan for {library_name}: {exc}",
+                    details={"library": library_name},
+                )
+
+    async def _stop_seeding_if_needed(self, run_state: RunState, candidate: CandidateItem) -> None:
+        client = QbittorrentClient.from_env()
+        if not client:
+            return
+
+        candidate_paths = [candidate.source_path]
+        if candidate.container_path:
+            candidate_paths.append(candidate.container_path)
+
+        try:
+            stopped = await client.stop_seeding_for_paths(candidate_paths)
+        except Exception as exc:  # noqa: BLE001
+            self._log(
+                run_state,
+                "warning",
+                "qbittorrent.stop.failed",
+                f"Failed to stop seeding download before move for {candidate.name}: {exc}",
+                item_path=candidate.source_path,
+            )
+            return
+
+        for torrent in stopped:
+            self._log(
+                run_state,
+                "info",
+                "qbittorrent.stopped",
+                f"Stopped seeding download before move: {torrent.get('name', 'unknown')}",
+                item_path=candidate.source_path,
+                details={
+                    "torrentHash": torrent.get("hash"),
+                    "torrentState": torrent.get("state_human") or torrent.get("state"),
+                },
+            )
 
     def bind_run_state(self, run_state: RunState) -> None:
         async def updater(candidate_state_label: str, item_path: str, thinking: str, content: str) -> None:

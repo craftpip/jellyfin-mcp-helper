@@ -8,18 +8,24 @@ from app.models.schemas import CandidateItem
 
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv"}
 SKIP_DIR_MARKERS = {".trickplay"}
+SAMPLE_SIZE_THRESHOLD = 150 * 1024 * 1024  # 150MB
+
+
+def _to_absolute_path(docker_path: str) -> str:
+    """Path is already absolute in container format, return as-is."""
+    return docker_path
 
 
 def _should_skip_path(path: Path) -> bool:
     return any(marker in part for part in path.parts for marker in SKIP_DIR_MARKERS)
 def scan_candidates(paths_config: PathsConfig) -> list[CandidateItem]:
     candidates: list[CandidateItem] = []
-    for torrent_root in paths_config.torrent_roots:
-        root_path = Path(torrent_root)
+    for download_root in paths_config.download_roots:
+        root_path = Path(download_root)
         if not root_path.exists():
             continue
 
-        root_key = _infer_root_key(paths_config, torrent_root)
+        root_key = _infer_root_key(paths_config, download_root)
         for child in sorted(root_path.iterdir()):
             if child.name.startswith('.'):
                 continue
@@ -37,6 +43,7 @@ def scan_candidates(paths_config: PathsConfig) -> list[CandidateItem]:
                         extension=child.suffix,
                         container_path=None,
                         relative_path=child.name,
+                        file_size=child.stat().st_size,
                     )
                 )
                 continue
@@ -55,6 +62,7 @@ def scan_candidates(paths_config: PathsConfig) -> list[CandidateItem]:
                         extension=file_path.suffix,
                         container_path=str(child),
                         relative_path=str(file_path.relative_to(child)),
+                        file_size=file_path.stat().st_size,
                     )
                 )
     return candidates
@@ -67,8 +75,11 @@ def list_target_paths(root_path: str) -> list[str]:
     return [str(item) for item in sorted(path.iterdir()) if not item.name.startswith('.')]
 
 
-def _infer_root_key(paths_config: PathsConfig, torrent_root: str) -> str:
-    for key in paths_config.movie_roots:
-        if key in torrent_root:
-            return key
-    return Path(torrent_root).parts[2] if len(Path(torrent_root).parts) > 2 else "default"
+def _infer_root_key(paths_config: PathsConfig, download_root: str) -> str:
+    normalized_download = str(Path(download_root).resolve())
+    
+    for i, root in enumerate(paths_config.download_roots):
+        if normalized_download == str(Path(root).resolve()):
+            return f"movie_{i}"
+    
+    return "default"

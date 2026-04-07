@@ -6,13 +6,72 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-RunStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
+OperationMode = Literal["organize", "normalize"]
+NormalizeMode = Literal["safe", "full"]
 ItemKind = Literal["movie", "series", "skip"]
+ScanStatus = Literal["pending", "confirmed", "failed"]
+RunStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 
 
+class ScanRequest(BaseModel):
+    replace_existing: bool = Field(default=True, alias="replaceExisting")
+    operation: OperationMode = Field(default="organize")
+    allow_medium: bool = Field(default=False, alias="allowMedium")
+    use_local_ai: bool = Field(default=False, alias="useLocalAI")
+
+    model_config = {"populate_by_name": True}
+
+
+class ScannedItem(BaseModel):
+    source_path: str
+    name: str
+    item_type: ItemKind
+    confidence: float
+    reason: str
+    target_path: str
+    action: Literal["move", "replace", "skip"]
+    error: str | None = None
+
+
+class ScanCounts(BaseModel):
+    total: int = 0
+    movies: int = 0
+    series: int = 0
+    skipped: int = 0
+    moved: int = 0
+    replaced: int = 0
+    failed: int = 0
+
+
+class ScanPlan(BaseModel):
+    scan_id: str
+    status: ScanStatus
+    operation: OperationMode
+    items: list[ScannedItem] = Field(default_factory=list)
+    counts: ScanCounts = Field(default_factory=ScanCounts)
+    skipped_in_progress: int = 0
+    created_at: datetime
+    confirmed_at: datetime | None = None
+    error: str | None = None
+
+
+class ScanLogEntry(BaseModel):
+    timestamp: datetime
+    level: Literal["info", "warning", "error"]
+    event: str
+    message: str
+    item_path: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+# Legacy models - kept for backward compatibility
 class RunRequest(BaseModel):
     dry_run: bool = Field(default=True, alias="dryRun")
     replace_existing: bool = Field(default=True, alias="replaceExisting")
+    operation: OperationMode = Field(default="organize")
+    normalize_mode: NormalizeMode = Field(default="safe", alias="normalizeMode")
+    allow_medium: bool = Field(default=False, alias="allowMedium")
+    use_local_ai: bool = Field(default=False, alias="useLocalAI")
 
     model_config = {"populate_by_name": True}
 
@@ -64,6 +123,7 @@ class CandidateItem(BaseModel):
     extension: str | None = None
     container_path: str | None = None
     relative_path: str | None = None
+    file_size: int | None = None
 
 
 class RunState(BaseModel):
@@ -71,6 +131,10 @@ class RunState(BaseModel):
     status: RunStatus
     dry_run: bool
     replace_existing: bool
+    operation: OperationMode
+    normalize_mode: NormalizeMode
+    allow_medium: bool
+    use_local_ai: bool
     started_at: datetime
     updated_at: datetime
     finished_at: datetime | None = None
@@ -83,28 +147,3 @@ class RunState(BaseModel):
     summary_path: str | None = None
     log_path: str | None = None
     error: str | None = None
-
-
-class RunSummary(BaseModel):
-    run_id: str
-    status: RunStatus
-    dry_run: bool
-    replace_existing: bool
-    started_at: datetime
-    updated_at: datetime
-    finished_at: datetime | None = None
-    counts: ProgressCounts
-    active_step: str | None = None
-    active_item_path: str | None = None
-    ai_thinking: str = ""
-    ai_output: str = ""
-    logs: list[RunLogEntry] = Field(default_factory=list)
-    summary_path: str | None = None
-    log_path: str | None = None
-    error: str | None = None
-
-
-class RunLogResponse(BaseModel):
-    run_id: str
-    status: RunStatus
-    logs: list[RunLogEntry]

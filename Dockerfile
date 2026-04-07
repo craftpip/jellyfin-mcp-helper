@@ -9,8 +9,7 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
-COPY config ./config
-COPY README.md ./README.md
+COPY .env.example ./
 
 RUN mkdir -p /app/logs /app/reports
 

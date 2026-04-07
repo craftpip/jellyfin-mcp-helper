@@ -8,13 +8,13 @@ from difflib import SequenceMatcher
 
 from app.core.config import AppConfig
 from app.models.schemas import CandidateItem, ClassificationResult, ResolvedTarget, RunLogEntry, RunState
-from app.services.ollama import OllamaClient
 from app.services.scanner import list_target_paths
 
 
 INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*]')
 WORD_RE = re.compile(r"[a-z0-9]+")
 MAX_AI_PATH_CHOICES = 20
+EPISODE_TAG_RE = re.compile(r"\bs\d{1,2}e\d{1,3}\b.*$", re.IGNORECASE)
 
 
 def sanitize_name(value: str) -> str:
@@ -31,10 +31,50 @@ def tokenize(value: str) -> set[str]:
     return set(WORD_RE.findall(value.lower()))
 
 
+def series_aliases(path: str) -> set[str]:
+    root = Path(path)
+    aliases = {root.name}
+    if not root.exists() or not root.is_dir():
+        return aliases
+
+    sample_count = 0
+    for file_path in sorted(root.rglob("*")):
+        if sample_count >= 12:
+            break
+        if not file_path.is_file() or file_path.suffix.lower() not in {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv"}:
+            continue
+        cleaned = EPISODE_TAG_RE.sub("", file_path.stem).strip(" -._")
+        if cleaned:
+            aliases.add(cleaned)
+        sample_count += 1
+    return aliases
+
+
+def season_dir_candidates(season_number: int) -> set[str]:
+    return {
+        f"season {season_number}",
+        f"season {season_number:02d}",
+        f"s{season_number}",
+        f"s{season_number:02d}",
+    }
+
+
+def series_video_count(path: str) -> int:
+    root = Path(path)
+    if not root.exists() or not root.is_dir():
+        return 0
+    count = 0
+    for file_path in root.rglob("*"):
+        if file_path.is_file() and file_path.suffix.lower() in {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv"}:
+            count += 1
+            if count >= 20:
+                return count
+    return count
+
+
 class PathResolver:
-    def __init__(self, config: AppConfig, ollama: OllamaClient) -> None:
+    def __init__(self, config: AppConfig) -> None:
         self._config = config
-        self._ollama = ollama
 
     async def resolve(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
         if classification.kind == "movie":
@@ -42,7 +82,10 @@ class PathResolver:
         return await self._resolve_series(candidate, classification)
 
     async def _resolve_movie(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
-        movie_root = self._config.paths.movie_roots[candidate.source_root_key]
+        index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0
+        movie_roots_list = list(self._config.paths.movie_roots.values())
+        movie_root = movie_roots_list[index] if index < len(movie_roots_list) else movie_roots_list[0]
+        
         existing_paths = list_target_paths(movie_root)
         folder_name = self._movie_folder_name(classification)
         best_match = await self._pick_existing_path(
@@ -66,7 +109,10 @@ class PathResolver:
         )
 
     async def _resolve_series(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
-        series_root = self._config.paths.series_roots[candidate.source_root_key]
+        index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0
+        series_roots_list = list(self._config.paths.series_roots.values())
+        series_root = series_roots_list[index] if index < len(series_roots_list) else series_roots_list[0]
+        
         existing_paths = list_target_paths(series_root)
         show_name = sanitize_name(classification.title or candidate.name)
         best_match = await self._pick_existing_path(
@@ -80,9 +126,10 @@ class PathResolver:
         show_dir = Path(best_match) if best_match else Path(series_root) / show_name
         season_number = classification.season or 1
         episode_number = classification.episode or 1
-        season_dir = show_dir / f"Season {season_number:02d}"
+        season_dir = self._pick_existing_season_dir(show_dir, season_number) or (show_dir / f"Season {season_number:02d}")
         ext = Path(candidate.source_path).suffix or ".mkv"
-        episode_base = f"{sanitize_name(show_dir.name)} - S{season_number:02d}E{episode_number:02d}"
+        episode_title = sanitize_name(classification.title or show_dir.name)
+        episode_base = f"{episode_title} - S{season_number:02d}E{episode_number:02d}"
         target_path = str(season_dir / f"{episode_base}{ext}")
         return ResolvedTarget(
             root_key=candidate.source_root_key,
@@ -100,7 +147,13 @@ class PathResolver:
         target_paths: list[str],
         desired_name: str,
     ) -> str | None:
-        shortlisted_paths = self._shortlist_target_paths(title=title, year=year, target_paths=target_paths, desired_name=desired_name)
+        shortlisted_paths = self._shortlist_target_paths(
+            media_kind=media_kind,
+            title=title,
+            year=year,
+            target_paths=target_paths,
+            desired_name=desired_name,
+        )
         await self._log_resolution_shortlist(
             media_kind=media_kind,
             title=title,
@@ -111,49 +164,19 @@ class PathResolver:
         if not shortlisted_paths:
             return None
 
-        schema = {
-            "type": "object",
-            "properties": {
-                "selectedPath": {"type": "string"},
-                "confidence": {"type": "number"},
-                "reason": {"type": "string"},
-            },
-            "required": ["selectedPath", "confidence", "reason"],
-        }
-        prompt = (
-            f"Choose the best existing {media_kind} path for this item.\n"
-            f"Title: {title}\n"
-            f"Year: {year}\n"
-            f"Preferred new folder name if no match exists: {desired_name}\n"
-            "Return an empty selectedPath if nothing is a strong enough match.\n"
-            f"Candidate absolute target paths ({len(shortlisted_paths)} shortlisted from {len(target_paths)} total):\n"
-            + "\n".join(shortlisted_paths)
+        best_path, score = self._best_path_match(
+            title=title,
+            year=year,
+            target_paths=shortlisted_paths,
+            desired_name=desired_name,
         )
-        response = await self._ollama.generate_json(
-            prompt,
-            schema,
-            on_chunk=lambda chunk: self._update_ai_output(
-                candidate_state_label=f"resolve-{media_kind}",
-                item_path=title,
-                thinking=chunk.get("thinking", ""),
-                content=chunk.get("content", ""),
-            ),
-            on_retry=lambda attempt, exc: self._log_ai_retry(
-                event=f"ai.resolve.{media_kind}.retry",
-                message=f"Retrying {media_kind} path resolution for {title}",
-                item_path=title,
-                attempt=attempt,
-                exc=exc,
-            ),
-        )
-        selected = str(response.get("selectedPath", "")).strip()
-        confidence = float(response.get("confidence", 0.0) or 0.0)
-        if selected and selected in shortlisted_paths and confidence >= self._config.model.path_confidence_threshold:
-            return selected
+        if best_path and score >= self._config.model.path_confidence_threshold:
+            return best_path
         return None
 
     def _shortlist_target_paths(
         self,
+        media_kind: str,
         title: str,
         year: int | None,
         target_paths: list[str],
@@ -171,14 +194,31 @@ class PathResolver:
         scored: list[tuple[float, str]] = []
         for path in target_paths:
             folder_name = Path(path).name
-            folder_norm = normalize_text(folder_name)
-            folder_tokens = tokenize(folder_name)
+            alias_values = series_aliases(path) if media_kind == "series" else {folder_name}
+            folder_norm = ""
+            folder_tokens: set[str] = set()
+            best_alias_similarity = 0.0
+            best_alias_starts_bonus = 0.0
+            best_alias_contains_bonus = 0.0
+
+            for alias in alias_values:
+                alias_norm = normalize_text(alias)
+                alias_tokens = tokenize(alias)
+                alias_similarity = SequenceMatcher(None, desired_norm or title_norm, alias_norm).ratio()
+                alias_starts_bonus = 1.0 if alias_norm.startswith(title_norm) and title_norm else 0.0
+                alias_contains_bonus = 1.0 if title_norm and title_norm in alias_norm else 0.0
+                if alias_similarity > best_alias_similarity:
+                    best_alias_similarity = alias_similarity
+                    best_alias_starts_bonus = alias_starts_bonus
+                    best_alias_contains_bonus = alias_contains_bonus
+                    folder_norm = alias_norm
+                    folder_tokens = alias_tokens
 
             shared_title = len(title_tokens & folder_tokens)
             shared_desired = len(desired_tokens & folder_tokens)
-            similarity = SequenceMatcher(None, desired_norm or title_norm, folder_norm).ratio()
-            starts_bonus = 1.0 if folder_norm.startswith(title_norm) and title_norm else 0.0
-            contains_bonus = 1.0 if title_norm and title_norm in folder_norm else 0.0
+            similarity = best_alias_similarity
+            starts_bonus = best_alias_starts_bonus
+            contains_bonus = best_alias_contains_bonus
             year_bonus = 1.0 if year_text and year_text in folder_name else 0.0
 
             score = (shared_title * 3.0) + (shared_desired * 2.0) + (similarity * 5.0) + starts_bonus + contains_bonus + year_bonus
@@ -191,24 +231,96 @@ class PathResolver:
         scored.sort(key=lambda item: (-item[0], item[1]))
         return [path for _, path in scored[:MAX_AI_PATH_CHOICES]]
 
+    def _best_path_match(
+        self,
+        title: str,
+        year: int | None,
+        target_paths: list[str],
+        desired_name: str,
+    ) -> tuple[str | None, float]:
+        if not target_paths:
+            return None, 0.0
+
+        title_norm = normalize_text(title)
+        desired_norm = normalize_text(desired_name)
+        title_tokens = tokenize(title)
+        desired_tokens = tokenize(desired_name)
+        year_text = str(year) if year else ""
+
+        best_path: str | None = None
+        best_score = 0.0
+        for path in target_paths:
+            folder_name = Path(path).name
+            alias_values = series_aliases(path) if Path(path).is_dir() else {folder_name}
+
+            similarity = 0.0
+            shared_title = 0
+            shared_desired = 0
+            starts_bonus = 0.0
+            contains_bonus = 0.0
+            best_token_total = 1
+            best_alias_exact_bonus = 0
+            best_alias_subset_bonus = 0
+
+            for alias in alias_values:
+                alias_norm = normalize_text(alias)
+                alias_tokens = tokenize(alias)
+                alias_similarity = SequenceMatcher(None, desired_norm or title_norm, alias_norm).ratio()
+                alias_shared_title = len(title_tokens & alias_tokens)
+                alias_shared_desired = len(desired_tokens & alias_tokens)
+                alias_subset_bonus = 1 if title_tokens and title_tokens <= alias_tokens else 0
+                alias_exact_bonus = 1 if title_norm and title_norm == alias_norm else 0
+                if (
+                    alias_exact_bonus,
+                    alias_subset_bonus,
+                    alias_similarity,
+                    alias_shared_title + alias_shared_desired,
+                ) > (
+                    best_alias_exact_bonus,
+                    best_alias_subset_bonus,
+                    similarity,
+                    shared_title + shared_desired,
+                ):
+                    best_alias_exact_bonus = alias_exact_bonus
+                    best_alias_subset_bonus = alias_subset_bonus
+                    similarity = alias_similarity
+                    shared_title = alias_shared_title
+                    shared_desired = alias_shared_desired
+                    starts_bonus = 1.0 if title_norm and alias_norm.startswith(title_norm) else 0.0
+                    contains_bonus = 1.0 if title_norm and title_norm in alias_norm else 0.0
+                    best_token_total = max(len(alias_tokens), 1)
+
+            token_overlap = (shared_title + shared_desired) / (best_token_total * 2)
+            year_bonus = 1.0 if year_text and year_text in folder_name else 0.0
+            subset_bonus = 0.3 if title_tokens and shared_title == len(title_tokens) else 0.0
+            exact_bonus = 0.15 if title_norm and similarity == 1.0 else 0.0
+            depth_bonus = min(series_video_count(path), 20) * 0.01 if Path(path).is_dir() else 0.0
+
+            score = (similarity * 0.45) + (token_overlap * 0.2) + (year_bonus * 0.15) + (starts_bonus * 0.03) + (contains_bonus * 0.02) + subset_bonus + exact_bonus + depth_bonus
+            if score > best_score:
+                best_score = score
+                best_path = path
+
+        return best_path, best_score
+
+    def _pick_existing_season_dir(self, show_dir: Path, season_number: int) -> Path | None:
+        if not show_dir.exists() or not show_dir.is_dir():
+            return None
+
+        valid_names = season_dir_candidates(season_number)
+        for child in sorted(show_dir.iterdir()):
+            if not child.is_dir():
+                continue
+            child_name = normalize_text(child.name)
+            if child_name in valid_names:
+                return child
+        return None
+
     def _movie_folder_name(self, classification: ClassificationResult) -> str:
         title = sanitize_name(classification.title or "Unknown Movie")
         if classification.year:
             return f"{title} ({classification.year})"
         return title
-
-    async def _update_ai_output(self, candidate_state_label: str, item_path: str, thinking: str, content: str) -> None:
-        return None
-
-    async def _log_ai_retry(
-        self,
-        event: str,
-        message: str,
-        item_path: str,
-        attempt: int,
-        exc: Exception,
-    ) -> None:
-        return None
 
     async def _log_resolution_shortlist(
         self,
@@ -221,28 +333,6 @@ class PathResolver:
         return None
 
     def bind_run_state(self, run_state: RunState) -> None:
-        async def updater(candidate_state_label: str, item_path: str, thinking: str, content: str) -> None:
-            run_state.active_step = candidate_state_label
-            run_state.active_item_path = item_path
-            run_state.ai_thinking = thinking[-12000:]
-            run_state.ai_output = content[-4000:]
-            run_state.updated_at = datetime.now(UTC)
-
-        async def retry_logger(event: str, message: str, item_path: str, attempt: int, exc: Exception) -> None:
-            entry = RunLogEntry(
-                timestamp=datetime.now(UTC),
-                level="warning",
-                event=event,
-                message=f"{message} (retry {attempt}/{self._config.model.retry_attempts})",
-                item_path=item_path,
-                details={"attempt": attempt, "error": str(exc)},
-            )
-            run_state.logs.append(entry)
-            run_state.updated_at = entry.timestamp
-            if run_state.log_path:
-                with Path(run_state.log_path).open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(entry.model_dump(mode="json")) + "\n")
-
         async def shortlist_logger(
             media_kind: str,
             title: str,
@@ -268,6 +358,4 @@ class PathResolver:
                 with Path(run_state.log_path).open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(entry.model_dump(mode="json")) + "\n")
 
-        self._update_ai_output = updater
-        self._log_ai_retry = retry_logger
         self._log_resolution_shortlist = shortlist_logger

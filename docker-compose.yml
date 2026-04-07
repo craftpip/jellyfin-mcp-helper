@@ -1,15 +1,17 @@
 services:
   organizer:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: jellyfin-torrent-organizer
+    build: .
+    image: jellyfin-download-organizer:dev
+    container_name: jellyfin-download-organizer
     restart: unless-stopped
     ports:
-      - "18327:18327"
+      - "18328:18327"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      - ./config:/app/config
+      - /mnt/media1t/downloads:/media1
+      - /mnt/media2t/downloads:/media2
       - ./logs:/app/logs
       - ./reports:/app/reports
-      - /mnt/media1t:/mnt/media1t
-      - /mnt/media2t:/mnt/media2t

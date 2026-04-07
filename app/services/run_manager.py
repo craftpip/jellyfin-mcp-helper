@@ -10,7 +10,7 @@ from fastapi import HTTPException
 
 from app.core.config import AppConfig
 from app.models.schemas import RunLogResponse, RunRequest, RunState, RunSummary
-from app.services.ollama import OllamaClient
+from app.services.normalizer import NormalizerService
 from app.services.organizer import OrganizerService
 
 
@@ -20,7 +20,8 @@ class RunManager:
         self._lock = asyncio.Lock()
         self._runs: dict[str, RunState] = {}
         self._current_run_id: str | None = None
-        self._organizer = OrganizerService(config, OllamaClient(config.model))
+        self._organizer = OrganizerService(config)
+        self._normalizer = NormalizerService(config)
 
     async def start_run(self, request: RunRequest) -> RunSummary:
         async with self._lock:
@@ -37,6 +38,10 @@ class RunManager:
                 status="queued",
                 dry_run=request.dry_run,
                 replace_existing=request.replace_existing,
+                operation=request.operation,
+                normalize_mode=request.normalize_mode,
+                allow_medium=request.allow_medium,
+                use_local_ai=request.use_local_ai,
                 started_at=now,
                 updated_at=now,
                 logs=[],
@@ -86,9 +91,13 @@ class RunManager:
         try:
             state.status = "running"
             state.updated_at = datetime.now(UTC)
-            self._organizer.bind_run_state(state)
-            self._organizer._resolver.bind_run_state(state)
-            await self._organizer.execute(state)
+            if state.operation == "normalize":
+                self._normalizer.bind_run_state(state)
+                await self._normalizer.execute(state)
+            else:
+                self._organizer.bind_run_state(state)
+                self._organizer._resolver.bind_run_state(state)
+                await self._organizer.execute(state)
             state.status = "completed"
         except Exception as exc:  # noqa: BLE001
             state.status = "failed"
@@ -112,6 +121,10 @@ class RunManager:
             status=state.status,
             dry_run=state.dry_run,
             replace_existing=state.replace_existing,
+            operation=state.operation,
+            normalize_mode=state.normalize_mode,
+            allow_medium=state.allow_medium,
+            use_local_ai=state.use_local_ai,
             started_at=state.started_at,
             updated_at=state.updated_at,
             finished_at=state.finished_at,
