@@ -276,12 +276,17 @@ class ScanManager:
         if not client:
             return
 
-        for library_name in sorted(touched_libraries):
+        for item_type in sorted(touched_libraries):
             try:
+                library_name = client.library_name_for_kind(item_type)
+                if not library_name:
+                    logger.warning(f"No Jellyfin library configured for item type: {item_type}")
+                    continue
+                
                 await client.scan_library(library_name)
                 logger.info(f"Triggered Jellyfin scan for library: {library_name}")
             except Exception as exc:
-                error_msg = f"Error triggering Jellyfin scan for library '{library_name}': {str(exc)}"
+                error_msg = f"Error triggering Jellyfin scan for item type '{item_type}': {str(exc)}"
                 logger.error(error_msg, exc_info=True)
                 if self._current_scan:
                     if "Jellyfin" not in self._current_scan.service_errors:
