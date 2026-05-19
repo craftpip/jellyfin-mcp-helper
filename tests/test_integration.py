@@ -4,14 +4,15 @@ Tests against real qBittorrent via MCP - no mocks.
 """
 from __future__ import annotations
 
+import os
 import time
 import httpx
 import pytest
 
 
-MCP_URL = "http://host.docker.internal:8093/mcp"
-MCP_KEY = "i-4FwB-st560JvhNbHnMqv_PHI-ilJfkWf7I_ji-Ls4"
-ORGANIZER_URL = "http://localhost:18328"
+MCP_URL = os.getenv("MCP_URL", "http://host.docker.internal:8093/mcp")
+MCP_KEY = os.getenv("MCP_KEY", "")
+ORGANIZER_URL = os.getenv("ORGANIZER_URL", "http://localhost:18328")
 
 
 def is_mcp_available() -> bool:

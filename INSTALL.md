@@ -84,7 +84,7 @@ Continue with a normal install flow.
 If repo does not exist at chosen path, clone it:
 
 ```bash
-git clone https://github.com/boniface/jellyfin-download-organizer.git /path/to/workspace/jellyfin-download-organizer
+git clone https://github.com/jellyfin-download-organizer/jellyfin-download-organizer.git /path/to/workspace/jellyfin-download-organizer
 ```
 
 If repo already exists, do not re-clone.

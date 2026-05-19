@@ -23,8 +23,8 @@ import pytest
 
 
 # MCP endpoint configuration (same as existing tests)
-MCP_URL = "http://localhost:18328/mcp"
-MCP_KEY = "i-4FwB-st560JvhNbHnMqv_PHI-ilJfkWf7I_ji-Ls4"
+MCP_URL = os.getenv("MCP_URL", "http://localhost:18328/mcp")
+MCP_KEY = os.getenv("MCP_KEY", "")
 
 # Local organizer REST (not strictly required for this flow, kept for health checks)
 ORGANIZER_URL = "http://localhost:18327"

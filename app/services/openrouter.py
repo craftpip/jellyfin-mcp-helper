@@ -27,7 +27,7 @@ class OpenRouterClient:
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/boniface/jellyfin-download-organizer",
+            "HTTP-Referer": "https://github.com/jellyfin-download-organizer/jellyfin-download-organizer",
             "X-Title": "Jellyfin Download Organizer",
         }
         body = {
