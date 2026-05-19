@@ -1,16 +1,28 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 
 from app.core.config import get_config
+from app.core.logging import configure_logging
 from app.models.schemas import ScanLogEntry, ScanPlan, ScanRequest
+from app.services.jellyfin import JellyfinClient
 from app.services.scan_manager import ScanManager
+
+
+logger = logging.getLogger(__name__)
+
+
+def _mcp_error_response(request_id: object, code: int, message: str) -> JSONResponse:
+    return JSONResponse({"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}})
 
 
 def _format_scan_report(scan: ScanPlan) -> dict:
@@ -62,31 +74,66 @@ def _format_scan_report(scan: ScanPlan) -> dict:
 
     if items_by_action["skip"]:
         report["skipped"] = [
-            {"name": item.name, "reason": item.reason}
+            {
+                "name": item.name,
+                "reason": item.reason,
+                "source_path": item.source_path,
+                "error": item.error,
+            }
             for item in items_by_action["skip"]
         ]
 
     if scan.service_errors:
         report["service_errors"] = scan.service_errors
 
-    report["next"] = f"To apply: call 'confirm scan' with scanId={scan.scan_id}. To re-scan: call 'scan media library'."
+    next_step = f"To apply: call 'confirm move new downloads scan' with scanId={scan.scan_id}. To re-scan: call 'move new downloads scan'."
+    if "Filesystem" in scan.service_errors:
+        next_step += " Some download paths could not be scanned due to filesystem errors; review skipped items for the exact paths."
+    report["next"] = next_step
     return report
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging()
+    logger.info("Organizer service starting up")
     config = get_config()
     app.state.scan_manager = ScanManager(config)
     yield
+    logger.info("Organizer service shutting down")
 
 
 app = FastAPI(title="Jellyfin Library Organizer", version="0.2.0", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    if request.url.path == "/health":
+        return await call_next(request)
+
+    request_id = uuid4().hex[:8]
+    started = time.perf_counter()
+    client_host = request.client.host if request.client else "unknown"
+
+    logger.info("[%s] >>> %s %s from %s", request_id, request.method, request.url.path, client_host)
+
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        logger.exception("[%s] xxx %s %s failed after %sms", request_id, request.method, request.url.path, duration_ms)
+        raise
+
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    logger.info("[%s] <<< %s %s finished in %sms with status %s", request_id, request.method, request.url.path, duration_ms, response.status_code)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 def _mcp_tools() -> list[dict[str, object]]:
     return [
         {
-            "name": "scan media library",
+            "name": "move new downloads scan",
             "description": "Scans downloads, creates plan with targets. Does NOT move files. Call this first.",
             "inputSchema": {
                 "type": "object",
@@ -100,21 +147,21 @@ def _mcp_tools() -> list[dict[str, object]]:
             },
         },
         {
-            "name": "confirm scan",
+            "name": "confirm move new downloads scan",
             "description": "Applies the scan plan: moves files, stops active downloads. Use after reviewing plan.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
-                        "description": "scan_id from scan media library"
+                        "description": "scan_id from move new downloads scan"
                     }
                 },
                 "required": ["scanId"]
             },
         },
         {
-            "name": "get scan report",
+            "name": "get move new downloads scan report",
             "description": "Returns scan details: items with actions (move/replace/skip). Use to review plan. Omits scanId for last scan.",
             "inputSchema": {
                 "type": "object",
@@ -126,6 +173,28 @@ def _mcp_tools() -> list[dict[str, object]]:
                 }
             },
         },
+        {
+            "name": "trigger jellyfin library scan",
+            "description": "Triggers a library scan in Jellyfin for the specified library.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "libraryName": {
+                        "type": "string",
+                        "description": "Library name (e.g., 'Movies' or 'Shows')"
+                    }
+                },
+                "required": ["libraryName"]
+            },
+        },
+        {
+            "name": "get available jellyfin libraries list",
+            "description": "Returns all available Jellyfin libraries.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+            },
+        },
     ]
 
 
@@ -134,8 +203,11 @@ async def mcp(request: dict) -> JSONResponse:
     method = request.get("method")
     request_id = request.get("id")
 
+    if method != "notifications/initialized":
+        logger.info("MCP request received: method=%s id=%s", method, request_id)
+
     if method == "notifications/initialized":
-        return JSONResponse(status_code=204, content=None)
+        return Response(status_code=204)
 
     if method == "initialize":
         return JSONResponse(
@@ -160,15 +232,17 @@ async def mcp(request: dict) -> JSONResponse:
         params = request.get("params") or {}
         name = params.get("name")
         arguments = params.get("arguments") or {}
+        logger.info("TOOL >>> %s", name)
 
         manager: ScanManager = app.state.scan_manager
 
-        if name == "scan media library":
+        if name == "move new downloads scan":
             scan = await manager.create_scan(
                 ScanRequest(
                     replaceExisting=arguments.get("replaceExisting", True),
                 )
             )
+            logger.info("TOOL <<< %s (scan_id=%s)", name, scan.scan_id)
             return JSONResponse(
                 {
                     "jsonrpc": "2.0",
@@ -185,16 +259,14 @@ async def mcp(request: dict) -> JSONResponse:
                 }
             )
 
-        if name == "confirm scan":
+        if name == "confirm move new downloads scan":
             scan_id = arguments.get("scanId")
             if not scan_id:
-                return JSONResponse(
-                    {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32602, "message": "scanId is required"}},
-                    status_code=400,
-                )
+                return _mcp_error_response(request_id, -32602, "scanId is required")
 
             try:
                 scan = await manager.confirm_scan(scan_id)
+                logger.info("TOOL <<< %s (scan_id=%s)", name, scan_id)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -211,12 +283,10 @@ async def mcp(request: dict) -> JSONResponse:
                     }
                 )
             except HTTPException as exc:
-                return JSONResponse(
-                    {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32000, "message": exc.detail}},
-                    status_code=exc.status_code,
-                )
+                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
+                return _mcp_error_response(request_id, -32000, exc.detail)
 
-        if name == "get scan report":
+        if name == "get move new downloads scan report":
             scan_id = arguments.get("scanId")
             try:
                 if scan_id:
@@ -224,6 +294,7 @@ async def mcp(request: dict) -> JSONResponse:
                 else:
                     scan = manager.get_current_scan()
                 if not scan:
+                    logger.info("TOOL <<< %s (no active scan)", name)
                     return JSONResponse(
                         {
                             "jsonrpc": "2.0",
@@ -232,13 +303,14 @@ async def mcp(request: dict) -> JSONResponse:
                                 "content": [
                                     {
                                         "type": "text",
-                                        "text": json.dumps({"hint": "No scan. Call 'scan media library' to start."}),
+                                        "text": json.dumps({"hint": "No scan. Call 'move new downloads scan' to start."}),
                                     }
                                 ],
                                 "isError": False,
                             },
                         }
                     )
+                logger.info("TOOL <<< %s", name)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -255,20 +327,115 @@ async def mcp(request: dict) -> JSONResponse:
                     }
                 )
             except HTTPException as exc:
+                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
+                return _mcp_error_response(request_id, -32000, exc.detail)
+
+        if name == "trigger jellyfin library scan":
+            library_name = arguments.get("libraryName")
+            if not library_name:
+                return _mcp_error_response(request_id, -32602, "libraryName is required")
+
+            client = JellyfinClient.from_env()
+            if not client:
+                logger.warning("TOOL xxx %s (Jellyfin not configured)", name)
                 return JSONResponse(
-                    {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32000, "message": exc.detail}},
-                    status_code=exc.status_code,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(
+                                        {
+                                            "message": "Jellyfin integration is not configured. Set ENABLE_JELLYFIN_INTEGRATION=true and JELLYFIN_API_KEY in .env"
+                                        }
+                                    ),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
                 )
 
-        return JSONResponse(
-            {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "Tool not found"}},
-            status_code=404,
-        )
+            try:
+                target = await client.scan_library(library_name)
+                logger.info("TOOL <<< %s (library=%s)", name, library_name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(
+                                        {
+                                            "message": f"Triggered Jellyfin library scan for '{target.get('name', library_name)}'",
+                                            "library": target,
+                                        }
+                                    ),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
 
-    return JSONResponse(
-        {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "Method not found"}},
-        status_code=404,
-    )
+        if name == "get available jellyfin libraries list":
+            client = JellyfinClient.from_env()
+            if not client:
+                logger.warning("TOOL xxx %s (Jellyfin not configured)", name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(
+                                        {
+                                            "message": "Jellyfin integration is not configured. Set ENABLE_JELLYFIN_INTEGRATION=true and JELLYFIN_API_KEY in .env"
+                                        }
+                                    ),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+
+            try:
+                libraries = await client.list_libraries()
+                logger.info("TOOL <<< %s", name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps({"libraries": libraries}),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
+
+        logger.warning("TOOL xxx %s (not found)", name)
+        return _mcp_error_response(request_id, -32601, "Tool not found")
+
+    logger.warning("MCP method not found: %s", method)
+    return _mcp_error_response(request_id, -32601, "Method not found")
 
 
 @app.get("/health")

@@ -14,6 +14,19 @@ SAMPLE_MARKERS = re.compile(r"\bsample\b", re.IGNORECASE)
 SAMPLE_SIZE_THRESHOLD = 150 * 1024 * 1024  # 150MB
 SEASON_EPISODE_RE = re.compile(r"s\d{1,2}e\d{1,2}", re.IGNORECASE)
 SEASON_ONLY_RE = re.compile(r"season\s*\d{1,2}|s\d{1,2}\b", re.IGNORECASE)
+SEASON_EPISODE_TOKEN_RE = re.compile(
+    r"(?:^|[^a-z0-9])s(?P<season>\d{1,2})e(?P<episode>\d{1,3})(?:v\d+)?(?:[^a-z0-9]|$)",
+    re.IGNORECASE,
+)
+SEASON_DASH_EPISODE_RE = re.compile(
+    r"(?:^|[^a-z0-9])s(?P<season>\d{1,2})\s*-\s*(?P<episode>\d{1,3})(?:v\d+)?(?:[^a-z0-9]|$)",
+    re.IGNORECASE,
+)
+SEASON_WORD_DASH_EPISODE_RE = re.compile(
+    r"(?:^|[^a-z0-9])season\s*(?P<season>\d{1,2})\s*-\s*(?P<episode>\d{1,3})(?:v\d+)?(?:[^a-z0-9]|$)",
+    re.IGNORECASE,
+)
+SEASON_FOLDER_RE = re.compile(r"(?:^|[^a-z0-9])(?:season\s*|s)(?P<season>\d{1,2})(?:[^a-z0-9]|$)", re.IGNORECASE)
 
 
 def classify_candidate(candidate: CandidateItem) -> ClassificationResult:
@@ -24,9 +37,16 @@ def classify_candidate(candidate: CandidateItem) -> ClassificationResult:
     year = _extract_int(parsed.get("year"))
     season = _extract_int(parsed.get("season"))
     episode = _extract_int(parsed.get("episode"))
+    fallback_season, fallback_episode = _extract_season_episode(label)
+    if season is None:
+        season = fallback_season
+    if episode is None:
+        episode = fallback_episode
+    if season is None:
+        season = _extract_season_from_folder(candidate)
 
     kind, confidence, reason = _infer_kind(label, parsed, season, episode)
-    if _looks_like_extra(label, parsed) and kind == "series":
+    if _looks_like_extra(label, parsed) and kind in ("series", "movie"):
         kind = "skip"
         confidence = max(confidence, 0.75)
         reason = "Detected extras/specials marker"
@@ -52,8 +72,8 @@ def classify_candidate(candidate: CandidateItem) -> ClassificationResult:
 
 
 def _candidate_label(candidate: CandidateItem) -> str:
-    if candidate.container_path and candidate.relative_path:
-        return f"{candidate.container_path}/{candidate.relative_path}"
+    if candidate.relative_path:
+        return candidate.relative_path
     return candidate.name
 
 
@@ -82,6 +102,43 @@ def _extract_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _extract_season_episode(label: str) -> tuple[int | None, int | None]:
+    season: int | None = None
+    episode: int | None = None
+
+    for match in SEASON_EPISODE_TOKEN_RE.finditer(label):
+        season = int(match.group("season"))
+        episode = int(match.group("episode"))
+
+    if season is None or episode is None:
+        for match in SEASON_DASH_EPISODE_RE.finditer(label):
+            season = int(match.group("season"))
+            episode = int(match.group("episode"))
+
+    if season is None or episode is None:
+        for match in SEASON_WORD_DASH_EPISODE_RE.finditer(label):
+            season = int(match.group("season"))
+            episode = int(match.group("episode"))
+
+    return season, episode
+
+
+def _extract_season_from_folder(candidate: CandidateItem) -> int | None:
+    if candidate.relative_path:
+        parts = candidate.relative_path.split("/")
+        if len(parts) > 1:
+            for part in parts[:-1]:
+                match = SEASON_FOLDER_RE.search(part)
+                if match:
+                    return int(match.group("season"))
+    source = Path(candidate.source_path)
+    if source.parent and source.parent.name:
+        match = SEASON_FOLDER_RE.search(source.parent.name)
+        if match:
+            return int(match.group("season"))
+    return None
 
 
 def _infer_kind(label: str, parsed: dict[str, Any], season: int | None, episode: int | None) -> tuple[str, float, str]:

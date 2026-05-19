@@ -20,7 +20,8 @@ class OrganizerService:
         self._resolver = PathResolver(config)
 
     async def execute(self, run_state: RunState) -> RunState:
-        candidates = scan_candidates(self._config.paths)
+        scan_result = scan_candidates(self._config.paths)
+        candidates = scan_result.candidates
         touched_libraries: set[str] = set()
         run_state.active_step = "scan"
         run_state.active_item_path = None
@@ -29,6 +30,17 @@ class OrganizerService:
         self._log(run_state, "info", "scan.started", f"Scanning found {len(candidates)} candidate items")
         run_state.counts.scanned = len(candidates)
         run_state.updated_at = datetime.now(UTC)
+
+        for error in scan_result.errors:
+            run_state.counts.failed += 1
+            self._log(
+                run_state,
+                "error",
+                "scan.path_unreadable",
+                f"Filesystem read error while scanning {error.path}: {error.error}",
+                item_path=error.path,
+                details={"error": error.error},
+            )
 
         in_progress_paths = await self._load_in_progress_paths(run_state)
 
@@ -110,13 +122,13 @@ class OrganizerService:
 
     async def _load_in_progress_paths(self, run_state: RunState) -> list[str]:
         client = QbittorrentClient.from_env()
-         if not client:
-             self._log(
-                 run_state,
-                 "warning",
-                 "download.mcp.missing",
-                 "QBT_MCP_URL not set; skipping in-progress download check",
-             )
+        if not client:
+            self._log(
+                run_state,
+                "warning",
+                "download.mcp.missing",
+                "QBT_MCP_URL not set; skipping in-progress download check",
+            )
             return []
 
         try:
@@ -125,8 +137,8 @@ class OrganizerService:
                 self._log(
                     run_state,
                     "info",
-                     "download.mcp.loaded",
-                     f"Loaded {len(paths)} in-progress download paths",
+                    "download.mcp.loaded",
+                    f"Loaded {len(paths)} in-progress download paths",
                 )
             return paths
         except Exception as exc:  # noqa: BLE001

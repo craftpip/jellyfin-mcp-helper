@@ -136,7 +136,7 @@ def test_mcp_scan_flow_end_to_end():
     assert file_exists(test_file), f"Test file not created: {test_file}"
 
     # Step 3: Trigger scan via MCP
-    scan_resp = call_mcp("scan media library", {"replaceExisting": True})
+    scan_resp = call_mcp("move new downloads scan", {"replaceExisting": True})
     # Try to extract scanId from response
     scan_id = None
     try:
@@ -161,7 +161,7 @@ def test_mcp_scan_flow_end_to_end():
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "tools/call",
-                "params": {"name": "get scan report", "arguments": {}} ,
+                "params": {"name": "get move new downloads scan report", "arguments": {}} ,
             },
             headers={"Content-Type": "application/json", "X-MCP-Key": MCP_KEY},
             timeout=60,
@@ -190,7 +190,7 @@ def test_mcp_scan_flow_end_to_end():
         scan_id = report.get("scan_id")
     assert scan_id, "No scan_id available to confirm scan"
 
-    confirm_resp = call_mcp("confirm scan", {"scanId": scan_id})
+    confirm_resp = call_mcp("confirm move new downloads scan", {"scanId": scan_id})
     assert confirm_resp, "Confirm scan API did not return; flow may have failed"
 
     # Step 6: Verify the file was moved to the movie root

@@ -36,6 +36,17 @@ class JellyfinClient:
             return self._series_library
         return None
 
+    async def list_libraries(self) -> list[dict]:
+        """Returns all available Jellyfin libraries."""
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(
+                f"{self._base_url}/Library/VirtualFolders",
+                headers={"X-Emby-Token": self._api_key},
+            )
+            response.raise_for_status()
+        libraries = response.json()
+        return [{"name": item.get("Name", ""), "id": item.get("ItemId", "")} for item in libraries]
+
     async def scan_library(self, library_name: str) -> dict:
         target = await self._resolve_library(library_name)
         async with httpx.AsyncClient(timeout=60) as client:

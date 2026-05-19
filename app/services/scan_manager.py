@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,9 +25,10 @@ from app.services.classifier import classify_candidate
 from app.services.jellyfin import JellyfinClient
 from app.services.download_client import QbittorrentClient
 from app.services.resolver import PathResolver
-from app.services.scanner import scan_candidates, _to_absolute_path
+from app.services.scanner import ScanPathError, scan_candidates, _to_absolute_path
 
 logger = logging.getLogger(__name__)
+REVISION_RE = re.compile(r"\bv(\d+)\b", re.IGNORECASE)
 
 
 class ScanManager:
@@ -57,7 +59,22 @@ class ScanManager:
             created_at=now,
         )
 
+        logger.info(
+            "Scan %s started: operation=%s replace_existing=%s",
+            scan_id,
+            request.operation,
+            request.replace_existing,
+        )
+
         await self._run_scan(request)
+
+        logger.info(
+            "Scan %s finished: %s planned actions, %s skipped, %s filesystem/service issues",
+            scan_id,
+            sum(1 for item in self._current_scan.items if item.action in ("move", "replace")),
+            self._current_scan.counts.skipped,
+            len(self._current_scan.service_errors),
+        )
 
         return self._current_scan
 
@@ -68,12 +85,22 @@ class ScanManager:
 
         in_progress_paths = await self._load_in_progress_paths()
         scan.skipped_in_progress = len(in_progress_paths)
+        planned_targets: dict[str, tuple[int, int]] = {}
 
-        candidates = scan_candidates(self._config.paths)
+        scan_result = scan_candidates(self._config.paths)
+        candidates = scan_result.candidates
+        self._record_scan_errors(scan_result.errors)
+        logger.info(
+            "Scan %s found %s readable candidates and %s unreadable paths",
+            scan.scan_id,
+            len(candidates),
+            len(scan_result.errors),
+        )
 
         for candidate in candidates:
             if in_progress_paths and self._is_in_progress(candidate.source_path, in_progress_paths):
                 scan.counts.skipped += 1
+                logger.warning("Scan %s skipped in-progress download: %s", scan.scan_id, candidate.source_path)
                 scan.items.append(
                     ScannedItem(
                         source_path=candidate.source_path,
@@ -90,9 +117,16 @@ class ScanManager:
             try:
                 classification = classify_candidate(candidate)
                 scan.counts.total += 1
+                logger.info("Scan %s processing candidate %d/%d: %s", scan.scan_id, scan.counts.total, len(candidates), candidate.source_path)
 
                 if classification.kind == "skip" or classification.confidence < self._config.model.classify_confidence_threshold:
                     scan.counts.skipped += 1
+                    logger.info(
+                        "Scan %s skipped %s: %s",
+                        scan.scan_id,
+                        candidate.source_path,
+                        classification.reason,
+                    )
                     scan.items.append(
                         ScannedItem(
                             source_path=candidate.source_path,
@@ -106,11 +140,52 @@ class ScanManager:
                     )
                     continue
 
+                logger.info("Scan %s resolving target for candidate %d/%d: %s", scan.scan_id, scan.counts.total, len(candidates), candidate.source_path)
                 resolved = await self._resolver.resolve(candidate, classification)
+                logger.info("Scan %s resolved target for %s -> %s", scan.scan_id, candidate.source_path, resolved.target_path)
 
                 target_path = Path(resolved.target_path)
+                revision = self._extract_revision(candidate.name)
+
+                existing_plan = planned_targets.get(resolved.target_path)
+                if existing_plan:
+                    existing_index, existing_revision = existing_plan
+                    if revision > existing_revision:
+                        previous_item = scan.items[existing_index]
+                        if previous_item.action != "skip":
+                            if previous_item.item_type == "movie":
+                                scan.counts.movies = max(scan.counts.movies - 1, 0)
+                            elif previous_item.item_type == "series":
+                                scan.counts.series = max(scan.counts.series - 1, 0)
+                            scan.counts.skipped += 1
+
+                        previous_item.action = "skip"
+                        previous_item.reason = f"Superseded by higher revision v{revision} for same episode"
+                        previous_item.target_path = ""
+                        planned_targets.pop(resolved.target_path, None)
+                    else:
+                        scan.counts.skipped += 1
+                        logger.info(
+                            "Scan %s skipped lower revision for %s",
+                            scan.scan_id,
+                            candidate.source_path,
+                        )
+                        scan.items.append(
+                            ScannedItem(
+                                source_path=candidate.source_path,
+                                name=candidate.name,
+                                item_type="skip",
+                                confidence=classification.confidence,
+                                reason=f"Lower revision v{revision} skipped; keeping v{existing_revision} for same episode",
+                                target_path="",
+                                action="skip",
+                            )
+                        )
+                        continue
+
                 target_exists = target_path.exists()
                 action = "replace" if target_exists else "move"
+                planned_action = action if request.replace_existing or not target_exists else "skip"
 
                 if classification.kind == "movie":
                     scan.counts.movies += 1
@@ -125,11 +200,28 @@ class ScanManager:
                         confidence=classification.confidence,
                         reason=classification.reason,
                         target_path=resolved.target_path,
-                        action=action if request.replace_existing or not target_exists else "skip",
+                        action=planned_action,
                     )
                 )
+                if planned_action == "skip":
+                    logger.info(
+                        "Scan %s skipped %s because target already exists and replace is disabled",
+                        scan.scan_id,
+                        candidate.source_path,
+                    )
+                else:
+                    logger.info(
+                        "Scan %s planned %s: %s -> %s",
+                        scan.scan_id,
+                        planned_action,
+                        candidate.source_path,
+                        resolved.target_path,
+                    )
+                if planned_action != "skip":
+                    planned_targets[resolved.target_path] = (len(scan.items) - 1, revision)
 
             except Exception as exc:
+                logger.error("Scan %s failed to process %s: %s", scan.scan_id, candidate.source_path, str(exc), exc_info=True)
                 scan.items.append(
                     ScannedItem(
                         source_path=candidate.source_path,
@@ -143,8 +235,48 @@ class ScanManager:
                     )
                 )
 
+    def _record_scan_errors(self, errors: list[ScanPathError]) -> None:
+        scan = self._current_scan
+        if not scan or not errors:
+            return
+
+        messages: list[str] = []
+        for error in errors:
+            scan.counts.skipped += 1
+            path_name = Path(error.path).name or error.path
+            message = f"Filesystem read error while scanning path: {error.error}"
+            logger.warning("Scan %s could not read path: %s", scan.scan_id, error.path)
+            scan.items.append(
+                ScannedItem(
+                    source_path=error.path,
+                    name=path_name,
+                    item_type="skip",
+                    confidence=0.0,
+                    reason=message,
+                    target_path="",
+                    action="skip",
+                    error=error.error,
+                )
+            )
+            messages.append(f"{error.path} ({error.error})")
+
+        summary = "; ".join(messages)
+        if "Filesystem" in scan.service_errors:
+            scan.service_errors["Filesystem"] += f"; {summary}"
+        else:
+            scan.service_errors["Filesystem"] = summary
+
+    @staticmethod
+    def _extract_revision(name: str) -> int:
+        matches = REVISION_RE.findall(name)
+        if not matches:
+            return 0
+        return max(int(value) for value in matches)
+
     async def confirm_scan(self, scan_id: str) -> ScanPlan:
         scan = self.get_scan(scan_id)
+
+        logger.info("Confirm started for scan %s", scan_id)
 
         if scan.status == "confirmed":
             raise HTTPException(status_code=400, detail="Scan already confirmed. Run 'scan library' for a new scan.")
@@ -160,6 +292,7 @@ class ScanManager:
                 continue
 
             try:
+                logger.info("Applying %s: %s -> %s", item.action, item.source_path, item.target_path)
                 await self._apply_item(item)
                 if item.item_type in ("movie", "series"):
                     touched_libraries.add(item.item_type)
@@ -168,14 +301,24 @@ class ScanManager:
                     scan.counts.moved += 1
                 elif item.action == "replace":
                     scan.counts.replaced += 1
+                logger.info("Finished %s: %s", item.action, item.target_path)
             except Exception as exc:
                 scan.counts.failed += 1
                 item.error = str(exc)
+                logger.error("Failed %s for %s: %s", item.action, item.source_path, str(exc), exc_info=True)
 
         await self._trigger_jellyfin_scans(touched_libraries)
 
         scan.status = "confirmed"
         scan.confirmed_at = now
+
+        logger.info(
+            "Confirm finished for scan %s: moved=%s replaced=%s failed=%s",
+            scan_id,
+            scan.counts.moved,
+            scan.counts.replaced,
+            scan.counts.failed,
+        )
 
         return scan
 
@@ -215,6 +358,7 @@ class ScanManager:
 
         try:
             await client.stop_seeding_for_paths(candidate_paths)
+            logger.info("Stopped seeding check completed for %s", candidate.source_path)
         except Exception as exc:
             error_msg = f"Error stopping seeding in qBittorrent: {str(exc)}"
             logger.error(error_msg, exc_info=True)
@@ -243,12 +387,12 @@ class ScanManager:
     async def _load_in_progress_paths(self) -> list[str]:
         client = QbittorrentClient.from_env(self._config.paths)
         if not client:
-            logger.warning("No qBittorrent client configured")
+            logger.warning("qBittorrent integration is not configured; skipping in-progress download check")
             return []
 
         try:
             paths = await client.list_in_progress_paths()
-            logger.info(f"Found {len(paths)} in-progress paths: {paths}")
+            logger.info("Checked qBittorrent: found %s in-progress paths", len(paths))
             return paths
         except Exception as exc:
             error_msg = f"Error loading in-progress paths from qBittorrent: {str(exc)}"
@@ -280,11 +424,12 @@ class ScanManager:
             try:
                 library_name = client.library_name_for_kind(item_type)
                 if not library_name:
-                    logger.warning(f"No Jellyfin library configured for item type: {item_type}")
+                    logger.warning("No Jellyfin library configured for item type: %s", item_type)
                     continue
                 
+                logger.info("Triggering Jellyfin scan for library: %s", library_name)
                 await client.scan_library(library_name)
-                logger.info(f"Triggered Jellyfin scan for library: {library_name}")
+                logger.info("Finished Jellyfin scan trigger for library: %s", library_name)
             except Exception as exc:
                 error_msg = f"Error triggering Jellyfin scan for item type '{item_type}': {str(exc)}"
                 logger.error(error_msg, exc_info=True)

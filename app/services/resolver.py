@@ -115,6 +115,7 @@ class PathResolver:
         
         existing_paths = list_target_paths(series_root)
         show_name = sanitize_name(classification.title or candidate.name)
+        show_name = re.sub(r"([^a-zA-Z0-9])\1+$", r"\1", show_name)
         best_match = await self._pick_existing_path(
             media_kind="series",
             title=show_name,
