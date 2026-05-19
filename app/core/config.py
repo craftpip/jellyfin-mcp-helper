@@ -73,7 +73,7 @@ class PathsConfig(BaseModel):
     def get_media_prefixes(self) -> list[str]:
         """Extract media prefixes from download_roots.
         
-        Example: ['/media1/torrents', '/media2/torrents'] -> ['/media1', '/media2']
+        Example: ['/data/torrents', '/data2/torrents'] -> ['/data', '/data2']
         """
         prefixes = []
         for root in self.download_roots:

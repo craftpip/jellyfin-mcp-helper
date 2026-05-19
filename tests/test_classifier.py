@@ -5,8 +5,8 @@ from app.services.classifier import classify_candidate
 def _candidate(name: str, *, container_path: str | None = None, relative_path: str | None = None) -> CandidateItem:
     return CandidateItem(
         source_root_key="downloads_0",
-        source_root="/media1/torrents",
-        source_path=f"/media1/torrents/{name}",
+        source_root="/data/torrents",
+        source_path=f"/data/torrents/{name}",
         name=name,
         container_path=container_path,
         relative_path=relative_path,
@@ -16,7 +16,7 @@ def _candidate(name: str, *, container_path: str | None = None, relative_path: s
 def test_extracts_episode_with_v_suffix() -> None:
     candidate = _candidate(
         name="[Judas] Spy X Family - S03E02v2.mkv",
-        container_path="/media1/torrents/[Judas] Spy X Family (Season 03)",
+        container_path="/data/torrents/[Judas] Spy X Family (Season 03)",
         relative_path="[Judas] Spy X Family - S03E02v2.mkv",
     )
 
@@ -60,7 +60,7 @@ def test_extracts_episode_from_season_word_dash_episode_pattern() -> None:
 def test_uses_folder_season_when_missing_in_filename() -> None:
     candidate = _candidate(
         name="Show Name - 03.mkv",
-        container_path="/media1/torrents/Show Name Season 04",
+        container_path="/data/torrents/Show Name Season 04",
         relative_path="Show Name - 03.mkv",
     )
 

@@ -140,8 +140,8 @@ def _normalize_qbt_path(qbt_path: str, paths_config: PathsConfig | None) -> str 
     Example:
         qbt_path: /config/Downloads/The Daily Life of the Immortal King - Season 4
         → Extract: "The Daily Life of the Immortal King - Season 4"
-        → Find in download_roots: /media1/torrents
-        → Return: /media1/torrents/The Daily Life of the Immortal King - Season 4
+        → Find in download_roots: /data/torrents
+        → Return: /data/torrents/The Daily Life of the Immortal King - Season 4
     """
     if not paths_config:
         # If no config provided, return path as-is (already in container format)

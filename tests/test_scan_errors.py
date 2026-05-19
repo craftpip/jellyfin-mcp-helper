@@ -62,7 +62,7 @@ def test_create_scan_returns_filesystem_errors_to_user(tmp_path, monkeypatch) ->
             candidates=[],
             errors=[
                 ScanPathError(
-                    path="/media1/torrents/CORRUPTED-One-Piece/One Piece Season 14",
+                    path="/data/torrents/CORRUPTED-One-Piece/One Piece Season 14",
                     error="[Errno 5] Input/output error",
                 )
             ],
@@ -73,10 +73,10 @@ def test_create_scan_returns_filesystem_errors_to_user(tmp_path, monkeypatch) ->
     report = _format_scan_report(scan)
 
     assert "Filesystem" in scan.service_errors
-    assert "/media1/torrents/CORRUPTED-One-Piece/One Piece Season 14" in scan.service_errors["Filesystem"]
+    assert "/data/torrents/CORRUPTED-One-Piece/One Piece Season 14" in scan.service_errors["Filesystem"]
     assert len(scan.items) == 1
-    assert scan.items[0].source_path == "/media1/torrents/CORRUPTED-One-Piece/One Piece Season 14"
+    assert scan.items[0].source_path == "/data/torrents/CORRUPTED-One-Piece/One Piece Season 14"
     assert scan.items[0].error == "[Errno 5] Input/output error"
-    assert report["skipped"][0]["source_path"] == "/media1/torrents/CORRUPTED-One-Piece/One Piece Season 14"
+    assert report["skipped"][0]["source_path"] == "/data/torrents/CORRUPTED-One-Piece/One Piece Season 14"
     assert report["skipped"][0]["error"] == "[Errno 5] Input/output error"
     assert "review skipped items for the exact paths" in report["next"]
