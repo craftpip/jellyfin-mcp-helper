@@ -15,9 +15,9 @@ def _candidate(name: str, *, container_path: str | None = None, relative_path: s
 
 def test_extracts_episode_with_v_suffix() -> None:
     candidate = _candidate(
-        name="[Judas] Spy X Family - S03E02v2.mkv",
-        container_path="/data/torrents/[Judas] Spy X Family (Season 03)",
-        relative_path="[Judas] Spy X Family - S03E02v2.mkv",
+        name="[Group] Show Name - S03E02v2.mkv",
+        container_path="/data/torrents/[Group] Show Name (Season 03)",
+        relative_path="[Group] Show Name - S03E02v2.mkv",
     )
 
     result = classify_candidate(candidate)
@@ -28,7 +28,7 @@ def test_extracts_episode_with_v_suffix() -> None:
 
 
 def test_extracts_multi_digit_episode_with_revision_suffix() -> None:
-    candidate = _candidate(name="[Judas] Spy X Family - S03E10v3.mkv")
+    candidate = _candidate(name="[Group] Show Name - S03E10v3.mkv")
 
     result = classify_candidate(candidate)
 
@@ -38,7 +38,7 @@ def test_extracts_multi_digit_episode_with_revision_suffix() -> None:
 
 
 def test_extracts_episode_from_s_dash_episode_pattern() -> None:
-    candidate = _candidate(name="[EMBER] Seirei Gensouki S2 - 02.mkv")
+    candidate = _candidate(name="[Group] Show Name S2 - 02.mkv")
 
     result = classify_candidate(candidate)
 

@@ -25,3 +25,4 @@ htmlcov/
 .DS_Store
 *.swp
 *.swo
+tests/tests/

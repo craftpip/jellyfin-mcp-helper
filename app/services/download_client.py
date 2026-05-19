@@ -138,10 +138,10 @@ def _normalize_qbt_path(qbt_path: str, paths_config: PathsConfig | None) -> str 
     Strategy: Extract folder name from qBittorrent path and search for it in download_roots.
     
     Example:
-        qbt_path: /config/Downloads/The Daily Life of the Immortal King - Season 4
-        → Extract: "The Daily Life of the Immortal King - Season 4"
+        qbt_path: /config/Downloads/Show Name - Season 4
+        → Extract: "Show Name - Season 4"
         → Find in download_roots: /data/torrents
-        → Return: /data/torrents/The Daily Life of the Immortal King - Season 4
+        → Return: /data/torrents/Show Name - Season 4
     """
     if not paths_config:
         # If no config provided, return path as-is (already in container format)
