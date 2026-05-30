@@ -83,6 +83,13 @@ def test_movie_without_year() -> None:
     assert result.kind == "movie"
 
 
+def test_standalone_tagged_file_without_episode_marker_defaults_to_movie() -> None:
+    result = classify_candidate(_candidate(name="[RH] Kanashimi no Belladonna [838F149B].mkv"))
+    assert result.kind == "movie"
+    assert result.season is None
+    assert result.episode is None
+
+
 def test_ova_is_skipped() -> None:
     result = classify_candidate(_candidate(name="[Group] Show - OVA.mkv"))
     assert result.kind == "skip"
