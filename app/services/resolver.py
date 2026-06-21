@@ -15,6 +15,7 @@ INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*]')
 WORD_RE = re.compile(r"[a-z0-9]+")
 MAX_AI_PATH_CHOICES = 20
 EPISODE_TAG_RE = re.compile(r"\bs\d{1,2}e\d{1,3}\b.*$", re.IGNORECASE)
+TRAILING_YEAR_RE = re.compile(r"\s+\d{4}$")
 
 
 def sanitize_name(value: str) -> str:
@@ -25,6 +26,10 @@ def sanitize_name(value: str) -> str:
 
 def normalize_text(value: str) -> str:
     return " ".join(WORD_RE.findall(value.lower()))
+
+
+def normalize_series_text(value: str) -> str:
+    return TRAILING_YEAR_RE.sub("", normalize_text(value)).strip()
 
 
 def tokenize(value: str) -> set[str]:
@@ -86,13 +91,15 @@ class PathResolver:
         movie_roots_list = list(self._config.paths.movie_roots.values())
         movie_root = movie_roots_list[index] if index < len(movie_roots_list) else movie_roots_list[0]
         
-        existing_paths = list_target_paths(movie_root)
+        all_existing_paths = []
+        for root in movie_roots_list:
+            all_existing_paths.extend(list_target_paths(root))
         folder_name = self._movie_folder_name(classification)
         best_match = await self._pick_existing_path(
             media_kind="movie",
             title=classification.title or candidate.name,
             year=classification.year,
-            target_paths=existing_paths,
+            target_paths=all_existing_paths,
             desired_name=folder_name,
         )
 
@@ -113,14 +120,16 @@ class PathResolver:
         series_roots_list = list(self._config.paths.series_roots.values())
         series_root = series_roots_list[index] if index < len(series_roots_list) else series_roots_list[0]
         
-        existing_paths = list_target_paths(series_root)
+        all_existing_paths = []
+        for root in series_roots_list:
+            all_existing_paths.extend(list_target_paths(root))
         show_name = sanitize_name(classification.title or candidate.name)
         show_name = re.sub(r"([^a-zA-Z0-9])\1+$", r"\1", show_name)
         best_match = await self._pick_existing_path(
             media_kind="series",
             title=show_name,
             year=classification.year,
-            target_paths=existing_paths,
+            target_paths=all_existing_paths,
             desired_name=show_name,
         )
 
@@ -129,7 +138,7 @@ class PathResolver:
         episode_number = classification.episode or 1
         season_dir = self._pick_existing_season_dir(show_dir, season_number) or (show_dir / f"Season {season_number:02d}")
         ext = Path(candidate.source_path).suffix or ".mkv"
-        episode_title = sanitize_name(classification.title or show_dir.name)
+        episode_title = sanitize_name(classification.episode_title or classification.title or show_dir.name)
         episode_base = f"{episode_title} - S{season_number:02d}E{episode_number:02d}"
         target_path = str(season_dir / f"{episode_base}{ext}")
         return ResolvedTarget(
@@ -148,6 +157,15 @@ class PathResolver:
         target_paths: list[str],
         desired_name: str,
     ) -> str | None:
+        exact_match = self._pick_exact_path_match(
+            media_kind=media_kind,
+            title=title,
+            target_paths=target_paths,
+            desired_name=desired_name,
+        )
+        if exact_match:
+            return exact_match
+
         shortlisted_paths = self._shortlist_target_paths(
             media_kind=media_kind,
             title=title,
@@ -171,8 +189,43 @@ class PathResolver:
             target_paths=shortlisted_paths,
             desired_name=desired_name,
         )
-        if best_path and score >= self._config.model.path_confidence_threshold:
+        if best_path and score >= self._config.model.path_confidence_threshold and self._is_safe_existing_match(title, desired_name, best_path):
             return best_path
+        return None
+
+    def _is_safe_existing_match(self, title: str, desired_name: str, target_path: str) -> bool:
+        wanted_norms = {normalize_series_text(value) for value in (title, desired_name) if normalize_series_text(value)}
+        wanted_tokens = [tokenize(value) for value in (title, desired_name) if tokenize(value)]
+        alias_values = series_aliases(target_path) if Path(target_path).is_dir() else {Path(target_path).name}
+
+        for alias in alias_values:
+            alias_norm = normalize_series_text(alias)
+            alias_tokens = tokenize(alias)
+            if alias_norm in wanted_norms:
+                return True
+            if any(tokens and tokens <= alias_tokens for tokens in wanted_tokens):
+                return True
+        return False
+
+    def _pick_exact_path_match(
+        self,
+        media_kind: str,
+        title: str,
+        target_paths: list[str],
+        desired_name: str,
+    ) -> str | None:
+        normalizer = normalize_series_text if media_kind == "series" else normalize_text
+        title_norm = normalizer(title)
+        desired_norm = normalizer(desired_name)
+        wanted = {value for value in {title_norm, desired_norm} if value}
+        if not wanted:
+            return None
+
+        for path in target_paths:
+            folder_name = Path(path).name
+            alias_values = series_aliases(path) if media_kind == "series" else {folder_name}
+            if any(normalizer(alias) in wanted for alias in alias_values):
+                return path
         return None
 
     def _shortlist_target_paths(

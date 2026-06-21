@@ -29,6 +29,12 @@ def test_episode_sxxexx_pattern() -> None:
     assert result.episode == 2
 
 
+def test_anime_episode_without_season_defaults_to_series() -> None:
+    result = classify_candidate(_candidate(name="[EMBER] Party kara Tsuihou sareta Sono Chiyushi, Jitsu wa Saikyou ni Tsuki - 01.mkv"))
+    assert result.kind == "series"
+    assert result.episode == 1
+
+
 def test_episode_sxxexx_with_revision() -> None:
     result = classify_candidate(_candidate(name="[Group] Show - S03E02v2.mkv"))
     assert result.kind == "series"
@@ -67,6 +73,38 @@ def test_season_from_folder_when_missing_in_filename() -> None:
     assert result.kind == "series"
     assert result.season == 4
     assert result.episode == 3
+
+
+def test_bare_numbered_episode_in_show_folder_uses_folder_as_series_title() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="10-Conclusion.mkv",
+            container_path="/data/torrents/Texhnolyze",
+            relative_path="10-Conclusion.mkv",
+            file_size=1024,
+        )
+    )
+
+    assert result.kind == "series"
+    assert result.title == "Texhnolyze"
+    assert result.episode_title == "Conclusion"
+    assert result.episode == 10
+
+
+def test_single_digit_bare_numbered_episode_in_show_folder_is_not_sampled_as_movie() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="1-Stranger.mkv",
+            container_path="/data/torrents/Texhnolyze",
+            relative_path="1-Stranger.mkv",
+            file_size=1024,
+        )
+    )
+
+    assert result.kind == "series"
+    assert result.title == "Texhnolyze"
+    assert result.episode_title == "Stranger"
+    assert result.episode == 1
 
 
 def test_movie_with_year() -> None:
@@ -120,6 +158,40 @@ def test_ova_in_subfolder_is_skipped() -> None:
 def test_extra_in_episode_title_is_skipped() -> None:
     result = classify_candidate(_candidate(name="[Group] Show - S01E01 - NCED.mkv"))
     assert result.kind == "skip"
+
+
+def test_bonus_recap_is_skipped() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="Chobits - Bonus - Recap 18.5.mkv",
+            container_path="/data/torrents/Chobits [1080p;H265] (2002)",
+            relative_path="Chobits - Bonus - Recap 18.5.mkv",
+        )
+    )
+    assert result.kind == "skip"
+
+
+def test_sp_decimal_episode_is_skipped() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="S01E13.5 [SP]-To Make Everyone Happy with My Singing [8D781429].mkv",
+            container_path="/data/torrents/Vivy S01+SP 1080p Dual Audio BDRip 10 bits DD x265-EMBER",
+            relative_path="S01E13.5 [SP]-To Make Everyone Happy with My Singing [8D781429].mkv",
+        )
+    )
+    assert result.kind == "skip"
+
+
+def test_episode_prefers_fuller_container_title() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="[Judas] Yuusha Party - S01E01.mkv",
+            container_path="/data/torrents/[Judas] Yuusha Party o Oidasareta Kiyoubinbou (Jack-of-All-Trades, Party of None) (Season 01)",
+            relative_path="[Judas] Yuusha Party - S01E01.mkv",
+        )
+    )
+    assert result.kind == "series"
+    assert result.title == "Yuusha Party o Oidasareta Kiyoubinbou (Jack-of-All-Trades, Party of None)"
 
 
 def test_sample_by_keyword_is_skipped() -> None:

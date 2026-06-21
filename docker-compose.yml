@@ -11,6 +11,9 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - /path/to/downloads:/media
+      - /mnt/media1t/downloads:/media1
+      - /mnt/media2t/downloads:/media2
+      - /mnt/media3t/downloads:/media3
+      - ./app:/app/app
       - ./logs:/app/logs
       - ./reports:/app/reports

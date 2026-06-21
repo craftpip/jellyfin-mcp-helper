@@ -9,10 +9,12 @@ from guessit import guessit
 from app.models.schemas import CandidateItem, ClassificationResult
 
 
-EXTRA_MARKERS = re.compile(r"\b(ncop|nced|op|ed|ova|ona|special|extras?)\b", re.IGNORECASE)
+EXTRA_MARKERS = re.compile(r"\b(ncop\d*|nced\d*|op\d*|ed\d*|ova|ona|special|extras?|bonus|recap|trailer)\b", re.IGNORECASE)
 SAMPLE_MARKERS = re.compile(r"\bsample\b", re.IGNORECASE)
 SAMPLE_SIZE_THRESHOLD = 150 * 1024 * 1024  # 150MB
-SEASON_EPISODE_RE = re.compile(r"s\d{1,2}e\d{1,2}", re.IGNORECASE)
+SEASON_EPISODE_RE = re.compile(r"s\d{1,2}e\d{1,3}", re.IGNORECASE)
+SPECIAL_TAG_RE = re.compile(r"(?:^|[\s\[\]()_.-])sp(?:[\s\[\]()_.-]|$)", re.IGNORECASE)
+DECIMAL_EPISODE_RE = re.compile(r"(?:^|[^a-z0-9])s\d{1,2}e\d{1,3}\.\d+(?:[^a-z0-9]|$)", re.IGNORECASE)
 SEASON_ONLY_RE = re.compile(r"season\s*\d{1,2}|s\d{1,2}\b", re.IGNORECASE)
 SEASON_EPISODE_TOKEN_RE = re.compile(
     r"(?:^|[^a-z0-9])s(?P<season>\d{1,2})e(?P<episode>\d{1,3})(?:v\d+)?(?:[^a-z0-9]|$)",
@@ -28,6 +30,10 @@ SEASON_WORD_DASH_EPISODE_RE = re.compile(
 )
 SEASON_FOLDER_RE = re.compile(r"(?:^|[^a-z0-9])(?:season\s*|s)(?P<season>\d{1,2})(?:[^a-z0-9]|$)", re.IGNORECASE)
 BARE_EPISODE_RE = re.compile(r"(?:^|[^a-z0-9])(?P<episode>\d{1,3})(?:v\d+)?(?:[^a-z0-9]|$)", re.IGNORECASE)
+CONTAINED_BARE_EPISODE_RE = re.compile(
+    r"^(?P<episode>\d{1,3})(?:v\d+)?\s*[-_.]\s*(?P<title>\S.*)$",
+    re.IGNORECASE,
+)
 
 
 def classify_candidate(candidate: CandidateItem) -> ClassificationResult:
@@ -51,6 +57,9 @@ def classify_candidate(candidate: CandidateItem) -> ClassificationResult:
         season_from_folder = season is not None
     if episode is None and season_from_folder:
         episode = _extract_bare_episode_from_name(candidate.name)
+        has_explicit_episode = episode is not None
+    if episode is None and _has_container_episode_context(candidate):
+        episode = _extract_contained_bare_episode(candidate.name)
         has_explicit_episode = episode is not None
 
     kind, confidence, reason = _infer_kind(label, parsed, season, episode, has_explicit_episode)
@@ -91,14 +100,19 @@ def _parse_guessit(label: str) -> dict[str, Any]:
 
 
 def _extract_title(parsed: dict[str, Any], candidate: CandidateItem) -> str | None:
+    path_series = _extract_series_from_source(candidate)
+    container_series = _extract_container_series_for_bare_episode(candidate)
+    if container_series:
+        return container_series
     series = parsed.get("series")
     if isinstance(series, str) and series.strip():
+        if (parsed.get("type") == "episode" or parsed.get("episode") is not None) and _is_fuller_title(path_series, series):
+            return path_series
         return series.strip()
     title = parsed.get("title") or parsed.get("movie")
     if isinstance(title, str) and title.strip():
         if parsed.get("type") == "episode" or (parsed.get("season") is not None and parsed.get("episode") is not None):
-            path_series = _extract_series_from_source(candidate)
-            if path_series:
+            if _is_fuller_title(path_series, title) or path_series:
                 return path_series
         return title.strip()
     if candidate.container_path:
@@ -109,13 +123,14 @@ def _extract_title(parsed: dict[str, Any], candidate: CandidateItem) -> str | No
     return stem.strip() if stem else None
 
 
-_SEASON_MARKER_RE = re.compile(r"\s+S\d{1,2}(?:\+?P\d{1,2})?(?:\+SP)?(?:\s|$)", re.IGNORECASE)
+_SEASON_MARKER_RE = re.compile(r"\s+(?:S\d{1,2}(?:\+?P\d{1,2})?(?:\+SP)?|\(?Season\s*\d{1,2}\)?)(?:\s|$)", re.IGNORECASE)
 _TECH_TAG_RE = re.compile(
-    r"\s+(?:\d{3,4}p|(?:Dual\s+)?Audio|BDRip|BluRay|WEB[.-]?DL|WebRip|HDRip|x264|x265|HEVC|10\s*bit)",
+    r"\s+\[?(?:\d{3,4}p|(?:Dual\s+)?Audio|BDRip|BluRay|WEB[.-]?DL|WebRip|HDRip|x264|x265|HEVC|10\s*bit)",
     re.IGNORECASE,
 )
 _TRAILING_GROUP_RE = re.compile(r"\s*[-–]\s*[A-Za-z0-9]+$")
 _TRAILING_BRACKET_RE = re.compile(r"\s*\[.*?\]\s*$")
+_LEADING_BRACKET_RE = re.compile(r"^(?:\[[^\]]+\]\s*)+")
 
 
 _CRC_BRACKETS_RE = re.compile(r"\s*\[[A-Fa-f0-9]{6,10}\]\s*$")
@@ -131,6 +146,9 @@ def _extract_episode_title(parsed: dict[str, Any], candidate: CandidateItem) -> 
     stem = Path(name).stem
     cleaned = _CRC_BRACKETS_RE.sub("", stem)
     cleaned = _CRC_PAREN_RE.sub("", cleaned)
+    bare_title = _extract_contained_bare_episode_title(cleaned)
+    if bare_title:
+        return bare_title
     m = _FILENAME_EP_TITLE_RE.match(cleaned)
     if m:
         return m.group(1).strip()
@@ -150,7 +168,9 @@ def _extract_series_from_source(candidate: CandidateItem) -> str | None:
     if not path_str:
         return None
     raw_name = Path(path_str).name
-    cleaned = _TRAILING_BRACKET_RE.sub("", raw_name)
+    cleaned = _LEADING_BRACKET_RE.sub("", raw_name)
+    while _TRAILING_BRACKET_RE.search(cleaned):
+        cleaned = _TRAILING_BRACKET_RE.sub("", cleaned)
     cleaned = _TRAILING_GROUP_RE.sub("", cleaned)
     parts = _SEASON_MARKER_RE.split(cleaned, maxsplit=1)
     if len(parts) > 1:
@@ -163,6 +183,34 @@ def _extract_series_from_source(candidate: CandidateItem) -> str | None:
         if result:
             return result
     return None
+
+
+def _extract_container_series_for_bare_episode(candidate: CandidateItem) -> str | None:
+    if not _has_container_episode_context(candidate):
+        return None
+    if _extract_contained_bare_episode(candidate.name) is None:
+        return None
+    return _clean_source_folder_name(Path(candidate.container_path or "").name)
+
+
+def _clean_source_folder_name(raw_name: str) -> str | None:
+    cleaned = _LEADING_BRACKET_RE.sub("", raw_name)
+    while _TRAILING_BRACKET_RE.search(cleaned):
+        cleaned = _TRAILING_BRACKET_RE.sub("", cleaned)
+    cleaned = _TRAILING_GROUP_RE.sub("", cleaned)
+    return cleaned.strip() or None
+
+
+def _has_container_episode_context(candidate: CandidateItem) -> bool:
+    return bool(candidate.container_path and candidate.relative_path)
+
+
+def _is_fuller_title(candidate_title: str | None, parsed_title: str | None) -> bool:
+    if not candidate_title or not parsed_title:
+        return False
+    candidate_words = set(re.findall(r"[a-z0-9]+", candidate_title.lower()))
+    parsed_words = set(re.findall(r"[a-z0-9]+", parsed_title.lower()))
+    return len(candidate_title) > len(parsed_title) and bool(parsed_words) and parsed_words <= candidate_words
 
 
 def _extract_int(value: Any) -> int | None:
@@ -204,6 +252,20 @@ def _extract_bare_episode_from_name(name: str) -> int | None:
     return None
 
 
+def _extract_contained_bare_episode(name: str) -> int | None:
+    match = CONTAINED_BARE_EPISODE_RE.match(Path(name).stem)
+    if not match:
+        return None
+    return int(match.group("episode"))
+
+
+def _extract_contained_bare_episode_title(stem: str) -> str | None:
+    match = CONTAINED_BARE_EPISODE_RE.match(stem)
+    if not match:
+        return None
+    return match.group("title").strip(" -._") or None
+
+
 def _extract_season_from_folder(candidate: CandidateItem) -> int | None:
     if candidate.relative_path:
         parts = candidate.relative_path.split("/")
@@ -230,6 +292,10 @@ def _infer_kind(
     guessed_type = parsed.get("type")
     if has_explicit_episode:
         return "series", 0.9, "Matched episode/season pattern"
+    if guessed_type == "episode" and episode is not None:
+        return "series", 0.9, "Matched episode pattern"
+    if season is not None:
+        return "series", 0.8, "Matched season pattern"
     if guessed_type == "movie":
         return "movie", 0.9, "Matched movie pattern"
     if parsed.get("year") and not SEASON_EPISODE_RE.search(label):
@@ -239,6 +305,10 @@ def _infer_kind(
 
 def _looks_like_extra(label: str, parsed: dict[str, Any]) -> bool:
     if EXTRA_MARKERS.search(label):
+        return True
+    if SPECIAL_TAG_RE.search(label):
+        return True
+    if DECIMAL_EPISODE_RE.search(label):
         return True
     episode_title = parsed.get("episode_title")
     if isinstance(episode_title, str) and EXTRA_MARKERS.search(episode_title):

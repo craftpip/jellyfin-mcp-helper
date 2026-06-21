@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
 import shutil
+import time
+from asyncio import create_task, get_running_loop, to_thread
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -31,11 +32,28 @@ logger = logging.getLogger(__name__)
 REVISION_RE = re.compile(r"\bv(\d+)\b", re.IGNORECASE)
 
 
+def _format_size(size_bytes: int) -> str:
+    size = float(size_bytes)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+        size /= 1024
+    return f"{size_bytes} B"
+
+
+def _path_mount_label(path: Path) -> str:
+    parts = path.parts
+    if len(parts) >= 2:
+        return f"/{parts[1]}"
+    return str(path)
+
+
 class ScanManager:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
         self._resolver = PathResolver(config)
         self._current_scan: ScanPlan | None = None
+        self._loop = None
 
     def get_current_scan(self) -> ScanPlan | None:
         return self._current_scan
@@ -46,17 +64,22 @@ class ScanManager:
         return self._current_scan
 
     async def create_scan(self, request: ScanRequest) -> ScanPlan:
+        self._loop = get_running_loop()
+        if self._current_scan and self._current_scan.status == "running":
+            raise HTTPException(status_code=409, detail="Scan already running. Check scan progress instead of starting a new scan.")
+
         now = datetime.now(UTC)
         scan_id = uuid4().hex
 
         self._current_scan = ScanPlan(
             scan_id=scan_id,
-            status="pending",
+            status="running",
             operation=request.operation,
             items=[],
             counts=ScanCounts(),
             skipped_in_progress=0,
             created_at=now,
+            started_at=now,
         )
 
         logger.info(
@@ -66,29 +89,45 @@ class ScanManager:
             request.replace_existing,
         )
 
-        await self._run_scan(request)
-
-        logger.info(
-            "Scan %s finished: %s planned actions, %s skipped, %s filesystem/service issues",
-            scan_id,
-            sum(1 for item in self._current_scan.items if item.action in ("move", "replace")),
-            self._current_scan.counts.skipped,
-            len(self._current_scan.service_errors),
-        )
-
+        create_task(self._run_scan_task(scan_id, request))
         return self._current_scan
 
-    async def _run_scan(self, request: ScanRequest) -> None:
+    async def _run_scan_task(self, scan_id: str, request: ScanRequest) -> None:
+        try:
+            await to_thread(self._run_scan_sync, scan_id, request)
+            scan = self._current_scan
+            if scan and scan.scan_id == scan_id and scan.status == "running":
+                scan.status = "completed"
+                scan.finished_at = datetime.now(UTC)
+                scan.current_candidate = None
+                logger.info(
+                    "Scan %s finished: %s planned actions, %s skipped, %s filesystem/service issues",
+                    scan_id,
+                    sum(1 for item in scan.items if item.action in ("move", "replace")),
+                    scan.counts.skipped,
+                    len(scan.service_errors),
+                )
+        except Exception as exc:
+            scan = self._current_scan
+            if scan and scan.scan_id == scan_id:
+                scan.status = "failed"
+                scan.finished_at = datetime.now(UTC)
+                scan.error = str(exc)
+                scan.current_candidate = None
+            logger.error("Scan %s failed: %s", scan_id, str(exc), exc_info=True)
+
+    def _run_scan_sync(self, scan_id: str, request: ScanRequest) -> None:
         scan = self._current_scan
-        if not scan:
+        if not scan or scan.scan_id != scan_id:
             return
 
-        in_progress_paths = await self._load_in_progress_paths()
+        in_progress_paths = self._load_in_progress_paths_sync()
         scan.skipped_in_progress = len(in_progress_paths)
         planned_targets: dict[str, tuple[int, int]] = {}
 
         scan_result = scan_candidates(self._config.paths)
         candidates = scan_result.candidates
+        scan.total_candidates = len(candidates)
         self._record_scan_errors(scan_result.errors)
         logger.info(
             "Scan %s found %s readable candidates and %s unreadable paths",
@@ -97,12 +136,15 @@ class ScanManager:
             len(scan_result.errors),
         )
 
-        for candidate in candidates:
+        for index, candidate in enumerate(candidates, start=1):
+            scan.current_candidate_index = index
+            scan.current_candidate = candidate.source_path
             if in_progress_paths and self._is_in_progress(candidate.source_path, in_progress_paths):
                 scan.counts.skipped += 1
                 logger.warning("Scan %s skipped in-progress download: %s", scan.scan_id, candidate.source_path)
                 scan.items.append(
                     ScannedItem(
+                        confirm_id=self._next_confirm_id(scan),
                         source_path=candidate.source_path,
                         name=candidate.name,
                         item_type="skip",
@@ -112,6 +154,29 @@ class ScanManager:
                         action="skip",
                     )
                 )
+                scan.processed_candidates = index
+                continue
+
+            if candidate.file_size is not None and candidate.file_size <= 0:
+                scan.counts.skipped += 1
+                logger.warning(
+                    "Scan %s skipped zero-byte media file: %s",
+                    scan.scan_id,
+                    candidate.source_path,
+                )
+                scan.items.append(
+                    ScannedItem(
+                        confirm_id=self._next_confirm_id(scan),
+                        source_path=candidate.source_path,
+                        name=candidate.name,
+                        item_type="skip",
+                        confidence=1.0,
+                        reason="Zero-byte file; download is incomplete or invalid",
+                        target_path="",
+                        action="skip",
+                    )
+                )
+                scan.processed_candidates = index
                 continue
 
             try:
@@ -129,6 +194,7 @@ class ScanManager:
                     )
                     scan.items.append(
                         ScannedItem(
+                            confirm_id=self._next_confirm_id(scan),
                             source_path=candidate.source_path,
                             name=candidate.name,
                             item_type=classification.kind,
@@ -138,10 +204,11 @@ class ScanManager:
                             action="skip",
                         )
                     )
+                    scan.processed_candidates = index
                     continue
 
                 logger.info("Scan %s resolving target for candidate %d/%d: %s", scan.scan_id, scan.counts.total, len(candidates), candidate.source_path)
-                resolved = await self._resolver.resolve(candidate, classification)
+                resolved = self._resolve_sync(candidate, classification)
                 logger.info("Scan %s resolved target for %s -> %s", scan.scan_id, candidate.source_path, resolved.target_path)
 
                 target_path = Path(resolved.target_path)
@@ -172,6 +239,7 @@ class ScanManager:
                         )
                         scan.items.append(
                             ScannedItem(
+                                confirm_id=self._next_confirm_id(scan),
                                 source_path=candidate.source_path,
                                 name=candidate.name,
                                 item_type="skip",
@@ -181,6 +249,7 @@ class ScanManager:
                                 action="skip",
                             )
                         )
+                        scan.processed_candidates = index
                         continue
 
                 target_exists = target_path.exists()
@@ -194,6 +263,7 @@ class ScanManager:
 
                 scan.items.append(
                     ScannedItem(
+                        confirm_id=self._next_confirm_id(scan),
                         source_path=candidate.source_path,
                         name=candidate.name,
                         item_type=classification.kind,
@@ -219,11 +289,13 @@ class ScanManager:
                     )
                 if planned_action != "skip":
                     planned_targets[resolved.target_path] = (len(scan.items) - 1, revision)
+                scan.processed_candidates = index
 
             except Exception as exc:
                 logger.error("Scan %s failed to process %s: %s", scan.scan_id, candidate.source_path, str(exc), exc_info=True)
                 scan.items.append(
                     ScannedItem(
+                        confirm_id=self._next_confirm_id(scan),
                         source_path=candidate.source_path,
                         name=candidate.name,
                         item_type="skip",
@@ -234,6 +306,7 @@ class ScanManager:
                         error=str(exc),
                     )
                 )
+                scan.processed_candidates = index
 
     def _record_scan_errors(self, errors: list[ScanPathError]) -> None:
         scan = self._current_scan
@@ -248,6 +321,7 @@ class ScanManager:
             logger.warning("Scan %s could not read path: %s", scan.scan_id, error.path)
             scan.items.append(
                 ScannedItem(
+                    confirm_id=self._next_confirm_id(scan),
                     source_path=error.path,
                     name=path_name,
                     item_type="skip",
@@ -273,27 +347,56 @@ class ScanManager:
             return 0
         return max(int(value) for value in matches)
 
-    async def confirm_scan(self, scan_id: str) -> ScanPlan:
+    def _resolve_sync(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
+        return asyncio_run_in_thread(self._resolver.resolve(candidate, classification))
+
+    def _next_confirm_id(self, scan: ScanPlan) -> str:
+        return f"i{len(scan.items) + 1}"
+
+    async def confirm_scan(
+        self,
+        scan_id: str,
+        item_ids: list[str] | None = None,
+        source_paths: list[str] | None = None,
+        source_prefixes: list[str] | None = None,
+    ) -> ScanPlan:
         scan = self.get_scan(scan_id)
 
-        logger.info("Confirm started for scan %s", scan_id)
+        selective = item_ids is not None or source_paths is not None or source_prefixes is not None
+        logger.info("Confirm started for scan %s (selective=%s)", scan_id, selective)
 
         if scan.status == "confirmed":
             raise HTTPException(status_code=400, detail="Scan already confirmed. Run 'scan library' for a new scan.")
+
+        if scan.status == "running":
+            raise HTTPException(status_code=400, detail="Scan is still running. Wait for it to complete before confirming.")
 
         if scan.status == "failed":
             raise HTTPException(status_code=400, detail="Scan failed. Run 'scan library' for a new scan.")
 
         touched_libraries: set[str] = set()
         now = datetime.now(UTC)
+        applied = 0
 
         for item in scan.items:
             if item.action == "skip":
+                continue
+            if item.confirmed:
+                continue
+            if item_ids is not None and item.confirm_id not in item_ids:
+                continue
+            if source_paths is not None and item.source_path not in source_paths:
+                continue
+            if source_prefixes is not None and not any(
+                item.source_path.startswith(prefix) for prefix in source_prefixes
+            ):
                 continue
 
             try:
                 logger.info("Applying %s: %s -> %s", item.action, item.source_path, item.target_path)
                 await self._apply_item(item)
+                item.confirmed = True
+                applied += 1
                 if item.item_type in ("movie", "series"):
                     touched_libraries.add(item.item_type)
 
@@ -307,17 +410,30 @@ class ScanManager:
                 item.error = str(exc)
                 logger.error("Failed %s for %s: %s", item.action, item.source_path, str(exc), exc_info=True)
 
+        if applied == 0 and selective:
+            raise HTTPException(
+                status_code=400,
+                detail="No matching unconfirmed items found for the given itemIds/sourcePaths/sourcePrefixes.",
+            )
+
         await self._trigger_jellyfin_scans(touched_libraries)
 
-        scan.status = "confirmed"
-        scan.confirmed_at = now
+        all_confirmed = all(
+            item.action == "skip" or item.confirmed
+            for item in scan.items
+        )
+
+        if not selective or all_confirmed:
+            scan.status = "confirmed"
+            scan.confirmed_at = now
 
         logger.info(
-            "Confirm finished for scan %s: moved=%s replaced=%s failed=%s",
+            "Confirm finished for scan %s: moved=%s replaced=%s failed=%s confirmed=%s",
             scan_id,
             scan.counts.moved,
             scan.counts.replaced,
             scan.counts.failed,
+            scan.status,
         )
 
         return scan
@@ -340,10 +456,55 @@ class ScanManager:
 
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
+        source_size = source_path.stat().st_size
+        source_mount = _path_mount_label(source_path)
+        target_mount = _path_mount_label(target_path)
+        source_device = source_path.stat().st_dev
+        target_device = target_path.parent.stat().st_dev
+        cross_drive = source_device != target_device
+        move_kind = "cross-drive copy+delete" if cross_drive else "same-drive rename/move"
+
+        logger.info(
+            "MOVE START [%s] action=%s size=%s from=%s to=%s source=%s target=%s",
+            move_kind,
+            item.action,
+            _format_size(source_size),
+            source_mount,
+            target_mount,
+            source_path,
+            target_path,
+        )
+        if cross_drive:
+            logger.info(
+                "MOVE NOTE cross-drive move detected: this can take longer because the file is copied to the target drive and then removed from the source drive."
+            )
+
         if item.action == "replace" and target_path.exists():
+            logger.info("MOVE REPLACE removing existing target before copy: %s", target_path)
             target_path.unlink()
 
-        shutil.move(str(source_path), str(target_path))
+        started_at = time.perf_counter()
+        try:
+            shutil.move(str(source_path), str(target_path))
+        except Exception:
+            elapsed = time.perf_counter() - started_at
+            logger.exception(
+                "MOVE FAILED [%s] elapsed=%.1fs source=%s target=%s",
+                move_kind,
+                elapsed,
+                source_path,
+                target_path,
+            )
+            raise
+
+        elapsed = time.perf_counter() - started_at
+        logger.info(
+            "MOVE DONE [%s] elapsed=%.1fs size=%s target=%s",
+            move_kind,
+            elapsed,
+            _format_size(source_size),
+            target_path,
+        )
 
         self._cleanup_empty_parents(source_path)
 
@@ -401,6 +562,9 @@ class ScanManager:
                 self._current_scan.service_errors["qBittorrent"] = str(exc)
             return []
 
+    def _load_in_progress_paths_sync(self) -> list[str]:
+        return asyncio_run_in_thread(self._load_in_progress_paths())
+
     @staticmethod
     def _is_in_progress(candidate_path: str, in_progress_paths: list[str]) -> bool:
         candidate_norm = str(Path(_to_absolute_path(candidate_path))).rstrip("/")
@@ -441,3 +605,9 @@ class ScanManager:
 
     def delete_scan(self) -> None:
         self._current_scan = None
+
+
+def asyncio_run_in_thread(coro):
+    import asyncio
+
+    return asyncio.run(coro)

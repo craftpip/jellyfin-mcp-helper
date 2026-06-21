@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 OperationMode = Literal["organize", "normalize"]
 NormalizeMode = Literal["safe", "full"]
 ItemKind = Literal["movie", "series", "skip"]
-ScanStatus = Literal["pending", "confirmed", "failed"]
+ScanStatus = Literal["running", "completed", "confirmed", "failed"]
 RunStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 
 
@@ -23,7 +23,8 @@ class ScanRequest(BaseModel):
 
 
 class ScannedItem(BaseModel):
-    source_path: str
+    confirm_id: str = Field(alias="confirmId")
+    source_path: str = Field(alias="sourcePath")
     name: str
     item_type: ItemKind
     confidence: float
@@ -31,6 +32,9 @@ class ScannedItem(BaseModel):
     target_path: str
     action: Literal["move", "replace", "skip"]
     error: str | None = None
+    confirmed: bool = False
+
+    model_config = {"populate_by_name": True}
 
 
 class ScanCounts(BaseModel):
@@ -51,6 +55,12 @@ class ScanPlan(BaseModel):
     counts: ScanCounts = Field(default_factory=ScanCounts)
     skipped_in_progress: int = 0
     created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    total_candidates: int = 0
+    processed_candidates: int = 0
+    current_candidate: str | None = None
+    current_candidate_index: int = 0
     confirmed_at: datetime | None = None
     error: str | None = None
     service_errors: dict[str, str] = Field(default_factory=dict)
@@ -98,6 +108,7 @@ class RunLogEntry(BaseModel):
 class ClassificationResult(BaseModel):
     kind: ItemKind = Field(alias="type")
     title: str | None = None
+    episode_title: str | None = None
     year: int | None = None
     season: int | None = None
     episode: int | None = None

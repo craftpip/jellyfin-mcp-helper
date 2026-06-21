@@ -4,6 +4,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -26,8 +27,28 @@ def _mcp_error_response(request_id: object, code: int, message: str) -> JSONResp
 
 
 def _format_scan_report(scan: ScanPlan) -> dict:
+    if scan.status == "running":
+        progress = _format_scan_progress(scan)
+        return {
+            "tool_purpose": "Returns the completed scan report. While a scan is running, this response is intentionally compact and redirects the LLM to the progress tool.",
+            "summary": {
+                "scan_id": scan.scan_id,
+                "status": scan.status,
+            },
+            "progress": progress,
+            "llm_instructions": [
+                "Do not review or summarize the full report yet because the scan is still running.",
+                "Call 'get move new downloads scan progress' with this scanId to check current progress and ETA.",
+                "After progress status is completed, call 'get move new downloads scan report' again to review planned actions.",
+                "Do not confirm/apply anything until the completed report has been reviewed and the user explicitly approves.",
+            ],
+            "next": "Scan is still running. Call 'get move new downloads scan progress' until status is completed, then call this report tool again.",
+        }
+
     items_by_action = {"move": [], "replace": [], "skip": []}
     for item in scan.items:
+        if item.confirmed:
+            continue
         if item.action in items_by_action:
             items_by_action[item.action].append(item)
 
@@ -46,9 +67,11 @@ def _format_scan_report(scan: ScanPlan) -> dict:
 
     for item in items_by_action["move"]:
         entry = {
+            "confirmId": item.confirm_id,
             "name": item.name,
             "destination": Path(item.target_path).parent.name,
             "full_destination": item.target_path,
+            "sourcePath": item.source_path,
         }
         if item.item_type == "movie":
             movies.append(entry)
@@ -57,9 +80,11 @@ def _format_scan_report(scan: ScanPlan) -> dict:
 
     for item in items_by_action["replace"]:
         entry = {
+            "confirmId": item.confirm_id,
             "name": item.name,
             "destination": Path(item.target_path).parent.name,
             "full_destination": item.target_path,
+            "sourcePath": item.source_path,
         }
         if item.item_type == "movie":
             movies.append(entry)
@@ -75,9 +100,10 @@ def _format_scan_report(scan: ScanPlan) -> dict:
     if items_by_action["skip"]:
         report["skipped"] = [
             {
+                "confirmId": item.confirm_id,
                 "name": item.name,
                 "reason": item.reason,
-                "source_path": item.source_path,
+                "sourcePath": item.source_path,
                 "error": item.error,
             }
             for item in items_by_action["skip"]
@@ -86,11 +112,77 @@ def _format_scan_report(scan: ScanPlan) -> dict:
     if scan.service_errors:
         report["service_errors"] = scan.service_errors
 
-    next_step = f"To apply: call 'confirm move new downloads scan' with scanId={scan.scan_id}. To re-scan: call 'move new downloads scan'."
+    unconfirmed = len(items_by_action["move"]) + len(items_by_action["replace"])
+    if unconfirmed > 0 and scan.status != "confirmed":
+        next_step = (
+            f"To apply all remaining items: call 'confirm move new downloads scan' with scanId={scan.scan_id}. "
+            f"To apply specific items only: call 'confirm move new downloads scan' with scanId={scan.scan_id} "
+            f"and preferably itemIds=[list of confirmId values from the report], or use either sourcePaths=[list of sourcePath values from the report] or "
+            f"sourcePrefixes=[common parent folder prefixes from the report]. "
+            f"After confirming, call 'get move new downloads scan report' again to review remaining items."
+        )
+    else:
+        next_step = "All items have been confirmed. Run 'move new downloads scan' for a new scan."
     if "Filesystem" in scan.service_errors:
         next_step += " Some download paths could not be scanned due to filesystem errors; review skipped items for the exact paths."
     report["next"] = next_step
     return report
+
+
+def _format_duration(seconds: float | None) -> str | None:
+    if seconds is None:
+        return None
+    seconds_int = max(int(seconds), 0)
+    hours, remainder = divmod(seconds_int, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m {secs}s"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def _format_scan_progress(scan: ScanPlan) -> dict:
+    now = datetime.now(UTC)
+    started_at = scan.started_at or scan.created_at
+    finished_at = scan.finished_at or now
+    elapsed_seconds = max((finished_at - started_at).total_seconds(), 0.0)
+    processed = scan.processed_candidates
+    total = scan.total_candidates
+    percent = round((processed / total) * 100, 1) if total else 0.0
+    eta_seconds = None
+    if scan.status == "running" and processed > 0 and total > processed:
+        seconds_per_item = elapsed_seconds / processed
+        eta_seconds = seconds_per_item * (total - processed)
+
+    next_step = "Scan is complete. Call 'get move new downloads scan report' to review planned moves before confirming."
+    if scan.status == "running":
+        next_step = "Scan is running. Call 'get move new downloads scan progress' again later. Do not confirm until status is completed and the report has been reviewed."
+    elif scan.status == "failed":
+        next_step = "Scan failed. Review the error, then run 'move new downloads scan' again after fixing the issue."
+
+    return {
+        "tool_purpose": "Reports progress for a background download-organizer scan. This progress tool is read-only and does not move files.",
+        "scan_id": scan.scan_id,
+        "status": scan.status,
+        "processed": processed,
+        "total": total,
+        "current_index": scan.current_candidate_index,
+        "current_file": scan.current_candidate,
+        "percent": percent,
+        "elapsed_seconds": round(elapsed_seconds, 1),
+        "elapsed": _format_duration(elapsed_seconds),
+        "eta_seconds": round(eta_seconds, 1) if eta_seconds is not None else None,
+        "eta": _format_duration(eta_seconds),
+        "counts": scan.counts.model_dump(mode="json"),
+        "available_information": {
+            "current_file": "The file path currently being processed, or null if the scan is not actively processing a file.",
+            "processed": "How many candidate files have been processed so far.",
+            "total": "How many candidate files were found for this scan.",
+            "eta": "Estimated remaining time based on elapsed time and processed candidate count. It is approximate.",
+        },
+        "next": next_step,
+    }
 
 
 @asynccontextmanager
@@ -134,7 +226,7 @@ def _mcp_tools() -> list[dict[str, object]]:
     return [
         {
             "name": "move new downloads scan",
-            "description": "Scans downloads, creates plan with targets. Does NOT move files. Call this first.",
+            "description": "Starts a background scan and returns immediately. Does NOT move files. Use progress tool until completed, then review report before confirming.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -148,21 +240,49 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "confirm move new downloads scan",
-            "description": "Applies the scan plan: moves files, stops active downloads. Use after reviewing plan.",
+            "description": "Applies the scan plan: moves files, stops active downloads. Use after reviewing plan. To confirm specific items only, prefer itemIds; sourcePaths and sourcePrefixes are also supported.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
                         "description": "scan_id from move new downloads scan"
+                    },
+                    "itemIds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of compact confirmId values from the report to confirm selectively. Omit to confirm all remaining items."
+                    },
+                    "sourcePaths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of sourcePath values from the report to confirm selectively. Omit to confirm all remaining items."
+                    },
+                    "sourcePrefixes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of source path prefixes to confirm selectively, such as a shared download folder path for one release."
                     }
                 },
                 "required": ["scanId"]
             },
         },
         {
+            "name": "get move new downloads scan progress",
+            "description": "Returns current scan progress: status, current file, processed/total counts, elapsed time, and ETA.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "scanId": {
+                        "type": "string",
+                        "description": "scan_id (optional)"
+                    }
+                }
+            },
+        },
+        {
             "name": "get move new downloads scan report",
-            "description": "Returns scan details: items with actions (move/replace/skip). Use to review plan. Omits scanId for last scan.",
+            "description": "Returns completed scan details: items with actions (move/replace/skip). If scan is still running, returns progress instructions instead.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -237,35 +357,67 @@ async def mcp(request: dict) -> JSONResponse:
         manager: ScanManager = app.state.scan_manager
 
         if name == "move new downloads scan":
-            scan = await manager.create_scan(
-                ScanRequest(
-                    replaceExisting=arguments.get("replaceExisting", True),
+            try:
+                scan = await manager.create_scan(
+                    ScanRequest(
+                        replaceExisting=arguments.get("replaceExisting", True),
+                    )
                 )
-            )
-            logger.info("TOOL <<< %s (scan_id=%s)", name, scan.scan_id)
-            return JSONResponse(
-                {
-                    "jsonrpc": "2.0",
-                    "id": request_id,
-                    "result": {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": json.dumps(_format_scan_report(scan)),
-                            }
-                        ],
-                        "isError": False,
-                    },
-                }
-            )
+                logger.info("TOOL <<< %s (scan_id=%s)", name, scan.scan_id)
+                response = _format_scan_progress(scan)
+                response["message"] = "Scan started in the background. This tool returns immediately and does not wait for the scan to finish. No files were moved."
+                response["tool_purpose"] = "Starts a background scan that classifies download candidates and builds a planned move/replace/skip report. It does not apply the plan or move files."
+                response["what_happens_now"] = [
+                    "The service scans configured download folders in the background.",
+                    "Each candidate is classified as movie, series, or skip.",
+                    "The service resolves the destination path for planned movie/series items.",
+                    "The service records planned actions only; files are not moved by this tool.",
+                ]
+                response["available_now"] = [
+                    "scan_id",
+                    "status",
+                    "processed/total counters when available",
+                    "current file when processing has started",
+                    "elapsed time and ETA when enough progress exists",
+                ]
+                response["llm_instructions"] = [
+                    "Tell the user the scan has started.",
+                    "To check recent progress, call the 'get move new downloads scan progress' tool with this scanId.",
+                    "Keep using the progress tool until it returns status='completed' or status='failed'.",
+                    "Only after status='completed', call the 'get move new downloads scan report' tool with this scanId to review planned moves/replaces/skips.",
+                    "Do not call the confirm tool until the completed report has been reviewed and the user explicitly approves applying it.",
+                ]
+                response["next"] = "Use 'get move new downloads scan progress' for updates. Use 'get move new downloads scan report' only after progress status is completed."
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(response),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except HTTPException as exc:
+                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
+                return _mcp_error_response(request_id, -32000, exc.detail)
 
         if name == "confirm move new downloads scan":
             scan_id = arguments.get("scanId")
             if not scan_id:
                 return _mcp_error_response(request_id, -32602, "scanId is required")
 
+            item_ids = arguments.get("itemIds")
+            source_paths = arguments.get("sourcePaths")
+            source_prefixes = arguments.get("sourcePrefixes")
+
             try:
-                scan = await manager.confirm_scan(scan_id)
+                scan = await manager.confirm_scan(scan_id, item_ids, source_paths, source_prefixes)
                 logger.info("TOOL <<< %s (scan_id=%s)", name, scan_id)
                 return JSONResponse(
                     {
@@ -275,7 +427,39 @@ async def mcp(request: dict) -> JSONResponse:
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": json.dumps(scan.model_dump(mode="json")),
+                                    "text": json.dumps(scan.model_dump(mode="json", by_alias=True)),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except HTTPException as exc:
+                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
+                return _mcp_error_response(request_id, -32000, exc.detail)
+
+        if name == "get move new downloads scan progress":
+            scan_id = arguments.get("scanId")
+            try:
+                if scan_id:
+                    scan = manager.get_scan(scan_id)
+                else:
+                    scan = manager.get_current_scan()
+                if not scan:
+                    logger.info("TOOL <<< %s (no active scan)", name)
+                    payload = {"hint": "No scan. Call 'move new downloads scan' to start."}
+                else:
+                    logger.info("TOOL <<< %s", name)
+                    payload = _format_scan_progress(scan)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(payload),
                                 }
                             ],
                             "isError": False,
@@ -447,6 +631,22 @@ async def health() -> dict[str, str]:
 async def create_scan(request: ScanRequest) -> ScanPlan:
     manager: ScanManager = app.state.scan_manager
     return await manager.create_scan(request)
+
+
+@app.get("/scans/current/progress")
+async def get_current_scan_progress():
+    manager: ScanManager = app.state.scan_manager
+    scan = manager.get_current_scan()
+    if not scan:
+        raise HTTPException(status_code=404, detail="No active scan. Run 'scan library' to create one.")
+    return _format_scan_progress(scan)
+
+
+@app.get("/scans/{scan_id}/progress")
+async def get_scan_progress(scan_id: str):
+    manager: ScanManager = app.state.scan_manager
+    scan = manager.get_scan(scan_id)
+    return _format_scan_progress(scan)
 
 
 @app.get("/scans/current/report")
