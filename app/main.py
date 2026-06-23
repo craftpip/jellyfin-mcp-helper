@@ -195,7 +195,7 @@ async def lifespan(app: FastAPI):
     logger.info("Organizer service shutting down")
 
 
-app = FastAPI(title="Jellyfin Library Organizer", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="jellyfin-mcp-helper", version="0.2.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -226,42 +226,42 @@ def _mcp_tools() -> list[dict[str, object]]:
     return [
         {
             "name": "move new downloads scan",
-            "description": "Starts a background scan and returns immediately. Does NOT move files. Use progress tool until completed, then review report before confirming.",
+            "description": "Start a new background organizer scan of the configured download folders. This tool is read-only: it classifies candidates and prepares a move plan, but it does not move files. After calling this tool, use the progress tool until the scan completes, then use the report tool to review planned actions before confirming.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "replaceExisting": {
                         "type": "boolean",
                         "default": True,
-                        "description": "Replace existing files at target"
+                        "description": "When true, the planned action may replace an existing target file. When false, items with an existing target are planned as skip instead of replace."
                     }
                 }
             },
         },
         {
             "name": "confirm move new downloads scan",
-            "description": "Applies the scan plan: moves files, stops active downloads. Use after reviewing plan. To confirm specific items only, prefer itemIds; sourcePaths and sourcePrefixes are also supported.",
+            "description": "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. Use it only after the scan report has been reviewed and approved. For selective confirmation, prefer itemIds from the scan report.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
-                        "description": "scan_id from move new downloads scan"
+                        "description": "The scan_id returned by 'move new downloads scan'."
                     },
                     "itemIds": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional list of compact confirmId values from the report to confirm selectively. Omit to confirm all remaining items."
+                        "description": "Optional list of compact confirmId values from the scan report. Use this to confirm only specific planned items. Omit to confirm all remaining items."
                     },
                     "sourcePaths": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional list of sourcePath values from the report to confirm selectively. Omit to confirm all remaining items."
+                        "description": "Optional list of exact sourcePath values from the scan report. Use this to confirm only matching planned items."
                     },
                     "sourcePrefixes": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional list of source path prefixes to confirm selectively, such as a shared download folder path for one release."
+                        "description": "Optional list of source path prefixes to confirm selectively, such as the parent download folder for one release or batch."
                     }
                 },
                 "required": ["scanId"]
@@ -269,39 +269,39 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get move new downloads scan progress",
-            "description": "Returns current scan progress: status, current file, processed/total counts, elapsed time, and ETA.",
+            "description": "Check progress for an organizer scan that is currently running or has already finished. Returns status, current file, processed and total counts, elapsed time, and ETA when available. Use this after starting a scan and before asking for the final report.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
-                        "description": "scan_id (optional)"
+                        "description": "Optional scan_id to check a specific scan. If omitted, the current active scan is used."
                     }
                 }
             },
         },
         {
             "name": "get move new downloads scan report",
-            "description": "Returns completed scan details: items with actions (move/replace/skip). If scan is still running, returns progress instructions instead.",
+            "description": "Get the final organizer scan report after a scan completes. Returns planned items and actions such as move, replace, or skip. If the scan is still running, this tool returns compact progress guidance instead of a full report.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
-                        "description": "scan_id (optional)"
+                        "description": "Optional scan_id to fetch a specific scan report. If omitted, the current active scan is used."
                     }
                 }
             },
         },
         {
             "name": "trigger jellyfin library scan",
-            "description": "Triggers a library scan in Jellyfin for the specified library.",
+            "description": "Trigger a Jellyfin metadata refresh and library scan for one named library, such as Movies or Shows. Use this after files have been moved and Jellyfin needs to pick up the new content or location changes.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "libraryName": {
                         "type": "string",
-                        "description": "Library name (e.g., 'Movies' or 'Shows')"
+                        "description": "The Jellyfin library name to refresh, for example 'Movies' or 'Shows'."
                     }
                 },
                 "required": ["libraryName"]
@@ -309,10 +309,61 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get available jellyfin libraries list",
-            "description": "Returns all available Jellyfin libraries.",
+            "description": "List all Jellyfin libraries that are available to the configured Jellyfin user. Use this when you need the exact library names before calling other Jellyfin tools.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
+            },
+        },
+        {
+            "name": "get jellyfin library items",
+            "description": "List compact Jellyfin library items for movies and series. This tool is for existence checks, lightweight library browsing, and LLM-friendly summaries. It supports optional search and optional ongoing-series filtering. For series, it returns total season count, total episode count, and per-season episode counts instead of full episode listings.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "libraryName": {
+                        "type": "string",
+                        "description": "The Jellyfin library name to search or browse, for example 'Movies' or 'Shows'."
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Optional search term used to filter library items by name. Use this to check whether a movie or series already exists in the library."
+                    },
+                    "ongoingOnly": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "When true, return only ongoing series. Movies are excluded. This is useful when you want to inspect only currently active shows."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Maximum number of items to return. Results are ordered by newest release year first, then by name."
+                    }
+                },
+                "required": ["libraryName"]
+            },
+        },
+        {
+            "name": "get ongoing jellyfin series latest episodes",
+            "description": "List only ongoing Jellyfin series and return the latest available episode for each series. This tool is useful for checking what the current latest released episode is for active shows. If search is omitted or set to 'all', it returns all ongoing series in the library.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "libraryName": {
+                        "type": "string",
+                        "description": "The Jellyfin series library name, for example 'Shows'."
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Optional search term used to filter ongoing series by name. Use 'all' or omit it to return all ongoing series in the library."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Maximum number of ongoing series to return. Results are ordered by newest release year first, then by name."
+                    }
+                },
+                "required": ["libraryName"]
             },
         },
     ]
@@ -337,7 +388,7 @@ async def mcp(request: dict) -> JSONResponse:
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "jellyfin-download-organizer", "version": "0.2.0"},
+                    "serverInfo": {"name": "jellyfin-mcp-helper", "version": "0.2.0"},
                 },
             }
         )
@@ -605,6 +656,117 @@ async def mcp(request: dict) -> JSONResponse:
                                 {
                                     "type": "text",
                                     "text": json.dumps({"libraries": libraries}),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
+
+        if name == "get jellyfin library items":
+            library_name = arguments.get("libraryName")
+            if not library_name:
+                return _mcp_error_response(request_id, -32602, "libraryName is required")
+
+            client = JellyfinClient.from_env()
+            if not client:
+                logger.warning("TOOL xxx %s (Jellyfin not configured)", name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(
+                                        {
+                                            "message": "Jellyfin integration is not configured. Set ENABLE_JELLYFIN_INTEGRATION=true and JELLYFIN_API_KEY in .env"
+                                        }
+                                    ),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+
+            try:
+                result = await client.list_library_items(
+                    library_name=library_name,
+                    search=arguments.get("search"),
+                    limit=arguments.get("limit", 10),
+                    ongoing_only=arguments.get("ongoingOnly", False),
+                )
+                result["next"] = "Use search to check whether a movie or series already exists in this library. Use ongoingOnly to focus on currently ongoing series."
+                logger.info("TOOL <<< %s (library=%s)", name, library_name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(result),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
+
+        if name == "get ongoing jellyfin series latest episodes":
+            library_name = arguments.get("libraryName")
+            if not library_name:
+                return _mcp_error_response(request_id, -32602, "libraryName is required")
+
+            client = JellyfinClient.from_env()
+            if not client:
+                logger.warning("TOOL xxx %s (Jellyfin not configured)", name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(
+                                        {
+                                            "message": "Jellyfin integration is not configured. Set ENABLE_JELLYFIN_INTEGRATION=true and JELLYFIN_API_KEY in .env"
+                                        }
+                                    ),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+
+            try:
+                result = await client.list_ongoing_series_latest_episodes(
+                    library_name=library_name,
+                    search=arguments.get("search"),
+                    limit=arguments.get("limit", 10),
+                )
+                result["next"] = "Use search to check a specific ongoing series. Omit search or use 'all' to list all ongoing series with their latest available episodes."
+                logger.info("TOOL <<< %s (library=%s)", name, library_name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(result),
                                 }
                             ],
                             "isError": False,

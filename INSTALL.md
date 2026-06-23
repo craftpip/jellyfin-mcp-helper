@@ -1,6 +1,6 @@
 # Installation + Update Guide for LLMs
 
-Use this guide to install Jellyfin Download Organizer for a user as either:
+Use this guide to install jellyfin-mcp-helper for a user as either:
 
 1. an MCP tool, or
 2. a skill.
@@ -57,7 +57,7 @@ Do not run install/update commands until the user answers this checklist.
 Check if the service is already running:
 
 ```bash
-docker ps --filter name=jellyfin-download-organizer
+docker ps --filter name=jellyfin-mcp-helper
 ```
 
 ### If container is already running
@@ -84,7 +84,7 @@ Continue with a normal install flow.
 If repo does not exist at chosen path, clone it:
 
 ```bash
-git clone https://github.com/jellyfin-download-organizer/jellyfin-download-organizer.git /path/to/workspace/jellyfin-download-organizer
+git clone https://github.com/jellyfin-mcp-helper/jellyfin-mcp-helper.git /path/to/workspace/jellyfin-mcp-helper
 ```
 
 If repo already exists, do not re-clone.
@@ -106,8 +106,8 @@ If user provided new qBittorrent or Jellyfin credentials/API key, also update `<
 
 Install target paths:
 
-- Project-local: `.opencode/skills/jellyfin-download-organizer/SKILL.md`
-- Global: `~/.config/opencode/skills/jellyfin-download-organizer/SKILL.md`
+- Project-local: `.opencode/skills/jellyfin-mcp-helper/SKILL.md`
+- Global: `~/.config/opencode/skills/jellyfin-mcp-helper/SKILL.md`
 
 Create target directory:
 
@@ -131,7 +131,7 @@ Required variables to replace:
 
 Then map values as follows:
 
-- `{{CLONE_PATH}}` -> absolute clone path (for example `/home/user/work/jellyfin-download-organizer`)
+- `{{CLONE_PATH}}` -> absolute clone path (for example `/home/user/work/jellyfin-mcp-helper`)
 - `{{LAN_IP}}` -> user LAN IP
 - `{{PORT}}` -> user service port
 - `{{QBT_WEBUI_URL}}` -> user qBittorrent Web UI URL, or `not-configured`
@@ -156,7 +156,7 @@ Example config snippet:
 ```json
 {
   "mcp": {
-    "jellyfin-download-organizer": {
+    "jellyfin-mcp-helper": {
       "url": "http://{{LAN_IP}}:{{PORT}}/mcp"
     }
   }
@@ -172,7 +172,7 @@ Run health checks after install/update.
 ### Service check
 
 ```bash
-docker ps --filter name=jellyfin-download-organizer
+docker ps --filter name=jellyfin-mcp-helper
 curl http://127.0.0.1:{{PORT}}/health
 ```
 
@@ -188,7 +188,7 @@ For local-only installs, use `127.0.0.1`.
 
 ### Skill check (if skill or both)
 
-Open OpenCode and verify `jellyfin-download-organizer` appears in available skills.
+Open OpenCode and verify `jellyfin-mcp-helper` appears in available skills.
 
 If optional values were set to `not-configured`, tell the user they can update those two fields later by editing the installed `SKILL.md` and replacing:
 - `{{QBT_WEBUI_URL}}` value
@@ -206,7 +206,7 @@ If integration is enabled but credentials are missing, warn that:
 
 Use this one-shot prompt to collect all inputs first:
 
-"I can install Jellyfin Download Organizer for you. Please choose:
+"I can install jellyfin-mcp-helper for you. Please choose:
 1) mode: mcp, skill, or both
 2) clone path (or existing repo path)
 3) skill scope (project-local or global) if using skill

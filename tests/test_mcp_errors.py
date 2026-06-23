@@ -61,6 +61,176 @@ def test_mcp_tools_list_includes_scan_progress_tool() -> None:
     assert response.status_code == 200
     tool_names = [tool["name"] for tool in response.json()["result"]["tools"]]
     assert "get move new downloads scan progress" in tool_names
+    assert "get jellyfin library items" in tool_names
+    assert "get ongoing jellyfin series latest episodes" in tool_names
+
+
+def test_mcp_get_jellyfin_library_items_formats_compact_response(monkeypatch) -> None:
+    class FakeJellyfinClient:
+        async def list_library_items(self, library_name: str, search=None, limit=10, ongoing_only=False):
+            assert library_name == "Shows"
+            assert search == "Bleach"
+            assert limit == 10
+            assert ongoing_only is True
+            return {
+                "library_name": "Shows",
+                "returned_items": 1,
+                "search": "Bleach",
+                "ongoing_only": True,
+                "items": [
+                    {
+                        "name": "Bleach",
+                        "type": "series",
+                        "ongoing": True,
+                        "season_count": 3,
+                        "episode_count": 39,
+                        "seasons": [
+                            {"season": 1, "episodes": 13},
+                            {"season": 2, "episodes": 13},
+                            {"season": 3, "episodes": 13},
+                        ],
+                    }
+                ],
+            }
+
+    monkeypatch.setattr("app.main.JellyfinClient.from_env", lambda: FakeJellyfinClient())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 31,
+                "method": "tools/call",
+                "params": {
+                    "name": "get jellyfin library items",
+                    "arguments": {
+                        "libraryName": "Shows",
+                        "search": "Bleach",
+                        "ongoingOnly": True,
+                        "limit": 10,
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = json.loads(response.json()["result"]["content"][0]["text"])
+    assert payload["library_name"] == "Shows"
+    assert payload["returned_items"] == 1
+    assert payload["ongoing_only"] is True
+    assert payload["items"][0]["season_count"] == 3
+    assert payload["items"][0]["seasons"][0] == {"season": 1, "episodes": 13}
+    assert "ongoingOnly" in payload["next"]
+
+
+def test_jellyfin_series_status_continuing_is_treated_as_ongoing() -> None:
+    from app.services.jellyfin import JellyfinClient
+
+    assert JellyfinClient._is_ongoing_series(
+        {
+            "Status": "Continuing",
+            "EndDate": "2025-07-26T18:30:00.0000000Z",
+        }
+    ) is True
+
+
+def test_mcp_get_jellyfin_library_items_requires_library_name() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 32,
+                "method": "tools/call",
+                "params": {
+                    "name": "get jellyfin library items",
+                    "arguments": {},
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["error"]["code"] == -32602
+    assert payload["error"]["message"] == "libraryName is required"
+
+
+def test_mcp_get_ongoing_jellyfin_series_latest_episodes_formats_response(monkeypatch) -> None:
+    class FakeJellyfinClient:
+        async def list_ongoing_series_latest_episodes(self, library_name: str, search=None, limit=10):
+            assert library_name == "Shows"
+            assert search == "rick"
+            assert limit == 10
+            return {
+                "library_name": "Shows",
+                "returned_items": 1,
+                "search": "rick",
+                "items": [
+                    {
+                        "name": "Rick and Morty",
+                        "type": "series",
+                        "ongoing": True,
+                        "latest_episode": {
+                            "season": 9,
+                            "episode": 3,
+                            "title": "The Rick, The Mort & The Ugly",
+                        },
+                    }
+                ],
+            }
+
+    monkeypatch.setattr("app.main.JellyfinClient.from_env", lambda: FakeJellyfinClient())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 33,
+                "method": "tools/call",
+                "params": {
+                    "name": "get ongoing jellyfin series latest episodes",
+                    "arguments": {
+                        "libraryName": "Shows",
+                        "search": "rick",
+                        "limit": 10,
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = json.loads(response.json()["result"]["content"][0]["text"])
+    assert payload["library_name"] == "Shows"
+    assert payload["returned_items"] == 1
+    assert payload["items"][0]["latest_episode"] == {
+        "season": 9,
+        "episode": 3,
+        "title": "The Rick, The Mort & The Ugly",
+    }
+    assert "all ongoing series" in payload["next"]
+
+
+def test_mcp_get_ongoing_jellyfin_series_latest_episodes_requires_library_name() -> None:
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 34,
+                "method": "tools/call",
+                "params": {
+                    "name": "get ongoing jellyfin series latest episodes",
+                    "arguments": {},
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["error"]["code"] == -32602
+    assert payload["error"]["message"] == "libraryName is required"
 
 
 def test_mcp_scan_start_response_instructs_llm_to_use_progress_tool(monkeypatch) -> None:

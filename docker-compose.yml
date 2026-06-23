@@ -1,8 +1,8 @@
 services:
   organizer:
     build: .
-    image: jellyfin-download-organizer:dev
-    container_name: jellyfin-download-organizer
+    image: jellyfin-mcp-helper:dev
+    container_name: jellyfin-mcp-helper
     restart: unless-stopped
     ports:
       - "18328:18327"

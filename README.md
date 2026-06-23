@@ -1,4 +1,4 @@
-# Jellyfin Download Organizer
+# jellyfin-mcp-helper
 
 An API service that automatically organizes downloaded media into your Jellyfin library. Scans download folders, classifies media (movie/series), resolves target paths, moves files, and triggers Jellyfin library scans.
 

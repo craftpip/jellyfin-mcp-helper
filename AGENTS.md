@@ -1,10 +1,10 @@
 # Agents
 
-This project includes a skill file for managing the Jellyfin Download Organizer service.
+This project includes a skill file for managing the jellyfin-mcp-helper service.
 
 ## Skills
 
-Load the `jellyfin-download-organizer` skill to access full documentation for the API and MCP endpoints. The skill contains:
+Load the `jellyfin-mcp-helper` skill to access full documentation for the API and MCP endpoints. The skill contains:
 - Base configuration and URLs
 - All API endpoints
 - MCP protocol details (JSON-RPC 2.0)
@@ -16,7 +16,7 @@ Use the skill tool to load it when working with this codebase.
 ## Project Structure
 
 ```
-jellyfin-download-organizer/
+jellyfin-mcp-helper/
 ├── app/
 │   ├── api/__init__.py
 │   ├── core/
