@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-06-01
+## v0.2.0 - 2026-06-01
 
 ### Changed
 - Replaced the blocking `move new downloads scan` behavior with a background scan start that returns immediately.

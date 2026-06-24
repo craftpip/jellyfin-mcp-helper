@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.config import get_config
 from app.core.logging import configure_logging
+from app.core.version import VERSION
 from app.models.schemas import ScanLogEntry, ScanPlan, ScanRequest
 from app.services.jellyfin import JellyfinClient
 from app.services.scan_manager import ScanManager
@@ -195,7 +196,7 @@ async def lifespan(app: FastAPI):
     logger.info("Organizer service shutting down")
 
 
-app = FastAPI(title="jellyfin-mcp-helper", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="jellyfin-mcp-helper", version=VERSION, lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -388,7 +389,7 @@ async def mcp(request: dict) -> JSONResponse:
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "jellyfin-mcp-helper", "version": "0.2.0"},
+                    "serverInfo": {"name": "jellyfin-mcp-helper", "version": VERSION},
                 },
             }
         )
