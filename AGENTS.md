@@ -136,3 +136,29 @@ docker compose restart
 **Scope:** Applies whenever changing any source code in this project (classifier, resolver, schemas, etc.).
 
 **Related terms:** Docker, build, rebuild, restart, container, docker compose, deploy
+
+### Release branch model and version management
+
+**Created:** 2026-06-24  
+**Last updated:** 2026-06-24
+
+**Trigger:** User asked to set up release planning and then said to learn the release and release management process for this project.
+
+**Mistake / Problem:** The repo originally only used `master`, had no defined dev/prod release flow, no release guide, no tags yet, and the app version was hardcoded in `app/main.py` in more than one place.
+
+**Correct Approach:** Use a two-branch release model:
+- `dev` for active development
+- `prod` for stable production releases
+
+Feature/fix branches should merge into `dev` first. When ready to release, fast-forward or merge `dev` into `prod`, update the version in `app/core/version.py`, update `CHANGELOG.md`, run tests, create a release commit, and tag the release from `prod` as `vX.Y.Z`. Keep `app/core/version.py` as the single source of truth for the service version, and use `RELEASE.md` as the canonical workflow document.
+
+**Verification:** Confirm all of the following:
+- `git branch` shows `dev` and `prod`
+- `app/core/version.py` exists and is used by FastAPI and MCP server info
+- `RELEASE.md` documents the release flow
+- `python3 -m pytest tests/` passes
+- `docker compose build` succeeds before release
+
+**Scope:** Applies whenever preparing, documenting, or performing releases for this repository.
+
+**Related terms:** release, release management, prod, dev, branch model, tag, semantic versioning, changelog, version.py, RELEASE.md
