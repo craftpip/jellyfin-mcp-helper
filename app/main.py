@@ -17,6 +17,7 @@ from app.core.logging import configure_logging
 from app.core.version import VERSION
 from app.models.schemas import ScanLogEntry, ScanPlan, ScanRequest
 from app.services.jellyfin import JellyfinClient
+from app.services.release_tracker import ReleaseTracker
 from app.services.scan_manager import ScanManager
 
 
@@ -192,6 +193,7 @@ async def lifespan(app: FastAPI):
     logger.info("Organizer service starting up")
     config = get_config()
     app.state.scan_manager = ScanManager(config)
+    app.state.release_tracker = ReleaseTracker()
     yield
     logger.info("Organizer service shutting down")
 
@@ -367,6 +369,61 @@ def _mcp_tools() -> list[dict[str, object]]:
                 "required": ["libraryName"]
             },
         },
+        {
+            "name": "store ongoing series next release",
+            "description": "Store or update one locally tracked next-release marker for an ongoing Jellyfin series. Use this after an external source determines the next expected release date.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "libraryName": {"type": "string"},
+                    "seriesName": {"type": "string"},
+                    "seriesId": {"type": "string"},
+                    "nextReleaseDate": {"type": "string"},
+                    "nextSeason": {"type": "integer"},
+                    "nextEpisode": {"type": "integer"},
+                    "timezone": {"type": "string"},
+                    "source": {"type": "string"},
+                    "notes": {"type": "string"}
+                },
+                "required": ["libraryName", "seriesName", "nextReleaseDate"]
+            },
+        },
+        {
+            "name": "get due ongoing series releases",
+            "description": "Return locally tracked ongoing-series release markers whose nextReleaseDate is due now or overdue. Use this for cron-driven checks before re-checking Jellyfin.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "libraryName": {"type": "string"},
+                    "before": {"type": "string", "default": "now"},
+                    "limit": {"type": "integer", "default": 50}
+                }
+            },
+        },
+        {
+            "name": "get ongoing series next releases",
+            "description": "List all locally stored upcoming release markers for ongoing series. This is useful for planning, debugging, and confirming what is currently tracked.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "libraryName": {"type": "string"},
+                    "limit": {"type": "integer", "default": 100}
+                }
+            },
+        },
+        {
+            "name": "delete ongoing series next release",
+            "description": "Delete one locally stored ongoing-series release marker when it is no longer needed.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "libraryName": {"type": "string"},
+                    "seriesName": {"type": "string"},
+                    "seriesId": {"type": "string"}
+                },
+                "required": ["libraryName", "seriesName"]
+            },
+        },
     ]
 
 
@@ -407,6 +464,7 @@ async def mcp(request: dict) -> JSONResponse:
         logger.info("TOOL >>> %s", name)
 
         manager: ScanManager = app.state.scan_manager
+        release_tracker: ReleaseTracker = app.state.release_tracker
 
         if name == "move new downloads scan":
             try:
@@ -774,6 +832,109 @@ async def mcp(request: dict) -> JSONResponse:
                         },
                     }
                 )
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
+
+        if name == "store ongoing series next release":
+            try:
+                record = release_tracker.upsert_release(arguments)
+                payload = {
+                    "message": f"Stored next release for '{record['seriesName']}' in '{record['libraryName']}'.",
+                    "record": record,
+                    "next": "When this release is due, call 'get due ongoing series releases'. After Jellyfin has the new episode, calculate the following release and call this store tool again.",
+                }
+                logger.info("TOOL <<< %s (library=%s series=%s)", name, record["libraryName"], record["seriesName"])
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [{"type": "text", "text": json.dumps(payload)}],
+                            "isError": False,
+                        },
+                    }
+                )
+            except ValueError as exc:
+                logger.warning("TOOL xxx %s (%s)", name, str(exc))
+                return _mcp_error_response(request_id, -32602, str(exc))
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
+
+        if name == "get due ongoing series releases":
+            try:
+                payload = release_tracker.get_due_releases(
+                    library_name=arguments.get("libraryName"),
+                    before=arguments.get("before", "now"),
+                    limit=arguments.get("limit", 50),
+                )
+                payload["next"] = "For each due item, check Jellyfin latest episodes. If the tracked episode has arrived, calculate the following release date and call 'store ongoing series next release' again. If it has not arrived yet, leave the marker in place for the next cron run."
+                logger.info("TOOL <<< %s", name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [{"type": "text", "text": json.dumps(payload)}],
+                            "isError": False,
+                        },
+                    }
+                )
+            except ValueError as exc:
+                logger.warning("TOOL xxx %s (%s)", name, str(exc))
+                return _mcp_error_response(request_id, -32602, str(exc))
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
+
+        if name == "get ongoing series next releases":
+            try:
+                payload = release_tracker.list_releases(
+                    library_name=arguments.get("libraryName"),
+                    limit=arguments.get("limit", 100),
+                )
+                payload["next"] = "Use this list to inspect tracked upcoming releases. Use 'get due ongoing series releases' to focus only on markers that should be checked now."
+                logger.info("TOOL <<< %s", name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [{"type": "text", "text": json.dumps(payload)}],
+                            "isError": False,
+                        },
+                    }
+                )
+            except ValueError as exc:
+                logger.warning("TOOL xxx %s (%s)", name, str(exc))
+                return _mcp_error_response(request_id, -32602, str(exc))
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
+
+        if name == "delete ongoing series next release":
+            try:
+                deleted = release_tracker.delete_release(arguments)
+                payload = {
+                    "deleted": deleted is not None,
+                    "record": deleted,
+                    "message": "Release marker deleted." if deleted else "No matching release marker was found.",
+                }
+                logger.info("TOOL <<< %s", name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [{"type": "text", "text": json.dumps(payload)}],
+                            "isError": False,
+                        },
+                    }
+                )
+            except ValueError as exc:
+                logger.warning("TOOL xxx %s (%s)", name, str(exc))
+                return _mcp_error_response(request_id, -32602, str(exc))
             except Exception as exc:
                 logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
                 return _mcp_error_response(request_id, -32000, str(exc))

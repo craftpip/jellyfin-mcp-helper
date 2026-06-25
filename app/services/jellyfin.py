@@ -193,6 +193,7 @@ class JellyfinClient:
             latest_episode = await self._get_latest_episode(item.get("Id", ""), user_id)
             result_items.append(
                 {
+                    "seriesId": item.get("Id", ""),
                     "name": item.get("Name", ""),
                     "type": "series",
                     "ongoing": True,
