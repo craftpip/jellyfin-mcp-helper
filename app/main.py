@@ -24,6 +24,108 @@ from app.services.scan_manager import ScanManager
 logger = logging.getLogger(__name__)
 
 
+def _mcp_request_body(request_body: bytes) -> dict[str, object]:
+    try:
+        payload = json.loads(request_body or b"{}")
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _mcp_response_body(response_body: bytes) -> dict[str, object]:
+    try:
+        payload = json.loads(response_body or b"{}")
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _mcp_line_details(method: object, arguments: dict[str, object]) -> str | None:
+    if method != "tools/call":
+        return None
+
+    for key in ("libraryName", "source", "target"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value:
+            if key == "libraryName":
+                return f"on {value}"
+            return f"{key} {value}"
+
+    return None
+
+
+def _mcp_success_message(method: object, tool_name: object) -> str:
+    if method == "tools/list":
+        return "✅ 📋 Tools listed"
+    if method == "prompts/list":
+        return "✅ 📋 Prompts requested"
+    if method == "tools/call" and isinstance(tool_name, str) and tool_name:
+        return f"✅ 🔧 Ran “{tool_name}”"
+    if isinstance(method, str) and method:
+        return f"✅ {method} completed"
+    return "✅ MCP request completed"
+
+
+def _mcp_warning_message(method: object, error_message: str) -> str:
+    if method == "prompts/list":
+        return "⚠️ Prompts requested, but prompts/list is not supported"
+    if isinstance(method, str) and method:
+        return f"⚠️ {method} is not supported"
+    return f"⚠️ MCP request warning: {error_message}"
+
+
+def _mcp_error_message(method: object, tool_name: object) -> str:
+    if method == "tools/call" and isinstance(tool_name, str) and tool_name:
+        return f"❌ Failed to run “{tool_name}”"
+    if isinstance(method, str) and method:
+        return f"❌ {method} failed"
+    return "❌ MCP request failed"
+
+
+def _format_mcp_activity_line(
+    request_body: bytes,
+    response_body: bytes,
+    duration_ms: int,
+    status_code: int,
+    client_host: str,
+) -> str:
+    request_payload = _mcp_request_body(request_body)
+    response_payload = _mcp_response_body(response_body)
+    method = request_payload.get("method")
+    params = request_payload.get("params") if isinstance(request_payload.get("params"), dict) else {}
+    tool_name = params.get("name") if isinstance(params, dict) else None
+    arguments = params.get("arguments") if isinstance(params, dict) and isinstance(params.get("arguments"), dict) else {}
+    error = response_payload.get("error") if isinstance(response_payload.get("error"), dict) else None
+    timestamp = datetime.now().strftime("%H:%M:%S")
+
+    if error:
+        error_message = str(error.get("message") or "MCP error")
+        error_code = error.get("code")
+        if error_code == -32601 and method != "tools/call":
+            message = _mcp_warning_message(method, error_message)
+            reason = "MCP method not found" if error_message == "Method not found" else error_message
+        else:
+            message = _mcp_error_message(method, tool_name)
+            reason = error_message
+    else:
+        message = _mcp_success_message(method, tool_name)
+        reason = None
+
+    details = _mcp_line_details(method, arguments)
+    if details:
+        message = f"{message} {details}"
+
+    suffix_parts = []
+    if reason:
+        suffix_parts.append(reason)
+    suffix_parts.append(f"{duration_ms}ms")
+    suffix_parts.append(f"HTTP {status_code}")
+    if client_host != "unknown":
+        suffix_parts.append(f"from {client_host}")
+
+    return f"[{timestamp}] {message} — {', '.join(suffix_parts)}"
+
+
 def _mcp_error_response(request_id: object, code: int, message: str) -> JSONResponse:
     return JSONResponse({"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}})
 
@@ -209,19 +311,47 @@ async def log_requests(request: Request, call_next):
     request_id = uuid4().hex[:8]
     started = time.perf_counter()
     client_host = request.client.host if request.client else "unknown"
-
-    logger.info("[%s] >>> %s %s from %s", request_id, request.method, request.url.path, client_host)
+    request_body = await request.body() if request.url.path == "/mcp" else b""
 
     try:
         response = await call_next(request)
     except Exception:
         duration_ms = int((time.perf_counter() - started) * 1000)
-        logger.exception("[%s] xxx %s %s failed after %sms", request_id, request.method, request.url.path, duration_ms)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        logger.exception(
+            "[%s] ❌ %s %s failed — %sms, from %s",
+            timestamp,
+            request.method,
+            request.url.path,
+            duration_ms,
+            client_host,
+        )
         raise
 
     duration_ms = int((time.perf_counter() - started) * 1000)
-    logger.info("[%s] <<< %s %s finished in %sms with status %s", request_id, request.method, request.url.path, duration_ms, response.status_code)
     response.headers["X-Request-ID"] = request_id
+
+    if request.url.path == "/mcp":
+        response_body = b"".join([chunk async for chunk in response.body_iterator])
+        logger.info(_format_mcp_activity_line(request_body, response_body, duration_ms, response.status_code, client_host))
+        return Response(
+            content=response_body,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+            media_type=response.media_type,
+            background=response.background,
+        )
+
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    logger.info(
+        "[%s] ✅ %s %s completed — %sms, HTTP %s, from %s",
+        timestamp,
+        request.method,
+        request.url.path,
+        duration_ms,
+        response.status_code,
+        client_host,
+    )
     return response
 
 
@@ -432,9 +562,6 @@ async def mcp(request: dict) -> JSONResponse:
     method = request.get("method")
     request_id = request.get("id")
 
-    if method != "notifications/initialized":
-        logger.info("MCP request received: method=%s id=%s", method, request_id)
-
     if method == "notifications/initialized":
         return Response(status_code=204)
 
@@ -461,7 +588,6 @@ async def mcp(request: dict) -> JSONResponse:
         params = request.get("params") or {}
         name = params.get("name")
         arguments = params.get("arguments") or {}
-        logger.info("TOOL >>> %s", name)
 
         manager: ScanManager = app.state.scan_manager
         release_tracker: ReleaseTracker = app.state.release_tracker
@@ -473,7 +599,6 @@ async def mcp(request: dict) -> JSONResponse:
                         replaceExisting=arguments.get("replaceExisting", True),
                     )
                 )
-                logger.info("TOOL <<< %s (scan_id=%s)", name, scan.scan_id)
                 response = _format_scan_progress(scan)
                 response["message"] = "Scan started in the background. This tool returns immediately and does not wait for the scan to finish. No files were moved."
                 response["tool_purpose"] = "Starts a background scan that classifies download candidates and builds a planned move/replace/skip report. It does not apply the plan or move files."
@@ -514,7 +639,6 @@ async def mcp(request: dict) -> JSONResponse:
                     }
                 )
             except HTTPException as exc:
-                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
                 return _mcp_error_response(request_id, -32000, exc.detail)
 
         if name == "confirm move new downloads scan":
@@ -528,7 +652,6 @@ async def mcp(request: dict) -> JSONResponse:
 
             try:
                 scan = await manager.confirm_scan(scan_id, item_ids, source_paths, source_prefixes)
-                logger.info("TOOL <<< %s (scan_id=%s)", name, scan_id)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -545,7 +668,6 @@ async def mcp(request: dict) -> JSONResponse:
                     }
                 )
             except HTTPException as exc:
-                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
                 return _mcp_error_response(request_id, -32000, exc.detail)
 
         if name == "get move new downloads scan progress":
@@ -556,10 +678,8 @@ async def mcp(request: dict) -> JSONResponse:
                 else:
                     scan = manager.get_current_scan()
                 if not scan:
-                    logger.info("TOOL <<< %s (no active scan)", name)
                     payload = {"hint": "No scan. Call 'move new downloads scan' to start."}
                 else:
-                    logger.info("TOOL <<< %s", name)
                     payload = _format_scan_progress(scan)
                 return JSONResponse(
                     {
@@ -577,7 +697,6 @@ async def mcp(request: dict) -> JSONResponse:
                     }
                 )
             except HTTPException as exc:
-                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
                 return _mcp_error_response(request_id, -32000, exc.detail)
 
         if name == "get move new downloads scan report":
@@ -588,7 +707,6 @@ async def mcp(request: dict) -> JSONResponse:
                 else:
                     scan = manager.get_current_scan()
                 if not scan:
-                    logger.info("TOOL <<< %s (no active scan)", name)
                     return JSONResponse(
                         {
                             "jsonrpc": "2.0",
@@ -604,7 +722,6 @@ async def mcp(request: dict) -> JSONResponse:
                             },
                         }
                     )
-                logger.info("TOOL <<< %s", name)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -621,7 +738,6 @@ async def mcp(request: dict) -> JSONResponse:
                     }
                 )
             except HTTPException as exc:
-                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
                 return _mcp_error_response(request_id, -32000, exc.detail)
 
         if name == "trigger jellyfin library scan":
@@ -631,7 +747,6 @@ async def mcp(request: dict) -> JSONResponse:
 
             client = JellyfinClient.from_env()
             if not client:
-                logger.warning("TOOL xxx %s (Jellyfin not configured)", name)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -654,7 +769,6 @@ async def mcp(request: dict) -> JSONResponse:
 
             try:
                 target = await client.scan_library(library_name)
-                logger.info("TOOL <<< %s (library=%s)", name, library_name)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -676,13 +790,11 @@ async def mcp(request: dict) -> JSONResponse:
                     }
                 )
             except Exception as exc:
-                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
                 return _mcp_error_response(request_id, -32000, str(exc))
 
         if name == "get available jellyfin libraries list":
             client = JellyfinClient.from_env()
             if not client:
-                logger.warning("TOOL xxx %s (Jellyfin not configured)", name)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -705,7 +817,6 @@ async def mcp(request: dict) -> JSONResponse:
 
             try:
                 libraries = await client.list_libraries()
-                logger.info("TOOL <<< %s", name)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -722,7 +833,6 @@ async def mcp(request: dict) -> JSONResponse:
                     }
                 )
             except Exception as exc:
-                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
                 return _mcp_error_response(request_id, -32000, str(exc))
 
         if name == "get jellyfin library items":
@@ -732,7 +842,6 @@ async def mcp(request: dict) -> JSONResponse:
 
             client = JellyfinClient.from_env()
             if not client:
-                logger.warning("TOOL xxx %s (Jellyfin not configured)", name)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -761,7 +870,6 @@ async def mcp(request: dict) -> JSONResponse:
                     ongoing_only=arguments.get("ongoingOnly", False),
                 )
                 result["next"] = "Use search to check whether a movie or series already exists in this library. Use ongoingOnly to focus on currently ongoing series."
-                logger.info("TOOL <<< %s (library=%s)", name, library_name)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -778,7 +886,6 @@ async def mcp(request: dict) -> JSONResponse:
                     }
                 )
             except Exception as exc:
-                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
                 return _mcp_error_response(request_id, -32000, str(exc))
 
         if name == "get ongoing jellyfin series latest episodes":
@@ -788,7 +895,6 @@ async def mcp(request: dict) -> JSONResponse:
 
             client = JellyfinClient.from_env()
             if not client:
-                logger.warning("TOOL xxx %s (Jellyfin not configured)", name)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -816,7 +922,6 @@ async def mcp(request: dict) -> JSONResponse:
                     limit=arguments.get("limit", 10),
                 )
                 result["next"] = "Use search to check a specific ongoing series. Omit search or use 'all' to list all ongoing series with their latest available episodes."
-                logger.info("TOOL <<< %s (library=%s)", name, library_name)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -833,7 +938,6 @@ async def mcp(request: dict) -> JSONResponse:
                     }
                 )
             except Exception as exc:
-                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
                 return _mcp_error_response(request_id, -32000, str(exc))
 
         if name == "store ongoing series next release":
@@ -942,7 +1046,6 @@ async def mcp(request: dict) -> JSONResponse:
         logger.warning("TOOL xxx %s (not found)", name)
         return _mcp_error_response(request_id, -32601, "Tool not found")
 
-    logger.warning("MCP method not found: %s", method)
     return _mcp_error_response(request_id, -32601, "Method not found")
 
 
