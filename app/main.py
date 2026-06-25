@@ -501,55 +501,109 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "store ongoing series next release",
-            "description": "Store or update one locally tracked next-release marker for an ongoing Jellyfin series. Use this after an external source determines the next expected release date.",
+            "description": "Release Tracker: store or update one locally tracked next-release marker for an ongoing Jellyfin series. Use this after an external source determines the next expected release date for the next episode that should appear in Jellyfin.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "libraryName": {"type": "string"},
-                    "seriesName": {"type": "string"},
-                    "seriesId": {"type": "string"},
-                    "nextReleaseDate": {"type": "string"},
-                    "nextSeason": {"type": "integer"},
-                    "nextEpisode": {"type": "integer"},
-                    "timezone": {"type": "string"},
-                    "source": {"type": "string"},
-                    "notes": {"type": "string"}
+                    "libraryName": {
+                        "type": "string",
+                        "description": "Jellyfin library name for the series, for example 'Shows'."
+                    },
+                    "seriesName": {
+                        "type": "string",
+                        "description": "Series name as shown in Jellyfin. Required when storing or updating a marker."
+                    },
+                    "seriesId": {
+                        "type": "string",
+                        "description": "Optional Jellyfin series item id. Prefer this when available because series names can change. You can get it from 'get ongoing jellyfin series latest episodes'."
+                    },
+                    "nextReleaseDate": {
+                        "type": "string",
+                        "description": "Required next expected release time. Accepts either an ISO datetime like 2026-06-28T18:00:00+09:00 or a plain date like 2026-06-28. Plain dates are treated as due at the start of that date."
+                    },
+                    "nextSeason": {
+                        "type": "integer",
+                        "description": "Optional season number for the next expected episode."
+                    },
+                    "nextEpisode": {
+                        "type": "integer",
+                        "description": "Optional episode number for the next expected episode."
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "description": "Optional IANA timezone name such as Asia/Tokyo. Useful when nextReleaseDate is a plain date or a datetime without an offset."
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Optional source label describing where the release estimate came from, for example 'llm', 'manual', or a website name."
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Optional free-text note about the release estimate or reasoning."
+                    }
                 },
                 "required": ["libraryName", "seriesName", "nextReleaseDate"]
             },
         },
         {
             "name": "get due ongoing series releases",
-            "description": "Return locally tracked ongoing-series release markers whose nextReleaseDate is due now or overdue. Use this for cron-driven checks before re-checking Jellyfin.",
+            "description": "Release Tracker: return locally tracked ongoing-series release markers whose nextReleaseDate is due now or overdue. Use this for cron-driven checks before re-checking Jellyfin for newly arrived episodes.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "libraryName": {"type": "string"},
-                    "before": {"type": "string", "default": "now"},
-                    "limit": {"type": "integer", "default": 50}
+                    "libraryName": {
+                        "type": "string",
+                        "description": "Optional Jellyfin library name filter, for example 'Shows'. Omit it to check due markers across all tracked libraries."
+                    },
+                    "before": {
+                        "type": "string",
+                        "default": "now",
+                        "description": "Optional due cutoff. Use 'now' or an ISO datetime. Returns markers whose nextReleaseDate is earlier than or equal to this time."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Maximum number of due markers to return, sorted by nextReleaseDate ascending."
+                    }
                 }
             },
         },
         {
             "name": "get ongoing series next releases",
-            "description": "List all locally stored upcoming release markers for ongoing series. This is useful for planning, debugging, and confirming what is currently tracked.",
+            "description": "Release Tracker: list all locally stored upcoming release markers for ongoing series. This is useful for planning, debugging, and confirming what is currently tracked before checking which ones are due.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "libraryName": {"type": "string"},
-                    "limit": {"type": "integer", "default": 100}
+                    "libraryName": {
+                        "type": "string",
+                        "description": "Optional Jellyfin library name filter, for example 'Shows'."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Maximum number of tracked markers to return, sorted by nextReleaseDate ascending."
+                    }
                 }
             },
         },
         {
             "name": "delete ongoing series next release",
-            "description": "Delete one locally stored ongoing-series release marker when it is no longer needed.",
+            "description": "Release Tracker: delete one locally stored ongoing-series release marker when it is no longer needed. Prefer seriesId when available so the correct marker is removed even if the series name changes.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "libraryName": {"type": "string"},
-                    "seriesName": {"type": "string"},
-                    "seriesId": {"type": "string"}
+                    "libraryName": {
+                        "type": "string",
+                        "description": "Jellyfin library name for the series, for example 'Shows'."
+                    },
+                    "seriesName": {
+                        "type": "string",
+                        "description": "Series name for the marker to remove."
+                    },
+                    "seriesId": {
+                        "type": "string",
+                        "description": "Optional Jellyfin series item id. Prefer this when available because it is the most stable key."
+                    }
                 },
                 "required": ["libraryName", "seriesName"]
             },
@@ -944,9 +998,14 @@ async def mcp(request: dict) -> JSONResponse:
             try:
                 record = release_tracker.upsert_release(arguments)
                 payload = {
-                    "message": f"Stored next release for '{record['seriesName']}' in '{record['libraryName']}'.",
+                    "message": f"Release Tracker stored the next release for '{record['seriesName']}' in '{record['libraryName']}'.",
                     "record": record,
-                    "next": "When this release is due, call 'get due ongoing series releases'. After Jellyfin has the new episode, calculate the following release and call this store tool again.",
+                    "llm_instructions": [
+                        "Release Tracker stores one marker per ongoing series for the next expected episode release.",
+                        "Prefer seriesId when available because it is more stable than the series name.",
+                        "When the release becomes due, call 'get due ongoing series releases', then check Jellyfin latest episodes, then update this marker again with the following expected release.",
+                    ],
+                    "next": "When this Release Tracker marker becomes due, call 'get due ongoing series releases'. After Jellyfin has the new episode, calculate the following release and call this store tool again.",
                 }
                 logger.info("TOOL <<< %s (library=%s series=%s)", name, record["libraryName"], record["seriesName"])
                 return JSONResponse(
@@ -973,6 +1032,12 @@ async def mcp(request: dict) -> JSONResponse:
                     before=arguments.get("before", "now"),
                     limit=arguments.get("limit", 50),
                 )
+                payload["llm_instructions"] = [
+                    "Treat each returned item as a Release Tracker marker that should now be checked against Jellyfin.",
+                    "For each due item, call 'get ongoing jellyfin series latest episodes' using the series name as search text and compare the returned latest episode to nextSeason and nextEpisode when those fields exist.",
+                    "If the expected episode has arrived, calculate the following release and call 'store ongoing series next release' again.",
+                    "If the expected episode has not arrived yet, leave the marker unchanged so it stays due for the next cron run.",
+                ]
                 payload["next"] = "For each due item, check Jellyfin latest episodes. If the tracked episode has arrived, calculate the following release date and call 'store ongoing series next release' again. If it has not arrived yet, leave the marker in place for the next cron run."
                 logger.info("TOOL <<< %s", name)
                 return JSONResponse(
@@ -998,7 +1063,11 @@ async def mcp(request: dict) -> JSONResponse:
                     library_name=arguments.get("libraryName"),
                     limit=arguments.get("limit", 100),
                 )
-                payload["next"] = "Use this list to inspect tracked upcoming releases. Use 'get due ongoing series releases' to focus only on markers that should be checked now."
+                payload["llm_instructions"] = [
+                    "Use this tool to inspect all stored Release Tracker markers, not just overdue ones.",
+                    "Use 'get due ongoing series releases' when you want only the markers that should be checked now.",
+                ]
+                payload["next"] = "Use this list to inspect tracked Release Tracker markers. Use 'get due ongoing series releases' to focus only on markers that should be checked now."
                 logger.info("TOOL <<< %s", name)
                 return JSONResponse(
                     {
@@ -1023,7 +1092,11 @@ async def mcp(request: dict) -> JSONResponse:
                 payload = {
                     "deleted": deleted is not None,
                     "record": deleted,
-                    "message": "Release marker deleted." if deleted else "No matching release marker was found.",
+                    "message": "Release Tracker marker deleted." if deleted else "No matching Release Tracker marker was found.",
+                    "llm_instructions": [
+                        "Prefer seriesId when available so the correct marker is deleted.",
+                        "Use this only when a Release Tracker marker is wrong or no longer needed.",
+                    ],
                 }
                 logger.info("TOOL <<< %s", name)
                 return JSONResponse(
