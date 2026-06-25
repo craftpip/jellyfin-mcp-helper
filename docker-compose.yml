@@ -15,5 +15,6 @@ services:
       - /mnt/media2t/downloads:/media2
       - /mnt/media3t/downloads:/media3
       - ./app:/app/app
+      - ./config:/app/config
       - ./logs:/app/logs
       - ./reports:/app/reports
