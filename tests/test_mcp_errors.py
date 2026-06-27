@@ -59,13 +59,16 @@ def test_mcp_tools_list_includes_scan_progress_tool() -> None:
         )
 
     assert response.status_code == 200
-    tool_names = [tool["name"] for tool in response.json()["result"]["tools"]]
+    payload = response.json()["result"]
+    tool_names = [tool["name"] for tool in payload["tools"]]
     assert "get move new downloads scan progress" in tool_names
     assert "get jellyfin library items" in tool_names
     assert "get ongoing jellyfin series latest episodes" in tool_names
     assert "store ongoing series next release" in tool_names
+    assert "get ongoing series next release" in tool_names
     assert "get due ongoing series releases" in tool_names
     assert "get ongoing series next releases" in tool_names
+    assert "Release Tracker answers questions about what is stored" in payload["llm_instructions"][0]
 
 
 def test_mcp_get_jellyfin_library_items_formats_compact_response(monkeypatch) -> None:
@@ -322,6 +325,8 @@ def test_mcp_get_due_ongoing_series_releases(monkeypatch, tmp_path) -> None:
     assert payload["items"][0]["seriesName"] == "One Piece"
     assert payload["items"][0]["nextEpisode"] == 1124
     assert "daysOverdue" in payload["items"][0] or "hoursOverdue" in payload["items"][0]
+    assert payload["dataOrigin"] == "release_tracker"
+    assert payload["authorityScope"] == "stored_tracker_value"
 
 
 def test_mcp_get_due_ongoing_series_releases_excludes_not_due(monkeypatch, tmp_path) -> None:
@@ -426,6 +431,91 @@ def test_mcp_get_ongoing_series_next_releases(monkeypatch, tmp_path) -> None:
     payload = json.loads(response.json()["result"]["content"][0]["text"])
     assert payload["tracked_count"] == 2
     assert [item["seriesName"] for item in payload["items"]] == ["Dandadan", "One Piece"]
+    assert payload["dataOrigin"] == "release_tracker"
+    assert payload["authorityScope"] == "stored_tracker_value"
+
+
+def test_mcp_get_ongoing_series_next_release_returns_exact_stored_record(monkeypatch, tmp_path) -> None:
+    tracker_path = tmp_path / "ongoing_releases.json"
+    monkeypatch.setattr("app.services.release_tracker.DEFAULT_RELEASE_TRACKER_PATH", tracker_path)
+
+    with TestClient(app) as client:
+        client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 43,
+                "method": "tools/call",
+                "params": {
+                    "name": "store ongoing series next release",
+                    "arguments": {
+                        "libraryName": "Shows",
+                        "seriesName": "One Piece",
+                        "seriesId": "series-1",
+                        "nextReleaseDate": "2026-06-28T18:00:00+09:00",
+                        "nextSeason": 22,
+                        "nextEpisode": 1124,
+                        "source": "manual",
+                    },
+                },
+            },
+        )
+
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 44,
+                "method": "tools/call",
+                "params": {
+                    "name": "get ongoing series next release",
+                    "arguments": {
+                        "libraryName": "Shows",
+                        "seriesName": "One Piece",
+                        "seriesId": "series-1",
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = json.loads(response.json()["result"]["content"][0]["text"])
+    assert payload["found"] is True
+    assert payload["dataOrigin"] == "release_tracker"
+    assert payload["authorityScope"] == "stored_tracker_value"
+    assert payload["record"]["seriesName"] == "One Piece"
+    assert payload["record"]["seriesId"] == "series-1"
+    assert payload["record"]["nextEpisode"] == 1124
+    assert "answer from this stored Release Tracker value" in payload["next"]
+
+
+def test_mcp_get_ongoing_series_next_release_returns_not_found(monkeypatch, tmp_path) -> None:
+    tracker_path = tmp_path / "ongoing_releases.json"
+    monkeypatch.setattr("app.services.release_tracker.DEFAULT_RELEASE_TRACKER_PATH", tracker_path)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 45,
+                "method": "tools/call",
+                "params": {
+                    "name": "get ongoing series next release",
+                    "arguments": {
+                        "libraryName": "Shows",
+                        "seriesName": "Dandadan",
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = json.loads(response.json()["result"]["content"][0]["text"])
+    assert payload["found"] is False
+    assert payload["record"] is None
+    assert payload["dataOrigin"] == "release_tracker"
+    assert "store ongoing series next release" in payload["next"]
 
 
 def test_mcp_scan_start_response_instructs_llm_to_use_progress_tool(monkeypatch) -> None:

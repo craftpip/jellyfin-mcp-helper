@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 import json
 from difflib import SequenceMatcher
@@ -36,6 +37,7 @@ def tokenize(value: str) -> set[str]:
     return set(WORD_RE.findall(value.lower()))
 
 
+@cache
 def series_aliases(path: str) -> set[str]:
     root = Path(path)
     aliases = {root.name}
@@ -64,6 +66,7 @@ def season_dir_candidates(season_number: int) -> set[str]:
     }
 
 
+@cache
 def series_video_count(path: str) -> int:
     root = Path(path)
     if not root.exists() or not root.is_dir():
@@ -75,6 +78,11 @@ def series_video_count(path: str) -> int:
             if count >= 20:
                 return count
     return count
+
+
+def clear_resolver_cache() -> None:
+    series_aliases.cache_clear()
+    series_video_count.cache_clear()
 
 
 class PathResolver:

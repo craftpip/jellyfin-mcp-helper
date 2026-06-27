@@ -25,7 +25,7 @@ from app.models.schemas import (
 from app.services.classifier import classify_candidate
 from app.services.jellyfin import JellyfinClient
 from app.services.download_client import QbittorrentClient
-from app.services.resolver import PathResolver
+from app.services.resolver import PathResolver, clear_resolver_cache
 from app.services.scanner import ScanPathError, scan_candidates, _to_absolute_path
 
 logger = logging.getLogger(__name__)
@@ -115,12 +115,15 @@ class ScanManager:
                 scan.error = str(exc)
                 scan.current_candidate = None
             logger.error("Scan %s failed: %s", scan_id, str(exc), exc_info=True)
+        finally:
+            clear_resolver_cache()
 
     def _run_scan_sync(self, scan_id: str, request: ScanRequest) -> None:
         scan = self._current_scan
         if not scan or scan.scan_id != scan_id:
             return
 
+        clear_resolver_cache()
         in_progress_paths = self._load_in_progress_paths_sync()
         scan.skipped_in_progress = len(in_progress_paths)
         planned_targets: dict[str, tuple[int, int]] = {}

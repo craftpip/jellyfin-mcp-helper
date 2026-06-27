@@ -24,6 +24,14 @@ from app.services.scan_manager import ScanManager
 logger = logging.getLogger(__name__)
 
 
+RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS = [
+    "Release Tracker answers questions about what is stored, tracked, or saved locally for a series.",
+    "If the user asks for the tracked/saved date or stored next release for a specific series, call the Release Tracker lookup tool before using Jellyfin or any external source.",
+    "Only use Jellyfin or an external source when the user explicitly asks for live verification/current availability, or when no stored Release Tracker marker exists.",
+    "When answering, clearly label whether the date came from Release Tracker local storage, Jellyfin library state, or an external source.",
+]
+
+
 def _mcp_error_response(request_id: object, code: int, message: str) -> JSONResponse:
     return JSONResponse({"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}})
 
@@ -371,7 +379,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "store ongoing series next release",
-            "description": "Release Tracker: store or update one locally tracked next-release marker for an ongoing Jellyfin series. Use this after an external source determines the next expected release date for the next episode that should appear in Jellyfin.",
+            "description": "Release Tracker: store or update one locally tracked next-release marker for an ongoing Jellyfin series. Use this after an external source determines the next expected release date for the next episode that should appear in Jellyfin. Later, if the user asks what date is stored or tracked for that series, read Release Tracker first instead of using Jellyfin or the web.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -416,6 +424,28 @@ def _mcp_tools() -> list[dict[str, object]]:
             },
         },
         {
+            "name": "get ongoing series next release",
+            "description": "Release Tracker: return the single locally stored next-release marker for one ongoing Jellyfin series. This is the local-memory lookup tool. Use it first when the user asks what date is stored, tracked, or saved for a specific series. Do not use Jellyfin or the web before this tool unless the user explicitly asks for live verification.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "libraryName": {
+                        "type": "string",
+                        "description": "Jellyfin library name for the series, for example 'Shows'."
+                    },
+                    "seriesName": {
+                        "type": "string",
+                        "description": "Series name to look up in the local Release Tracker store. Required for direct lookup."
+                    },
+                    "seriesId": {
+                        "type": "string",
+                        "description": "Optional Jellyfin series item id. Prefer this when available because it is the most stable key."
+                    }
+                },
+                "required": ["libraryName", "seriesName"]
+            },
+        },
+        {
             "name": "get due ongoing series releases",
             "description": "Release Tracker: return locally tracked ongoing-series release markers whose nextReleaseDate is due now or overdue. Use this for cron-driven checks before re-checking Jellyfin for newly arrived episodes.",
             "inputSchema": {
@@ -440,7 +470,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get ongoing series next releases",
-            "description": "Release Tracker: list all locally stored upcoming release markers for ongoing series. This is useful for planning, debugging, and confirming what is currently tracked before checking which ones are due.",
+            "description": "Release Tracker: list all locally stored upcoming release markers for ongoing series. This is useful for planning, debugging, and confirming what is currently tracked before checking which ones are due. For a single-series stored-date question, prefer 'get ongoing series next release' first.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -509,7 +539,16 @@ async def mcp(request: dict) -> JSONResponse:
         return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": {}})
 
     if method == "tools/list":
-        return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": {"tools": _mcp_tools()}})
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "tools": _mcp_tools(),
+                    "llm_instructions": RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS,
+                },
+            }
+        )
 
     if method == "tools/call":
         params = request.get("params") or {}
@@ -895,8 +934,11 @@ async def mcp(request: dict) -> JSONResponse:
                 record = release_tracker.upsert_release(arguments)
                 payload = {
                     "message": f"Release Tracker stored the next release for '{record['seriesName']}' in '{record['libraryName']}'.",
+                    "dataOrigin": "release_tracker",
+                    "authorityScope": "stored_tracker_value",
                     "record": record,
-                    "llm_instructions": [
+                    "llm_instructions": RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS
+                    + [
                         "Release Tracker stores one marker per ongoing series for the next expected episode release.",
                         "Prefer seriesId when available because it is more stable than the series name.",
                         "When the release becomes due, call 'get due ongoing series releases', then check Jellyfin latest episodes, then update this marker again with the following expected release.",
@@ -921,6 +963,49 @@ async def mcp(request: dict) -> JSONResponse:
                 logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
                 return _mcp_error_response(request_id, -32000, str(exc))
 
+        if name == "get ongoing series next release":
+            try:
+                record = release_tracker.get_release(arguments)
+                payload = {
+                    "found": record is not None,
+                    "dataOrigin": "release_tracker",
+                    "authorityScope": "stored_tracker_value",
+                    "record": record,
+                    "message": (
+                        f"Release Tracker returned the stored next release for '{record['seriesName']}' in '{record['libraryName']}'."
+                        if record
+                        else "No matching Release Tracker marker was found."
+                    ),
+                    "llm_instructions": RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS
+                    + [
+                        "Use this tool to answer questions about what date is stored, tracked, or saved for one series.",
+                        "If found=false, say there is no stored Release Tracker marker yet before considering Jellyfin or any external source.",
+                        "If the user wants the live current status instead of the stored value, then use Jellyfin or another explicitly requested source after stating that you are switching from stored tracker data to live verification.",
+                    ],
+                    "next": (
+                        "If the user wants live verification, check Jellyfin latest episodes next. Otherwise answer from this stored Release Tracker value."
+                        if record
+                        else "If the user wants to save a tracker value, call 'store ongoing series next release'. If the user wants live verification instead, check Jellyfin latest episodes or another requested source."
+                    ),
+                }
+                logger.info("TOOL <<< %s", name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [{"type": "text", "text": json.dumps(payload)}],
+                            "isError": False,
+                        },
+                    }
+                )
+            except ValueError as exc:
+                logger.warning("TOOL xxx %s (%s)", name, str(exc))
+                return _mcp_error_response(request_id, -32602, str(exc))
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
+
         if name == "get due ongoing series releases":
             try:
                 payload = release_tracker.get_due_releases(
@@ -928,7 +1013,9 @@ async def mcp(request: dict) -> JSONResponse:
                     before=arguments.get("before", "now"),
                     limit=arguments.get("limit", 50),
                 )
-                payload["llm_instructions"] = [
+                payload["dataOrigin"] = "release_tracker"
+                payload["authorityScope"] = "stored_tracker_value"
+                payload["llm_instructions"] = RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS + [
                     "Treat each returned item as a Release Tracker marker that should now be checked against Jellyfin.",
                     "For each due item, call 'get ongoing jellyfin series latest episodes' using the series name as search text and compare the returned latest episode to nextSeason and nextEpisode when those fields exist.",
                     "If the expected episode has arrived, calculate the following release and call 'store ongoing series next release' again.",
@@ -959,9 +1046,12 @@ async def mcp(request: dict) -> JSONResponse:
                     library_name=arguments.get("libraryName"),
                     limit=arguments.get("limit", 100),
                 )
-                payload["llm_instructions"] = [
+                payload["dataOrigin"] = "release_tracker"
+                payload["authorityScope"] = "stored_tracker_value"
+                payload["llm_instructions"] = RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS + [
                     "Use this tool to inspect all stored Release Tracker markers, not just overdue ones.",
                     "Use 'get due ongoing series releases' when you want only the markers that should be checked now.",
+                    "For a single-series stored lookup, prefer 'get ongoing series next release' because it avoids ambiguous list scanning.",
                 ]
                 payload["next"] = "Use this list to inspect tracked Release Tracker markers. Use 'get due ongoing series releases' to focus only on markers that should be checked now."
                 logger.info("TOOL <<< %s", name)
@@ -987,9 +1077,12 @@ async def mcp(request: dict) -> JSONResponse:
                 deleted = release_tracker.delete_release(arguments)
                 payload = {
                     "deleted": deleted is not None,
+                    "dataOrigin": "release_tracker",
+                    "authorityScope": "stored_tracker_value",
                     "record": deleted,
                     "message": "Release Tracker marker deleted." if deleted else "No matching Release Tracker marker was found.",
-                    "llm_instructions": [
+                    "llm_instructions": RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS
+                    + [
                         "Prefer seriesId when available so the correct marker is deleted.",
                         "Use this only when a Release Tracker marker is wrong or no longer needed.",
                     ],

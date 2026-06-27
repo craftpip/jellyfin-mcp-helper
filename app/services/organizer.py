@@ -10,7 +10,7 @@ from app.models.schemas import CandidateItem, ClassificationResult, ResolvedTarg
 from app.services.classifier import classify_candidate
 from app.services.jellyfin import JellyfinClient
 from app.services.download_client import QbittorrentClient
-from app.services.resolver import PathResolver
+from app.services.resolver import PathResolver, clear_resolver_cache
 from app.services.scanner import scan_candidates
 
 
@@ -20,6 +20,7 @@ class OrganizerService:
         self._resolver = PathResolver(config)
 
     async def execute(self, run_state: RunState) -> RunState:
+        clear_resolver_cache()
         scan_result = scan_candidates(self._config.paths)
         candidates = scan_result.candidates
         touched_libraries: set[str] = set()
@@ -117,7 +118,7 @@ class OrganizerService:
         run_state.ai_output = ""
 
         await self._trigger_jellyfin_scans(run_state, touched_libraries)
-
+        clear_resolver_cache()
         return run_state
 
     async def _load_in_progress_paths(self, run_state: RunState) -> list[str]:
