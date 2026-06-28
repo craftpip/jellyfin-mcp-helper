@@ -26,3 +26,4 @@ htmlcov/
 *.swp
 *.swo
 tests/tests/
+ongoing_releases.json
