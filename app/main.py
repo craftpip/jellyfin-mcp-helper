@@ -406,13 +406,48 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "trigger jellyfin library scan",
-            "description": "Trigger a Jellyfin metadata refresh and library scan for one named library, such as Movies or Shows. Use this after files have been moved and Jellyfin needs to pick up the new content or location changes.",
+            "description": "Trigger a Jellyfin metadata refresh and library scan for a named library, such as Movies or Shows. By default refreshes the whole library. Use itemNames or itemIds to scan specific items only. Use refresh mode params to control whether metadata, images, or both are force-refreshed.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "libraryName": {
                         "type": "string",
                         "description": "The Jellyfin library name to refresh, for example 'Movies' or 'Shows'."
+                    },
+                    "itemNames": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of specific movie or series names to scan instead of the whole library."
+                    },
+                    "itemIds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of Jellyfin item IDs to scan instead of the whole library."
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "When true, scan recursively including all children items."
+                    },
+                    "metadataRefreshMode": {
+                        "type": "string",
+                        "default": "Default",
+                        "description": "Metadata refresh mode. Matches Jellyfin UI options: Default (scan for new/updated files), FullRefresh (search for missing metadata), ValidationOnly."
+                    },
+                    "imageRefreshMode": {
+                        "type": "string",
+                        "default": "Default",
+                        "description": "Image refresh mode. Matches Jellyfin UI options: Default (scan for new/updated images), FullRefresh (replace existing images), ValidationOnly."
+                    },
+                    "replaceAllMetadata": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "When true, replace all existing metadata instead of merging. Only applies when metadataRefreshMode is FullRefresh."
+                    },
+                    "replaceAllImages": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "When true, replace all existing images instead of merging. Only applies when imageRefreshMode is FullRefresh."
                     }
                 },
                 "required": ["libraryName"]
@@ -878,9 +913,36 @@ async def mcp(request: dict) -> JSONResponse:
                     }
                 )
 
+            item_names = arguments.get("itemNames")
+            item_ids = arguments.get("itemIds")
+            recursive = arguments.get("recursive", True)
+            metadata_refresh_mode = arguments.get("metadataRefreshMode", "FullRefresh")
+            image_refresh_mode = arguments.get("imageRefreshMode", "FullRefresh")
+            replace_all_metadata = arguments.get("replaceAllMetadata", False)
+            replace_all_images = arguments.get("replaceAllImages", False)
+
             try:
-                target = await client.scan_library(library_name)
+                result = await client.scan_library(
+                    library_name=library_name,
+                    item_ids=item_ids,
+                    item_names=item_names,
+                    recursive=recursive,
+                    metadata_refresh_mode=metadata_refresh_mode,
+                    image_refresh_mode=image_refresh_mode,
+                    replace_all_metadata=replace_all_metadata,
+                    replace_all_images=replace_all_images,
+                )
                 logger.info("TOOL <<< %s (library=%s)", name, library_name)
+
+                response_data: dict = {
+                    "message": (
+                        f"Triggered Jellyfin scan for {len(result.get('scanned_items', []))} item(s) in '{result.get('name', library_name)}'"
+                        if result.get("scanned_items")
+                        else f"Triggered Jellyfin library scan for '{result.get('name', library_name)}'"
+                    ),
+                    "library": result,
+                }
+
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -889,12 +951,7 @@ async def mcp(request: dict) -> JSONResponse:
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": json.dumps(
-                                        {
-                                            "message": f"Triggered Jellyfin library scan for '{target.get('name', library_name)}'",
-                                            "library": target,
-                                        }
-                                    ),
+                                    "text": json.dumps(response_data),
                                 }
                             ],
                             "isError": False,
