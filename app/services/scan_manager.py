@@ -275,6 +275,7 @@ class ScanManager:
                         reason=classification.reason,
                         target_path=resolved.target_path,
                         action=planned_action,
+                        folder_exists=resolved.folder_exists,
                     )
                 )
                 if planned_action == "skip":
@@ -358,6 +359,57 @@ class ScanManager:
 
     def _next_confirm_id(self, scan: ScanPlan) -> str:
         return f"i{len(scan.items) + 1}"
+
+    def update_scan(self, scan_id: str, items: list[dict]) -> ScanPlan:
+        scan = self.get_scan(scan_id)
+
+        if scan.status == "confirmed":
+            raise HTTPException(status_code=400, detail="Cannot update a confirmed scan")
+        if scan.status == "running":
+            raise HTTPException(status_code=400, detail="Scan is still running. Wait for it to complete before updating.")
+        if scan.status == "failed":
+            raise HTTPException(status_code=400, detail="Scan failed. Run a new scan before updating.")
+
+        allowed_roots = list(self._config.paths.movie_roots.values()) + list(self._config.paths.series_roots.values())
+        updates_by_id = {u["confirmId"]: u["targetPath"] for u in items}
+        updated_count = 0
+
+        for item in scan.items:
+            if item.confirm_id not in updates_by_id:
+                continue
+            new_target = updates_by_id[item.confirm_id]
+
+            if not any(new_target.startswith(root) for root in allowed_roots):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Target path '{new_target}' is not under any configured movie or series root",
+                )
+
+            if not new_target.endswith((".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv")):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Target path '{new_target}' does not have a valid video extension",
+                )
+
+            item.target_path = new_target
+            target_exists = Path(new_target).exists()
+            item.action = "replace" if target_exists else "move"
+            item.folder_exists = Path(new_target).parent.exists()
+            updated_count += 1
+
+        if not updated_count:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No matching items found for the given confirmIds: {list(updates_by_id.keys())}",
+            )
+
+        logger.info(
+            "Scan %s updated %d items: %s",
+            scan_id,
+            updated_count,
+            {uid: updates_by_id[uid] for uid in updates_by_id},
+        )
+        return scan
 
     async def confirm_scan(
         self,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import logging
 from datetime import UTC, datetime
@@ -113,7 +114,7 @@ class PathResolver:
     async def _resolve_movie(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
         index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0
         movie_roots_list = list(self._config.paths.movie_roots.values())
-        movie_root = movie_roots_list[index] if index < len(movie_roots_list) else movie_roots_list[0]
+        movie_root = self._pick_drive_root(candidate.source_path, movie_roots_list, index)
         
         all_existing_paths = []
         for root in movie_roots_list:
@@ -141,12 +142,36 @@ class PathResolver:
             target_path=target_path,
             created_movie_folder=best_match is None,
             existing_match=best_match,
+            folder_exists=best_match is not None,
         )
+
+    @staticmethod
+    def _pick_drive_root(source_path: str, roots: list[str], default_index: int) -> str:
+        fallback = roots[default_index] if default_index < len(roots) else roots[0]
+        try:
+            source_dev = os.stat(source_path).st_dev
+        except OSError:
+            return fallback
+
+        same_drive = []
+        for root in roots:
+            try:
+                if os.stat(root).st_dev == source_dev:
+                    same_drive.append(root)
+            except OSError:
+                continue
+
+        if same_drive:
+            if fallback in same_drive:
+                return fallback
+            return same_drive[0]
+
+        return fallback
 
     async def _resolve_series(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
         index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0
         series_roots_list = list(self._config.paths.series_roots.values())
-        series_root = series_roots_list[index] if index < len(series_roots_list) else series_roots_list[0]
+        series_root = self._pick_drive_root(candidate.source_path, series_roots_list, index)
         
         all_existing_paths = []
         for root in series_roots_list:
@@ -200,12 +225,14 @@ class PathResolver:
         self._remember_series_alias_season(series_key, classification.series_alias, season_number)
         if classification.series_alias and season_number:
             logger.info("  [resolver] remembered alias \"%s\" → season %d", classification.series_alias, season_number)
+        folder_exists = show_dir.exists()
         return ResolvedTarget(
             root_key=candidate.source_root_key,
             target_dir=str(season_dir),
             target_path=target_path,
             created_show_folder=created_show_folder,
             existing_match=best_match,
+            folder_exists=folder_exists,
         )
 
     def _lookup_series_path(self, series_key: str) -> str | None:

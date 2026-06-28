@@ -9,7 +9,7 @@ from guessit import guessit
 from app.models.schemas import CandidateItem, ClassificationResult
 
 
-EXTRA_MARKERS = re.compile(r"\b(ncop\d*|nced\d*|op\d*|ed\d*|ova|ona|special|extras?|bonus|recap|trailer)\b", re.IGNORECASE)
+EXTRA_MARKERS = re.compile(r"\b(ncop\d*|nced\d*|op\d*|ed\d*|sp\d*|ova|ona|special|extras?|bonus|recap|trailer)\b", re.IGNORECASE)
 SAMPLE_MARKERS = re.compile(r"\bsample\b", re.IGNORECASE)
 SAMPLE_SIZE_THRESHOLD = 150 * 1024 * 1024  # 150MB
 SEASON_EPISODE_RE = re.compile(r"s\d{1,2}e\d{1,3}", re.IGNORECASE)

@@ -58,7 +58,9 @@ class Settings(BaseSettings):
 class PathsConfig(BaseModel):
     download_roots: list[str] = Field(default_factory=list, alias="downloadRoots")
     movie_roots: dict[str, str] = Field(default_factory=dict, alias="movieRoots")
+    movie_root_descriptions: dict[str, str] = Field(default_factory=dict, alias="movieRootDescriptions")
     series_roots: dict[str, str] = Field(default_factory=dict, alias="seriesRoots")
+    series_root_descriptions: dict[str, str] = Field(default_factory=dict, alias="seriesRootDescriptions")
     library_layout: dict[str, str] = Field(
         default_factory=lambda: {
             "movieFolderStyle": "Movie Title (Year)",
@@ -111,18 +113,30 @@ class PathsConfig(BaseModel):
         series_roots_list = [p.strip() for p in settings.series_roots.split(",") if p.strip()]
 
         movie_roots: dict[str, str] = {}
+        movie_root_descriptions: dict[str, str] = {}
         series_roots: dict[str, str] = {}
+        series_root_descriptions: dict[str, str] = {}
 
-        for i, path in enumerate(movie_roots_list):
+        for i, entry in enumerate(movie_roots_list):
+            parts = entry.split("::", 1)
+            path = parts[0].strip()
+            description = parts[1].strip() if len(parts) > 1 else f"Movies folder {i + 1}"
             movie_roots[f"movie_{i}"] = path
+            movie_root_descriptions[f"movie_{i}"] = description
 
-        for i, path in enumerate(series_roots_list):
+        for i, entry in enumerate(series_roots_list):
+            parts = entry.split("::", 1)
+            path = parts[0].strip()
+            description = parts[1].strip() if len(parts) > 1 else f"Series folder {i + 1}"
             series_roots[f"series_{i}"] = path
+            series_root_descriptions[f"series_{i}"] = description
 
         return cls(
             download_roots=download_roots,
             movie_roots=movie_roots,
+            movie_root_descriptions=movie_root_descriptions,
             series_roots=series_roots,
+            series_root_descriptions=series_root_descriptions,
         )
 
 

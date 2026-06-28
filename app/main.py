@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
+from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from app.core.config import get_config
 from app.core.logging import configure_logging
 from app.core.version import VERSION
-from app.models.schemas import ScanLogEntry, ScanPlan, ScanRequest
+from app.models.schemas import ScanLogEntry, ScanPlan, ScanRequest, ScannedItem
 from app.services.jellyfin import JellyfinClient
 from app.services.release_tracker import ReleaseTracker
 from app.services.scan_manager import ScanManager
@@ -62,6 +64,22 @@ def _format_scan_report(scan: ScanPlan) -> dict:
         if item.action in items_by_action:
             items_by_action[item.action].append(item)
 
+    config = get_config()
+    movie_roots_info = [
+        {
+            "path": path,
+            "description": config.paths.movie_root_descriptions.get(key, ""),
+        }
+        for key, path in config.paths.movie_roots.items()
+    ]
+    series_roots_info = [
+        {
+            "path": path,
+            "description": config.paths.series_root_descriptions.get(key, ""),
+        }
+        for key, path in config.paths.series_roots.items()
+    ]
+
     summary = {
         "scan_id": scan.scan_id,
         "status": scan.status,
@@ -72,71 +90,121 @@ def _format_scan_report(scan: ScanPlan) -> dict:
         "action_required": len(items_by_action["move"]) + len(items_by_action["replace"]),
     }
 
-    movies = []
-    series = []
-
-    for item in items_by_action["move"]:
-        entry = {
-            "confirmId": item.confirm_id,
-            "name": item.name,
-            "destination": Path(item.target_path).parent.name,
-            "full_destination": item.target_path,
-            "sourcePath": item.source_path,
-        }
-        if item.item_type == "movie":
-            movies.append(entry)
-        elif item.item_type == "series":
-            series.append(entry)
-
-    for item in items_by_action["replace"]:
-        entry = {
-            "confirmId": item.confirm_id,
-            "name": item.name,
-            "destination": Path(item.target_path).parent.name,
-            "full_destination": item.target_path,
-            "sourcePath": item.source_path,
-        }
-        if item.item_type == "movie":
-            movies.append(entry)
-        elif item.item_type == "series":
-            series.append(entry)
+    if movie_roots_info:
+        summary["movie_roots"] = movie_roots_info
+    if series_roots_info:
+        summary["series_roots"] = series_roots_info
 
     report = {
         "summary": summary,
-        "movies": movies,
-        "series": series,
+        "report_md": _format_report_md(items_by_action, movie_roots_info, series_roots_info),
     }
-
-    if items_by_action["skip"]:
-        report["skipped"] = [
-            {
-                "confirmId": item.confirm_id,
-                "name": item.name,
-                "reason": item.reason,
-                "sourcePath": item.source_path,
-                "error": item.error,
-            }
-            for item in items_by_action["skip"]
-        ]
 
     if scan.service_errors:
         report["service_errors"] = scan.service_errors
 
-    unconfirmed = len(items_by_action["move"]) + len(items_by_action["replace"])
-    if unconfirmed > 0 and scan.status != "confirmed":
-        next_step = (
-            f"To apply all remaining items: call 'confirm move new downloads scan' with scanId={scan.scan_id}. "
-            f"To apply specific items only: call 'confirm move new downloads scan' with scanId={scan.scan_id} "
-            f"and preferably itemIds=[list of confirmId values from the report], or use either sourcePaths=[list of sourcePath values from the report] or "
-            f"sourcePrefixes=[common parent folder prefixes from the report]. "
-            f"After confirming, call 'get move new downloads scan report' again to review remaining items."
-        )
-    else:
-        next_step = "All items have been confirmed. Run 'move new downloads scan' for a new scan."
-    if "Filesystem" in scan.service_errors:
-        next_step += " Some download paths could not be scanned due to filesystem errors; review skipped items for the exact paths."
-    report["next"] = next_step
+    report["llm_instructions"] = _report_llm_instructions(scan, movie_roots_info, series_roots_info)
+    report["next"] = _report_next_step(scan)
     return report
+
+
+EPISODE_TAG_RE = re.compile(r"S\d{2}E\d{2,3}", re.IGNORECASE)
+
+
+def _format_report_md(
+    items_by_action: dict[str, list[ScannedItem]],
+    movie_roots_info: list[dict],
+    series_roots_info: list[dict],
+) -> str:
+    lines = []
+    movies = [i for i in items_by_action["move"] + items_by_action["replace"] if i.item_type == "movie"]
+    series = [i for i in items_by_action["move"] + items_by_action["replace"] if i.item_type == "series"]
+
+    if movies:
+        lines.append("## Movies (%d)" % len(movies))
+        lines.append("| cid | Title | Exists | Target |")
+        lines.append("|-----|-------|--------|--------|")
+        for item in movies:
+            title = Path(item.target_path).parent.name
+            exists = "yes" if item.folder_exists else "no"
+            lines.append("| %s | %s | %s | `%s` |" % (item.confirm_id, title, exists, item.target_path))
+        lines.append("")
+
+    if series:
+        lines.append("## Series (%d)" % len(series))
+        lines.append("| cid | Show | Season | Ep | Exists | Target |")
+        lines.append("|-----|------|--------|----|--------|--------|")
+        for item in series:
+            p = Path(item.target_path)
+            show = p.parent.parent.name if p.parent.parent else p.parent.name
+            season = p.parent.name
+            tag_match = EPISODE_TAG_RE.search(p.name)
+            ep = tag_match.group(0) if tag_match else p.stem
+            exists = "yes" if item.folder_exists else "no"
+            lines.append("| %s | %s | %s | %s | %s | `%s` |" % (item.confirm_id, show, season, ep, exists, item.target_path))
+        lines.append("")
+
+    if items_by_action["skip"]:
+        by_reason: dict[str, list[str]] = {}
+        for item in items_by_action["skip"]:
+            key = item.reason[:120]
+            by_reason.setdefault(key, []).append(item.source_path)
+
+        lines.append("## Skipped (%d)" % len(items_by_action["skip"]))
+        for reason, paths in by_reason.items():
+            lines.append("- [%d] %s" % (len(paths), reason))
+            for p in paths[:2]:
+                lines.append("  - `%s`" % p)
+            if len(paths) > 2:
+                lines.append("  - ... and %d more" % (len(paths) - 2))
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def _report_llm_instructions(scan: ScanPlan, movie_roots_info: list[dict], series_roots_info: list[dict]) -> list[str]:
+    unconfirmed = scan.counts.movies + scan.counts.series
+    if unconfirmed == 0 or scan.status == "confirmed":
+        return []
+
+    roots = []
+    for label, info in [("movies", movie_roots_info), ("series", series_roots_info)]:
+        for r in info:
+            roots.append(f"  {r['path']} → {r['description']}")
+
+    instructions = [
+        "You can change where items go before confirming.",
+        "folderExists=true  → already on disk, keep it there",
+        "folderExists=false → new item, can redirect",
+    ]
+
+    if roots:
+        instructions.append("Available roots:\n" + "\n".join(roots))
+
+    instructions.append(
+        "To redirect an item, call 'update move new downloads scan' "
+        "with items=[{\"confirmId\": \"...\", \"targetPath\": \"<new full path>\"}]. "
+        "Then fetch this report again, then confirm."
+    )
+
+    return instructions
+
+
+def _report_next_step(scan: ScanPlan) -> str:
+    unconfirmed = len([item for item in scan.items if not item.confirmed and item.action in ("move", "replace")])
+
+    if unconfirmed == 0 or scan.status == "confirmed":
+        parts = ["All items done. Run 'move new downloads scan' for a new scan."]
+    else:
+        parts = [
+            f"{unconfirmed} items pending. Review folderExists below.",
+            "If an item needs a different path, update it first, then confirm.",
+        ]
+
+    next_step = " ".join(parts)
+    if "Filesystem" in scan.service_errors:
+        next_step += " Some paths could not be scanned; check skipped items."
+    return next_step
 
 
 def _format_duration(seconds: float | None) -> str | None:
@@ -251,7 +319,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "confirm move new downloads scan",
-            "description": "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. Use it only after the scan report has been reviewed and approved. For selective confirmation, prefer itemIds from the scan report.",
+            "description": "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. Use it only after the scan report has been reviewed and approved. If you need to redirect items to a different root, call 'update move new downloads scan' first, then fetch the report again, then confirm.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -302,6 +370,38 @@ def _mcp_tools() -> list[dict[str, object]]:
                         "description": "Optional scan_id to fetch a specific scan report. If omitted, the current active scan is used."
                     }
                 }
+            },
+        },
+        {
+            "name": "update move new downloads scan",
+            "description": "Update planned target destinations for items in a completed scan report. Use this to redirect movie or series items to a different root before confirming. After updating, fetch the report again to verify, then confirm. This tool does not move files.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "scanId": {
+                        "type": "string",
+                        "description": "The scan_id returned by 'move new downloads scan'."
+                    },
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "confirmId": {
+                                    "type": "string",
+                                    "description": "The confirmId from the scan report for the item to update."
+                                },
+                                "targetPath": {
+                                    "type": "string",
+                                    "description": "The new full destination path for this item. Must be under one of the configured movie or series roots."
+                                }
+                            },
+                            "required": ["confirmId", "targetPath"]
+                        },
+                        "description": "List of item updates. Each update specifies a confirmId and the new targetPath."
+                    }
+                },
+                "required": ["scanId", "items"]
             },
         },
         {
@@ -716,6 +816,39 @@ async def mcp(request: dict) -> JSONResponse:
             except HTTPException as exc:
                 logger.warning("TOOL xxx %s (%s)", name, exc.detail)
                 return _mcp_error_response(request_id, -32000, exc.detail)
+
+        if name == "update move new downloads scan":
+            scan_id = arguments.get("scanId")
+            items = arguments.get("items")
+            if not scan_id:
+                return _mcp_error_response(request_id, -32602, "scanId is required")
+            if not items or not isinstance(items, list):
+                return _mcp_error_response(request_id, -32602, "items is required and must be a list")
+
+            try:
+                updated_scan = manager.update_scan(scan_id, items)
+                logger.info("TOOL <<< %s (scan_id=%s, updated=%d)", name, scan_id, len(items))
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(_format_scan_report(updated_scan)),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except HTTPException as exc:
+                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
+                return _mcp_error_response(request_id, -32000, exc.detail)
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
 
         if name == "trigger jellyfin library scan":
             library_name = arguments.get("libraryName")

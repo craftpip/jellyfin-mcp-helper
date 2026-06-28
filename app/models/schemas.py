@@ -33,6 +33,7 @@ class ScannedItem(BaseModel):
     action: Literal["move", "replace", "skip"]
     error: str | None = None
     confirmed: bool = False
+    folder_exists: bool = Field(default=False, alias="folderExists")
 
     model_config = {"populate_by_name": True}
 
@@ -126,6 +127,7 @@ class ResolvedTarget(BaseModel):
     created_show_folder: bool = False
     created_movie_folder: bool = False
     existing_match: str | None = None
+    folder_exists: bool = False
 
 
 class CandidateItem(BaseModel):

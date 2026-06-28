@@ -83,9 +83,9 @@ def test_create_scan_returns_filesystem_errors_to_user(tmp_path, monkeypatch) ->
     assert len(scan.items) == 1
     assert scan.items[0].source_path == "/data/torrents/Corrupted-Show/Show Season 01"
     assert scan.items[0].error == "[Errno 5] Input/output error"
-    assert report["skipped"][0]["sourcePath"] == "/data/torrents/Corrupted-Show/Show Season 01"
-    assert report["skipped"][0]["error"] == "[Errno 5] Input/output error"
-    assert "review skipped items for the exact paths" in report["next"]
+    assert "/data/torrents/Corrupted-Show/Show Season 01" in report["report_md"]
+    assert "[Errno 5] Input/output error" in report["report_md"]
+    assert "check skipped items" in report["next"]
 
 
 def test_create_scan_skips_zero_byte_media_files(tmp_path, monkeypatch) -> None:
