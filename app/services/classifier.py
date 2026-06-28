@@ -42,6 +42,7 @@ def classify_candidate(candidate: CandidateItem) -> ClassificationResult:
 
     title = _extract_title(parsed, candidate)
     episode_title = _extract_episode_title(parsed, candidate)
+    series_alias = _extract_series_alias(parsed, title)
     year = _extract_int(parsed.get("year"))
     season = _extract_int(parsed.get("season"))
     episode = _extract_int(parsed.get("episode"))
@@ -81,6 +82,7 @@ def classify_candidate(candidate: CandidateItem) -> ClassificationResult:
         type=kind,
         title=title,
         episode_title=episode_title,
+        series_alias=series_alias,
         year=year,
         season=season,
         episode=episode,
@@ -162,6 +164,48 @@ def _extract_episode_title(parsed: dict[str, Any], candidate: CandidateItem) -> 
         if not parsed.get("series"):
             return guessit_title.strip()
     return None
+
+
+def _extract_series_alias(parsed: dict[str, Any], title: str | None) -> str | None:
+    alternative_title = parsed.get("alternative_title")
+    candidates: list[str] = []
+    if isinstance(alternative_title, str):
+        candidates.append(alternative_title.strip())
+    elif isinstance(alternative_title, list):
+        for item in alternative_title:
+            if isinstance(item, str):
+                candidates.append(item.strip())
+
+    for cleaned in candidates:
+        if _is_series_alias_text(cleaned, title):
+            return cleaned
+
+    episode_title = parsed.get("episode_title")
+    if isinstance(episode_title, str):
+        cleaned = episode_title.strip()
+        if _is_series_alias_text(cleaned, title):
+            return cleaned
+
+    return None
+
+
+def _is_series_alias_text(value: str, title: str | None) -> bool:
+    cleaned = value.strip()
+    if not cleaned or not re.search(r"[A-Za-z]", cleaned):
+        return False
+    if SEASON_EPISODE_RE.search(cleaned):
+        return False
+    if SEASON_EPISODE_TOKEN_RE.search(cleaned):
+        return False
+    if SEASON_DASH_EPISODE_RE.search(cleaned):
+        return False
+    if SEASON_WORD_DASH_EPISODE_RE.search(cleaned):
+        return False
+
+    def _normalize_alias_text(text: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+
+    return _normalize_alias_text(cleaned) != _normalize_alias_text(title or "")
 
 
 def _extract_series_from_source(candidate: CandidateItem) -> str | None:

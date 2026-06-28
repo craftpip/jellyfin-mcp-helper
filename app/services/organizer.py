@@ -21,6 +21,7 @@ class OrganizerService:
 
     async def execute(self, run_state: RunState) -> RunState:
         clear_resolver_cache()
+        self._resolver.reset_runtime_state()
         scan_result = scan_candidates(self._config.paths)
         candidates = scan_result.candidates
         touched_libraries: set[str] = set()
@@ -118,6 +119,7 @@ class OrganizerService:
         run_state.ai_output = ""
 
         await self._trigger_jellyfin_scans(run_state, touched_libraries)
+        self._resolver.reset_runtime_state()
         clear_resolver_cache()
         return run_state
 

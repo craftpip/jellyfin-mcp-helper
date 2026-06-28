@@ -124,6 +124,7 @@ class ScanManager:
             return
 
         clear_resolver_cache()
+        self._resolver.reset_runtime_state()
         in_progress_paths = self._load_in_progress_paths_sync()
         scan.skipped_in_progress = len(in_progress_paths)
         planned_targets: dict[str, tuple[int, int]] = {}
@@ -310,6 +311,8 @@ class ScanManager:
                     )
                 )
                 scan.processed_candidates = index
+
+        self._resolver.reset_runtime_state()
 
     def _record_scan_errors(self, errors: list[ScanPathError]) -> None:
         scan = self._current_scan

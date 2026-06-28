@@ -109,6 +109,7 @@ class ClassificationResult(BaseModel):
     kind: ItemKind = Field(alias="type")
     title: str | None = None
     episode_title: str | None = None
+    series_alias: str | None = None
     year: int | None = None
     season: int | None = None
     episode: int | None = None
