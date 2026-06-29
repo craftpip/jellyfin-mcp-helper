@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.3.0 - 2026-06-29
+## v0.0.1 - 2026-06-29
 
 ### Changed
 - Changed scan report guidance to emphasize target-path validation and root curation before confirm.
