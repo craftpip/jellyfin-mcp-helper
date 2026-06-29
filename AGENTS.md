@@ -166,6 +166,81 @@ if not new_target.endswith((".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".fl
 
 **Verification:** `python3 -m pytest tests/` and call update with at least one item.
 
+### Jellyfin library scan trigger endpoint
+
+**Problem:** `trigger jellyfin library scan` can return success while Jellyfin does not show a real library scan if the handler calls the wrong update path or only trusts a fast HTTP response.
+
+**Correct approach:** For a named library scan, resolve the library through `GET /Library/VirtualFolders`, then call Jellyfin's library item refresh endpoint using the library `ItemId`:
+
+```http
+POST /Items/{libraryItemId}/Refresh?Recursive=true&ImageRefreshMode=Default&MetadataRefreshMode=Default&ReplaceAllImages=false&ReplaceAllMetadata=false
+```
+
+Use `JellyfinClient.scan_library()` for the MCP tool `trigger jellyfin library scan`. Do not replace this with the global scheduled task endpoint or with `Library/Media/Updated` for named library scans.
+
+**Path update distinction:** `Library/Media/Updated` is useful after moving or replacing known media files because it can notify Jellyfin about specific updated paths. Keep this for organizer/confirm flows that already know the changed target paths.
+
+**Verification:** After changing scan behavior, run `python3 -m pytest tests/`, rebuild/restart Docker, and manually trigger a real library such as `Movies` or `Shows R` to confirm Jellyfin shows the scan.
+
+### Resolver scan hang with sorted(rglob) in series_aliases
+
+**Problem:** Scan hangs for minutes on the first candidate during the "resolving target" step. No progress past 0%.
+
+**Cause:** `app/services/resolver.py:59` used `sorted(root.rglob("*"))` in `series_aliases()`. `sorted()` consumes the entire rglob iterator before the `break at 12` takes effect. On a series folder with thousands of files (e.g., One Piece with 20+ seasons), this walks and sorts every file. With 132+ existing series folders, the first resolution takes minutes.
+
+**Affected files:**
+- `app/services/resolver.py` (`series_aliases`, `_pick_exact_path_match`)
+- `app/services/download_client.py` (qBittorrent view filter)
+
+**Fixes (three parts):**
+
+1. **Remove `sorted()` from `series_aliases`** — let `rglob("*")` stop at the `break` naturally.
+2. **Use targeted extension globs** (`root.rglob(f"*{ext}")` for each extension) instead of `root.rglob("*")` — only yields video files, no directory entries to filter.
+3. **Token overlap check in `_pick_exact_path_match`** — before calling `series_aliases(path)` (which walks the dir tree), check if `tokenize(title) & tokenize(folder_name)` is non-empty. Non-matching directories like "One Piece" when searching for "Mushoku Tensei" skip the walk entirely. This is the most impactful optimization.
+
+**Before (resolver.py) — series_aliases:**
+```python
+for file_path in sorted(root.rglob("*")):
+    if sample_count >= 12:
+        break
+    if not file_path.is_file() or file_path.suffix.lower() not in VIDEO_EXTENSIONS:
+        continue
+    ...
+```
+
+**After:**
+```python
+for ext in VIDEO_EXTENSIONS:
+    for file_path in root.rglob(f"*{ext}"):
+        if sample_count >= 12:
+            break
+        ...
+    if sample_count >= 12:
+        break
+```
+
+**Before (resolver.py) — _pick_exact_path_match:**
+```python
+alias_values = series_aliases(path) if media_kind == "series" else {folder_name}
+```
+
+**After:**
+```python
+if not tokenize(title) & tokenize(folder_name):
+    continue
+alias_values = series_aliases(path)
+```
+
+**Additional performance logging added:**
+- `[resolver] resolving series=... season=... episode=...` — shows what's being resolved
+- `[resolver] existing paths count: N` — number of existing paths to match against
+- `[resolver] exact path match looking for TITLE among N paths` — when matching starts
+- `[resolver] exact match checked 50/132 paths...` — progress every 50 paths
+- `[resolver] exact match via folder name: PATH` — match found by folder name
+- `[resolver] exact match via file alias in FOLDER: PATH` — match found by file alias fallback
+
+**Verification:** Scan 226 candidates with 132 existing series folders completes in ~3 seconds (previously stuck for 5+ minutes). Run `python3 -m pytest tests/` to confirm no regressions.
+
 ## Project Learnings
 
 Keep this section for durable lessons that do not fit under commands, project rules, release workflow, or known patterns.
