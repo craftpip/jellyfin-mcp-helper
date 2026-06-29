@@ -68,10 +68,19 @@ Notes:
 1. `MOVIE_ROOTS` and `SERIES_ROOTS` accept comma-separated paths.
 2. Each library root can optionally include a description after `::`.
 3. Those descriptions are included in the scan report so an LLM can choose the right destination root.
+4. The paths in `.env` are container-side paths, not your host machine paths.
+5. That means every path in `DOWNLOAD_ROOTS`, `MOVIE_ROOTS`, and `SERIES_ROOTS` must exist inside the container via Docker volume mounts.
 
 ### 2. Mount your media paths in Docker
 
 Update `docker-compose.yml` so the container can see the same download and library paths referenced in `.env`.
+
+Important:
+
+1. `/media1`, `/media2`, `/media3`, `/media/movies`, and `/media/series` are just examples.
+2. They are not a special built-in format. You can use any container paths you want.
+3. The only rule is that your `.env` values must match the paths as seen from inside the container.
+4. If Jellyfin stores movies under one mounted folder and series under another, mount both and list both in `.env`.
 
 Current compose example:
 
@@ -81,14 +90,33 @@ services:
     ports:
       - "18328:18327"
     volumes:
-      - /mnt/media1t/downloads:/media1
-      - /mnt/media2t/downloads:/media2
-      - /mnt/media3t/downloads:/media3
+      - /path/to/downloads1:/media1
+      - /path/to/downloads2:/media2
+      - /path/to/downloads3:/media3
       - ./app:/app/app
       - ./config:/app/config
       - ./logs:/app/logs
       - ./reports:/app/reports
 ```
+
+Example host-to-container mapping:
+
+```yaml
+volumes:
+  - /srv/downloads:/data/downloads
+  - /srv/jellyfin/movies:/data/movies
+  - /srv/jellyfin/series:/data/series
+```
+
+Then your `.env` should use those container-side paths:
+
+```env
+DOWNLOAD_ROOTS=/data/downloads
+MOVIE_ROOTS=/data/movies::Main movies library
+SERIES_ROOTS=/data/series::Main series library
+```
+
+If you have multiple download or library locations, list every mounted container path as a comma-separated entry in `.env`.
 
 The app listens on port `18327` inside the container and is exposed on `18328` by default.
 
