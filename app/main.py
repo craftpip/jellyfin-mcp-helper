@@ -1040,33 +1040,21 @@ async def mcp(request: dict) -> JSONResponse:
                     }
                 )
 
-            item_names = arguments.get("itemNames")
-            item_ids = arguments.get("itemIds")
-            recursive = arguments.get("recursive", True)
-            metadata_refresh_mode = arguments.get("metadataRefreshMode", "FullRefresh")
-            image_refresh_mode = arguments.get("imageRefreshMode", "FullRefresh")
-            replace_all_metadata = arguments.get("replaceAllMetadata", False)
-            replace_all_images = arguments.get("replaceAllImages", False)
-
             try:
                 result = await client.scan_library(
                     library_name=library_name,
-                    item_ids=item_ids,
-                    item_names=item_names,
-                    recursive=recursive,
-                    metadata_refresh_mode=metadata_refresh_mode,
-                    image_refresh_mode=image_refresh_mode,
-                    replace_all_metadata=replace_all_metadata,
-                    replace_all_images=replace_all_images,
+                    item_ids=arguments.get("itemIds"),
+                    item_names=arguments.get("itemNames"),
+                    recursive=arguments.get("recursive", True),
+                    metadata_refresh_mode=arguments.get("metadataRefreshMode", "Default"),
+                    image_refresh_mode=arguments.get("imageRefreshMode", "Default"),
+                    replace_all_metadata=arguments.get("replaceAllMetadata", False),
+                    replace_all_images=arguments.get("replaceAllImages", False),
                 )
                 logger.info("TOOL <<< %s (library=%s)", name, library_name)
 
                 response_data: dict = {
-                    "message": (
-                        f"Triggered Jellyfin scan for {len(result.get('scanned_items', []))} item(s) in '{result.get('name', library_name)}'"
-                        if result.get("scanned_items")
-                        else f"Triggered Jellyfin library scan for '{result.get('name', library_name)}'"
-                    ),
+                    "message": f"Triggered Jellyfin library scan for '{result['name']}'",
                     "library": result,
                 }
 

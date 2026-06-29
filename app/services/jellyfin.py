@@ -120,6 +120,22 @@ class JellyfinClient:
             result["not_found"] = not_found
         return result
 
+    async def notify_media_updated(self, paths: list[str]) -> dict:
+        unique_paths = [path for path in dict.fromkeys(path.strip() for path in paths) if path]
+        if not unique_paths:
+            return {"updated_paths": []}
+
+        payload = {"updates": [{"path": path} for path in unique_paths]}
+        async with httpx.AsyncClient(timeout=120) as httpx_client:
+            response = await httpx_client.post(
+                f"{self._base_url}/Library/Media/Updated",
+                json=payload,
+                headers={"X-Emby-Token": self._api_key},
+            )
+            response.raise_for_status()
+
+        return {"updated_paths": unique_paths}
+
     async def _resolve_library(self, library_name: str) -> dict:
         libraries = await self.list_libraries()
         needle = library_name.strip().lower()

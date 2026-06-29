@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.0.2 - 2026-06-29
+
+Bug fix release for Jellyfin scan triggering.
+
+### Fixed
+- Fixed `trigger jellyfin library scan` so it uses Jellyfin's library item refresh endpoint with the resolved library `ItemId`.
+- Matched default metadata and image refresh modes to Jellyfin's UI-style library scan defaults.
+- Changed post-confirm and organizer Jellyfin updates to notify Jellyfin about specific updated media paths.
+
+### Verified
+- `python3 -m pytest tests/` passed with 82 tests.
+- `docker compose build` completed successfully.
+
 ## v0.0.1 - 2026-06-29
 
 First public release of `jellyfin-mcp-helper`.

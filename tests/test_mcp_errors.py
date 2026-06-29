@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import UTC, datetime
 
@@ -141,6 +142,43 @@ def test_jellyfin_series_status_continuing_is_treated_as_ongoing() -> None:
     ) is True
 
 
+def test_jellyfin_notify_media_updated_posts_path_payload(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: int) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self) -> "FakeAsyncClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        async def post(self, url: str, json=None, headers=None, params=None):
+            calls["url"] = url
+            calls["json"] = json
+            calls["headers"] = headers
+            calls["params"] = params
+            return FakeResponse()
+
+    monkeypatch.setattr("app.services.jellyfin.httpx.AsyncClient", FakeAsyncClient)
+
+    from app.services.jellyfin import JellyfinClient
+
+    client = JellyfinClient("http://jellyfin.local:8096", "secret", "Movies", "Shows")
+    result = asyncio.run(client.notify_media_updated(["/media/shows/episode1.mkv", "/media/shows/episode1.mkv"]))
+
+    assert result == {"updated_paths": ["/media/shows/episode1.mkv"]}
+    assert calls["url"] == "http://jellyfin.local:8096/Library/Media/Updated"
+    assert calls["json"] == {"updates": [{"path": "/media/shows/episode1.mkv"}]}
+    assert calls["headers"] == {"X-Emby-Token": "secret"}
+
+
 def test_mcp_get_jellyfin_library_items_requires_library_name() -> None:
     with TestClient(app) as client:
         response = client.post(
@@ -160,6 +198,53 @@ def test_mcp_get_jellyfin_library_items_requires_library_name() -> None:
     payload = response.json()
     assert payload["error"]["code"] == -32602
     assert payload["error"]["message"] == "libraryName is required"
+
+
+def test_mcp_trigger_jellyfin_library_scan_calls_jellyfin_scan(monkeypatch) -> None:
+    calls: dict[str, object] = {}
+
+    class FakeJellyfinClient:
+        async def scan_library(self, **kwargs):
+            calls.update(kwargs)
+            return {"name": "Shows", "id": "library-1"}
+
+    monkeypatch.setattr("app.main.JellyfinClient.from_env", lambda: FakeJellyfinClient())
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 35,
+                "method": "tools/call",
+                "params": {
+                    "name": "trigger jellyfin library scan",
+                    "arguments": {
+                        "libraryName": "Shows",
+                        "itemNames": ["Bleach"],
+                        "recursive": False,
+                        "metadataRefreshMode": "FullRefresh",
+                        "imageRefreshMode": "Default",
+                        "replaceAllMetadata": True,
+                    },
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    payload = json.loads(response.json()["result"]["content"][0]["text"])
+    assert calls == {
+        "library_name": "Shows",
+        "item_ids": None,
+        "item_names": ["Bleach"],
+        "recursive": False,
+        "metadata_refresh_mode": "FullRefresh",
+        "image_refresh_mode": "Default",
+        "replace_all_metadata": True,
+        "replace_all_images": False,
+    }
+    assert payload["message"] == "Triggered Jellyfin library scan for 'Shows'"
+    assert payload["library"] == {"name": "Shows", "id": "library-1"}
 
 
 def test_mcp_get_ongoing_jellyfin_series_latest_episodes_formats_response(monkeypatch) -> None:

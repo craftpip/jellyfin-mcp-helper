@@ -476,7 +476,7 @@ class ScanManager:
         source_prefixes: list[str] | None = None,
     ) -> None:
         scan = self.get_scan(scan_id)
-        touched_libraries: set[str] = set()
+        updated_paths: set[str] = set()
         now = datetime.now(UTC)
         applied = 0
 
@@ -501,7 +501,7 @@ class ScanManager:
                 item.confirmed = True
                 applied += 1
                 if item.item_type in ("movie", "series"):
-                    touched_libraries.add(item.item_type)
+                    updated_paths.add(item.target_path)
 
                 if item.action == "move":
                     scan.counts.moved += 1
@@ -515,7 +515,7 @@ class ScanManager:
 
         scan.confirm_current_item = None
 
-        await self._trigger_jellyfin_scans(touched_libraries)
+        await self._trigger_jellyfin_scans(updated_paths)
 
         all_confirmed = all(
             item.action == "skip" or item.confirmed
@@ -676,32 +676,26 @@ class ScanManager:
                 return True
         return False
 
-    async def _trigger_jellyfin_scans(self, touched_libraries: set[str]) -> None:
-        if not touched_libraries:
+    async def _trigger_jellyfin_scans(self, updated_paths: set[str]) -> None:
+        if not updated_paths:
             return
 
         client = JellyfinClient.from_env()
         if not client:
             return
 
-        for item_type in sorted(touched_libraries):
-            try:
-                library_name = client.library_name_for_kind(item_type)
-                if not library_name:
-                    logger.warning("No Jellyfin library configured for item type: %s", item_type)
-                    continue
-                
-                logger.info("Triggering Jellyfin scan for library: %s", library_name)
-                await client.scan_library(library_name)
-                logger.info("Finished Jellyfin scan trigger for library: %s", library_name)
-            except Exception as exc:
-                error_msg = f"Error triggering Jellyfin scan for item type '{item_type}': {str(exc)}"
-                logger.error(error_msg, exc_info=True)
-                if self._current_scan:
-                    if "Jellyfin" not in self._current_scan.service_errors:
-                        self._current_scan.service_errors["Jellyfin"] = error_msg
-                    else:
-                        self._current_scan.service_errors["Jellyfin"] += f"; {error_msg}"
+        try:
+            logger.info("Triggering Jellyfin media update for %d path(s)", len(updated_paths))
+            await client.notify_media_updated(sorted(updated_paths))
+            logger.info("Finished Jellyfin media update for %d path(s)", len(updated_paths))
+        except Exception as exc:
+            error_msg = f"Error triggering Jellyfin media update: {str(exc)}"
+            logger.error(error_msg, exc_info=True)
+            if self._current_scan:
+                if "Jellyfin" not in self._current_scan.service_errors:
+                    self._current_scan.service_errors["Jellyfin"] = error_msg
+                else:
+                    self._current_scan.service_errors["Jellyfin"] += f"; {error_msg}"
 
     def delete_scan(self) -> None:
         self._current_scan = None
