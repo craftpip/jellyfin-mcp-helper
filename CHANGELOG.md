@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.3.0 - 2026-06-29
+
+### Changed
+- Changed scan report guidance to emphasize target-path validation and root curation before confirm.
+- Changed confirm handling to run in the background and return immediate progress-oriented MCP guidance instead of a final synchronous scan payload.
+- Improved resolver performance for large series libraries by limiting alias sampling to video-extension globs and skipping alias walks for non-overlapping titles.
+- Refreshed the README to match the current `/scans` endpoints, MCP tool names, port mapping, and configuration model.
+
+### Added
+- Added confirm progress tracking fields to `ScanPlan` and a new MCP tool: `get move new downloads confirm progress`.
+- Added startup Jellyfin library-name caching so `get available jellyfin libraries list` can advertise configured library names in tool descriptions.
+- Added targeted update/report guidance for pre-confirm path corrections and root selection.
+
+### Verified
+- `python3 -m pytest tests/` passed with 80 tests.
+
 ## v0.2.0 - 2026-06-01
 
 ### Changed

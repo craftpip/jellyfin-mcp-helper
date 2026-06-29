@@ -65,6 +65,10 @@ class ScanPlan(BaseModel):
     confirmed_at: datetime | None = None
     error: str | None = None
     service_errors: dict[str, str] = Field(default_factory=dict)
+    confirm_status: Literal["idle", "running", "completed", "failed"] = "idle"
+    confirm_current_item: str | None = None
+    confirm_started_at: datetime | None = None
+    confirm_total: int = 0
 
 
 class ScanLogEntry(BaseModel):

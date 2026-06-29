@@ -411,6 +411,24 @@ class ScanManager:
         )
         return scan
 
+    def _get_confirm_total(self, scan: ScanPlan, item_ids, source_paths, source_prefixes) -> int:
+        total = 0
+        for item in scan.items:
+            if item.action == "skip":
+                continue
+            if item.confirmed:
+                continue
+            if item_ids is not None and item.confirm_id not in item_ids:
+                continue
+            if source_paths is not None and item.source_path not in source_paths:
+                continue
+            if source_prefixes is not None and not any(
+                item.source_path.startswith(prefix) for prefix in source_prefixes
+            ):
+                continue
+            total += 1
+        return total
+
     async def confirm_scan(
         self,
         scan_id: str,
@@ -421,7 +439,7 @@ class ScanManager:
         scan = self.get_scan(scan_id)
 
         selective = item_ids is not None or source_paths is not None or source_prefixes is not None
-        logger.info("Confirm started for scan %s (selective=%s)", scan_id, selective)
+        logger.info("Confirm requested for scan %s (selective=%s)", scan_id, selective)
 
         if scan.status == "confirmed":
             raise HTTPException(status_code=400, detail="Scan already confirmed. Run 'scan library' for a new scan.")
@@ -432,6 +450,32 @@ class ScanManager:
         if scan.status == "failed":
             raise HTTPException(status_code=400, detail="Scan failed. Run 'scan library' for a new scan.")
 
+        if scan.confirm_status == "running":
+            raise HTTPException(status_code=409, detail="Confirm already running. Check confirm progress instead of starting a new confirm.")
+
+        confirm_total = self._get_confirm_total(scan, item_ids, source_paths, source_prefixes)
+        if confirm_total == 0 and selective:
+            raise HTTPException(
+                status_code=400,
+                detail="No matching unconfirmed items found for the given itemIds/sourcePaths/sourcePrefixes.",
+            )
+
+        scan.confirm_status = "running"
+        scan.confirm_current_item = None
+        scan.confirm_started_at = datetime.now(UTC)
+        scan.confirm_total = confirm_total
+
+        create_task(self._run_confirm_task(scan_id, item_ids, source_paths, source_prefixes))
+        return scan
+
+    async def _run_confirm_task(
+        self,
+        scan_id: str,
+        item_ids: list[str] | None = None,
+        source_paths: list[str] | None = None,
+        source_prefixes: list[str] | None = None,
+    ) -> None:
+        scan = self.get_scan(scan_id)
         touched_libraries: set[str] = set()
         now = datetime.now(UTC)
         applied = 0
@@ -450,6 +494,7 @@ class ScanManager:
             ):
                 continue
 
+            scan.confirm_current_item = item.source_path
             try:
                 logger.info("Applying %s: %s -> %s", item.action, item.source_path, item.target_path)
                 await self._apply_item(item)
@@ -468,11 +513,7 @@ class ScanManager:
                 item.error = str(exc)
                 logger.error("Failed %s for %s: %s", item.action, item.source_path, str(exc), exc_info=True)
 
-        if applied == 0 and selective:
-            raise HTTPException(
-                status_code=400,
-                detail="No matching unconfirmed items found for the given itemIds/sourcePaths/sourcePrefixes.",
-            )
+        scan.confirm_current_item = None
 
         await self._trigger_jellyfin_scans(touched_libraries)
 
@@ -481,20 +522,21 @@ class ScanManager:
             for item in scan.items
         )
 
+        selective = item_ids is not None or source_paths is not None or source_prefixes is not None
+
         if not selective or all_confirmed:
             scan.status = "confirmed"
             scan.confirmed_at = now
 
+        scan.confirm_status = "completed"
+
         logger.info(
-            "Confirm finished for scan %s: moved=%s replaced=%s failed=%s confirmed=%s",
+            "Confirm finished for scan %s: moved=%s replaced=%s failed=%s",
             scan_id,
             scan.counts.moved,
             scan.counts.replaced,
             scan.counts.failed,
-            scan.status,
         )
-
-        return scan
 
     async def _apply_item(self, item: ScannedItem) -> None:
         source_path = Path(item.source_path)

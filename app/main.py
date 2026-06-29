@@ -25,6 +25,7 @@ from app.services.scan_manager import ScanManager
 
 logger = logging.getLogger(__name__)
 
+_cached_library_list: str = ""
 
 RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS = [
     "Release Tracker answers questions about what is stored, tracked, or saved locally for a series.",
@@ -173,13 +174,22 @@ def _report_llm_instructions(scan: ScanPlan, movie_roots_info: list[dict], serie
             roots.append(f"  {r['path']} → {r['description']}")
 
     instructions = [
-        "You can change where items go before confirming.",
+        "You are curating the library, not just moving files.",
         "folderExists=true  → already on disk, keep it there",
         "folderExists=false → new item, can redirect",
     ]
 
     if roots:
         instructions.append("Available roots:\n" + "\n".join(roots))
+
+    instructions.extend([
+        "Path validation: compare each item's Source filename with its targetPath. "
+        "If the show or movie folder names in targetPath look wrong or don't match "
+        "the source, update them using the update tool below.",
+        "Root curation: each root has a description. "
+        "Check whether each item's content belongs in its assigned root based on the root descriptions. "
+        "If another root is a better fit, redirect the item there.",
+    ])
 
     instructions.append(
         "To redirect an item, call 'update move new downloads scan' "
@@ -197,8 +207,8 @@ def _report_next_step(scan: ScanPlan) -> str:
         parts = ["All items done. Run 'move new downloads scan' for a new scan."]
     else:
         parts = [
-            f"{unconfirmed} items pending. Review folderExists below.",
-            "If an item needs a different path, update it first, then confirm.",
+            f"{unconfirmed} items pending. Review each item below.",
+            "Check that target paths are correct and roots match the content description before confirming.",
         ]
 
     next_step = " ".join(parts)
@@ -218,6 +228,45 @@ def _format_duration(seconds: float | None) -> str | None:
     if minutes:
         return f"{minutes}m {secs}s"
     return f"{secs}s"
+
+
+def _format_confirm_progress(scan: ScanPlan) -> dict:
+    now = datetime.now(UTC)
+    started_at = scan.confirm_started_at or now
+    elapsed_seconds = max((now - started_at).total_seconds(), 0.0)
+    processed = scan.counts.moved + scan.counts.replaced + scan.counts.failed
+    total = scan.confirm_total
+    percent = round((processed / total) * 100, 1) if total else 0.0
+    eta_seconds = None
+    if scan.confirm_status == "running" and processed > 0 and total > processed:
+        seconds_per_item = elapsed_seconds / processed
+        eta_seconds = seconds_per_item * (total - processed)
+
+    next_step = "Confirm finished. Call 'get move new downloads scan report' to see results."
+    if scan.confirm_status == "running":
+        next_step = "Confirm is running. Call 'get move new downloads confirm progress' again later."
+    elif scan.confirm_status == "idle":
+        next_step = "No confirm has been started. Use 'confirm move new downloads scan' first."
+
+    return {
+        "tool_purpose": "Reports progress for a running confirm operation. This tool is read-only and does not move files.",
+        "scan_id": scan.scan_id,
+        "status": scan.confirm_status,
+        "processed": processed,
+        "total": total,
+        "percent": percent,
+        "current_file": scan.confirm_current_item,
+        "elapsed_seconds": round(elapsed_seconds, 1),
+        "elapsed": _format_duration(elapsed_seconds),
+        "eta_seconds": round(eta_seconds, 1) if eta_seconds is not None else None,
+        "eta": _format_duration(eta_seconds),
+        "counts": {
+            "moved": scan.counts.moved,
+            "replaced": scan.counts.replaced,
+            "failed": scan.counts.failed,
+        },
+        "next": next_step,
+    }
 
 
 def _format_scan_progress(scan: ScanPlan) -> dict:
@@ -270,6 +319,17 @@ async def lifespan(app: FastAPI):
     config = get_config()
     app.state.scan_manager = ScanManager(config)
     app.state.release_tracker = ReleaseTracker()
+    global _cached_library_list
+    try:
+        client = JellyfinClient.from_env()
+        if client:
+            libraries = await client.list_libraries()
+            names = [lib["name"] for lib in libraries if lib.get("name")]
+            if names:
+                _cached_library_list = "Available: " + ", ".join(names) + "."
+                logger.info("Cached Jellyfin library list: %s", _cached_library_list)
+    except Exception:
+        logger.warning("Failed to fetch Jellyfin library list at startup", exc_info=True)
     yield
     logger.info("Organizer service shutting down")
 
@@ -302,6 +362,7 @@ async def log_requests(request: Request, call_next):
 
 
 def _mcp_tools() -> list[dict[str, object]]:
+    _lib_hint = _cached_library_list or ""
     return [
         {
             "name": "move new downloads scan",
@@ -355,6 +416,19 @@ def _mcp_tools() -> list[dict[str, object]]:
                     "scanId": {
                         "type": "string",
                         "description": "Optional scan_id to check a specific scan. If omitted, the current active scan is used."
+                    }
+                }
+            },
+        },
+        {
+            "name": "get move new downloads confirm progress",
+            "description": "Check progress for a confirm operation that is currently running or has already finished. Returns confirm status, current file, processed and total counts, elapsed time, and ETA when available. Use this after starting a confirm and before asking for the final report.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "scanId": {
+                        "type": "string",
+                        "description": "Optional scan_id to check confirm progress for a specific scan. If omitted, the current active scan is used."
                     }
                 }
             },
@@ -455,7 +529,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get available jellyfin libraries list",
-            "description": "List all Jellyfin libraries that are available to the configured Jellyfin user. Use this when you need the exact library names before calling other Jellyfin tools.",
+            "description": "List all Jellyfin libraries that are available to the configured Jellyfin user." + (f" {_lib_hint}" if _lib_hint else "") + " Use this when you need the exact library names before calling other Jellyfin tools.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
@@ -645,7 +719,6 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
     ]
 
-
 @app.post("/mcp")
 async def mcp(request: dict) -> JSONResponse:
     method = request.get("method")
@@ -757,6 +830,28 @@ async def mcp(request: dict) -> JSONResponse:
             try:
                 scan = await manager.confirm_scan(scan_id, item_ids, source_paths, source_prefixes)
                 logger.info("TOOL <<< %s (scan_id=%s)", name, scan_id)
+                response = _format_confirm_progress(scan)
+                response["message"] = "Confirm started in the background. This tool returns immediately. No files were moved yet."
+                response["tool_purpose"] = "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. It returns immediately and processes in the background. Use the confirm progress tool to track progress."
+                response["what_happens_now"] = [
+                    "The service stops seeding for each source file if qBittorrent is configured.",
+                    "Each planned item is moved or replaced.",
+                    "After all items are processed, Jellyfin library scans are triggered if items were moved.",
+                ]
+                response["available_now"] = [
+                    "scan_id",
+                    "status",
+                    "processed/total counters when available",
+                    "current_file when processing has started",
+                    "elapsed time and ETA when enough progress exists",
+                ]
+                response["llm_instructions"] = [
+                    "Tell the user the confirm has started.",
+                    "To check progress, call the 'get move new downloads confirm progress' tool with this scanId.",
+                    "Keep using the confirm progress tool until it returns status='completed' or status='failed'.",
+                    "After confirm is done, call 'get move new downloads scan report' to see the results.",
+                ]
+                response["next"] = "Use 'get move new downloads confirm progress' for updates. Use 'get move new downloads scan report' after confirm is complete to see results."
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -765,7 +860,7 @@ async def mcp(request: dict) -> JSONResponse:
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": json.dumps(scan.model_dump(mode="json", by_alias=True)),
+                                    "text": json.dumps(response),
                                 }
                             ],
                             "isError": False,
@@ -785,10 +880,42 @@ async def mcp(request: dict) -> JSONResponse:
                     scan = manager.get_current_scan()
                 if not scan:
                     logger.info("TOOL <<< %s (no active scan)", name)
-                    payload = {"hint": "No scan. Call 'move new downloads scan' to start."}
+                    payload = {"hint": "No scan found. Ask the user if they want to start a new scan before doing anything."}
                 else:
                     logger.info("TOOL <<< %s", name)
                     payload = _format_scan_progress(scan)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(payload),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except HTTPException as exc:
+                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
+                return _mcp_error_response(request_id, -32000, exc.detail)
+
+        if name == "get move new downloads confirm progress":
+            scan_id = arguments.get("scanId")
+            try:
+                if scan_id:
+                    scan = manager.get_scan(scan_id)
+                else:
+                    scan = manager.get_current_scan()
+                if not scan:
+                    logger.info("TOOL <<< %s (no active scan)", name)
+                    payload = {"hint": "No scan found. Ask the user if they want to start a new scan before doing anything."}
+                else:
+                    logger.info("TOOL <<< %s", name)
+                    payload = _format_confirm_progress(scan)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -825,7 +952,7 @@ async def mcp(request: dict) -> JSONResponse:
                                 "content": [
                                     {
                                         "type": "text",
-                                        "text": json.dumps({"hint": "No scan. Call 'move new downloads scan' to start."}),
+                                        "text": json.dumps({"hint": "No scan found. Ask the user if they want to start a new scan before doing anything."}),
                                     }
                                 ],
                                 "isError": False,

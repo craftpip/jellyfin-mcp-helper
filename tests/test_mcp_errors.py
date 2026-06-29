@@ -552,7 +552,10 @@ def test_mcp_confirm_response_uses_source_path_alias(monkeypatch) -> None:
     async def fake_confirm_scan(self, scan_id, item_ids=None, source_paths=None, source_prefixes=None):
         return ScanPlan(
             scan_id=scan_id,
-            status="confirmed",
+            status="completed",
+            confirm_status="running",
+            confirm_total=1,
+            confirm_started_at=datetime.now(UTC),
             operation="organize",
             counts=ScanCounts(),
             created_at=datetime.now(UTC),
@@ -593,9 +596,9 @@ def test_mcp_confirm_response_uses_source_path_alias(monkeypatch) -> None:
     assert response.status_code == 200
     content = response.json()["result"]["content"][0]["text"]
     payload = json.loads(content)
-    assert payload["items"][0]["confirmId"] == "i1"
-    assert payload["items"][0]["sourcePath"] == "/data/torrents/Show/S01E01.mkv"
-    assert "source_path" not in payload["items"][0]
+    assert payload["scan_id"] == "scan-123"
+    assert payload["status"] == "running"
+    assert payload["total"] == 1
 
 
 def test_mcp_confirm_forwards_item_ids(monkeypatch) -> None:

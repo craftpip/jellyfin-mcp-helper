@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 from app.core.config import AppConfig
 from app.models.schemas import CandidateItem, ClassificationResult, ResolvedTarget, RunLogEntry, RunState
-from app.services.scanner import list_target_paths
+from app.services.scanner import VIDEO_EXTENSIONS, list_target_paths
 
 
 INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*]')
@@ -55,16 +55,19 @@ def series_aliases(path: str) -> set[str]:
     if not root.exists() or not root.is_dir():
         return aliases
 
+    logger.debug("Building aliases for %s", path)
     sample_count = 0
-    for file_path in sorted(root.rglob("*")):
+    for ext in VIDEO_EXTENSIONS:
+        for file_path in root.rglob(f"*{ext}"):
+            if sample_count >= 12:
+                break
+            cleaned = EPISODE_TAG_RE.sub("", file_path.stem).strip(" -._")
+            if cleaned:
+                aliases.add(cleaned)
+            sample_count += 1
         if sample_count >= 12:
             break
-        if not file_path.is_file() or file_path.suffix.lower() not in {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv"}:
-            continue
-        cleaned = EPISODE_TAG_RE.sub("", file_path.stem).strip(" -._")
-        if cleaned:
-            aliases.add(cleaned)
-        sample_count += 1
+    logger.debug("Built %d aliases for %s (folder=%s)", len(aliases), path, root.name)
     return aliases
 
 
@@ -179,6 +182,11 @@ class PathResolver:
         show_name = sanitize_name(classification.title or candidate.name)
         show_name = re.sub(r"([^a-zA-Z0-9])\1+$", r"\1", show_name)
         series_key = series_lookup_key(show_name, classification.year)
+        logger.info(
+            "  [resolver] resolving series=%s season=%s episode=%s candidate=%s",
+            show_name, classification.season, classification.episode, candidate.source_path,
+        )
+        logger.info("  [resolver] existing paths count: %d", len(all_existing_paths))
         if classification.series_alias:
             alias_season = self._lookup_series_alias_season(series_key, classification.series_alias)
             if alias_season:
@@ -339,11 +347,24 @@ class PathResolver:
         if not wanted:
             return None
 
-        for path in target_paths:
+        logger.info("  [resolver] exact path match looking for %s among %d paths", title, len(target_paths))
+        for idx, path in enumerate(target_paths):
             folder_name = Path(path).name
-            alias_values = series_aliases(path) if media_kind == "series" else {folder_name}
-            if any(normalizer(alias) in wanted for alias in alias_values):
+            folder_norm = normalizer(folder_name)
+            if folder_norm in wanted:
+                logger.info("  [resolver] exact match via folder name: %s", path)
                 return path
+            if media_kind != "series":
+                continue
+            if not tokenize(title) & tokenize(folder_name):
+                continue
+            alias_values = series_aliases(path)
+            if any(normalizer(alias) in wanted for alias in alias_values):
+                logger.info("  [resolver] exact match via file alias in %s: %s", folder_name, path)
+                return path
+            if idx > 0 and idx % 50 == 0:
+                logger.info("  [resolver] exact match checked %d/%d paths...", idx, len(target_paths))
+        logger.info("  [resolver] no exact path match found for %s", title)
         return None
 
     def _shortlist_target_paths(
@@ -355,7 +376,9 @@ class PathResolver:
         desired_name: str,
     ) -> list[str]:
         if len(target_paths) <= MAX_AI_PATH_CHOICES:
+            logger.info("  [resolver] shortlist: only %d paths, keeping all", len(target_paths))
             return target_paths
+        logger.info("  [resolver] shortlist: scoring %d paths for %s", len(target_paths), title)
 
         title_norm = normalize_text(title)
         desired_norm = normalize_text(desired_name)
@@ -398,10 +421,13 @@ class PathResolver:
                 scored.append((score, path))
 
         if not scored:
+            logger.info("  [resolver] shortlist: no scored paths for %s", title)
             return []
 
         scored.sort(key=lambda item: (-item[0], item[1]))
-        return [path for _, path in scored[:MAX_AI_PATH_CHOICES]]
+        shortlisted = [path for _, path in scored[:MAX_AI_PATH_CHOICES]]
+        logger.info("  [resolver] shortlist: %d candidates for %s", len(shortlisted), title)
+        return shortlisted
 
     def _best_path_match(
         self,
@@ -473,6 +499,10 @@ class PathResolver:
                 best_score = score
                 best_path = path
 
+        logger.info(
+            "  [resolver] best match for %s: %s (score=%.2f)",
+            title, best_path or "none", best_score,
+        )
         return best_path, best_score
 
     def _pick_existing_season_dir(self, show_dir: Path, season_number: int) -> Path | None:
