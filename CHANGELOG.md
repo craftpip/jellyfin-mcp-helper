@@ -2,6 +2,8 @@
 
 ## v0.0.1 - 2026-06-29
 
+First public release of `jellyfin-mcp-helper`.
+
 ### Changed
 - Changed scan report guidance to emphasize target-path validation and root curation before confirm.
 - Changed confirm handling to run in the background and return immediate progress-oriented MCP guidance instead of a final synchronous scan payload.
