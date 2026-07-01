@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from datetime import UTC, datetime
+from difflib import SequenceMatcher
 
 import httpx
 
@@ -168,6 +170,28 @@ class JellyfinClient:
                 return uid
         raise ValueError("Could not resolve Jellyfin user for item queries")
 
+    @staticmethod
+    def _fuzzy_score(query: str, name: str) -> float:
+        q = query.lower().strip()
+        n = name.lower().strip()
+
+        if not q or not n:
+            return 0.0
+
+        if q == n:
+            return 1.0
+
+        if q in n or n in q:
+            return 0.85 + 0.15 * (min(len(q), len(n)) / max(len(q), len(n)))
+
+        q_tokens = set(re.findall(r"\w+", q))
+        n_tokens = set(re.findall(r"\w+", n))
+        overlap = len(q_tokens & n_tokens) / max(len(q_tokens), 1) if q_tokens else 0.0
+
+        seq_ratio = SequenceMatcher(None, q, n).ratio()
+
+        return (overlap * 0.45) + (seq_ratio * 0.55)
+
     async def list_library_items(
         self,
         library_name: str,
@@ -178,18 +202,18 @@ class JellyfinClient:
         library = await self._resolve_library(library_name)
         user_id = await self._get_user_id()
 
+        fetch_limit = 200 if search else limit
+
         params: dict[str, str] = {
             "ParentId": library["id"],
             "Recursive": "true",
             "IncludeItemTypes": "Series,Movie",
             "Fields": "ProductionYear,EndDate,Status",
-            "Limit": str(limit),
+            "Limit": str(fetch_limit),
             "UserId": user_id,
-            "SortBy": "ProductionYear,SortName",
-            "SortOrder": "Descending",
+            "SortBy": "SortName",
+            "SortOrder": "Ascending",
         }
-        if search:
-            params["SearchTerm"] = search
 
         data = await self._api_get("/Items", params)
         items = data.get("Items", [])
@@ -197,12 +221,22 @@ class JellyfinClient:
 
         for item in items:
             item_type = item.get("Type", "").lower()
+            item_name = item.get("Name", "")
+
+            if search:
+                score = self._fuzzy_score(search, item_name)
+                if score < 0.3:
+                    continue
+
             if item_type == "movie":
-                result_items.append({
-                    "name": item.get("Name", ""),
+                entry: dict = {
+                    "name": item_name,
                     "type": "movie",
                     "year": item.get("ProductionYear"),
-                })
+                }
+                if search:
+                    entry["_score"] = score
+                result_items.append(entry)
             elif item_type == "series":
                 series_id = item.get("Id")
                 ongoing = self._is_ongoing_series(item)
@@ -216,14 +250,23 @@ class JellyfinClient:
                 except Exception:
                     pass
 
-                result_items.append({
-                    "name": item.get("Name", ""),
+                entry = {
+                    "name": item_name,
                     "type": "series",
                     "ongoing": ongoing,
                     "season_count": seasons_info["total_seasons"],
                     "episode_count": seasons_info["total_episodes"],
                     "seasons": seasons_info["seasons"],
-                })
+                }
+                if search:
+                    entry["_score"] = score
+                result_items.append(entry)
+
+        if search:
+            result_items.sort(key=lambda x: x.get("_score", 0), reverse=True)
+            result_items = result_items[:limit]
+            for r in result_items:
+                r.pop("_score", None)
 
         return {
             "library_name": library_name,

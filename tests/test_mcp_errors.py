@@ -4,6 +4,7 @@ import asyncio
 import json
 from datetime import UTC, datetime
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -129,6 +130,86 @@ def test_mcp_get_jellyfin_library_items_formats_compact_response(monkeypatch) ->
     assert payload["items"][0]["season_count"] == 3
     assert payload["items"][0]["seasons"][0] == {"season": 1, "episodes": 13}
     assert "ongoingOnly" in payload["next"]
+
+
+FUZZY_SCORE_CASES: list[tuple[str, str, float]] = [
+    ("One Piece", "One Piece", 1.0),
+    ("Bleach", "Bleach: Thousand-Year Blood War", 0.85),
+    ("attack titan", "Attack on Titan", 0.8),
+    ("one peice", "One Piece", 0.65),
+    ("spider man", "Spider-Man: No Way Home", 0.55),
+    ("dragon ball", "Dragon Ball Z", 0.8),
+]
+
+
+@pytest.mark.parametrize("query,name,min_expected", FUZZY_SCORE_CASES)
+def test_fuzzy_score(query: str, name: str, min_expected: float) -> None:
+    from app.services.jellyfin import JellyfinClient
+
+    score = JellyfinClient._fuzzy_score(query, name)
+    assert score >= min_expected, f"_fuzzy_score({query!r}, {name!r}) = {score} < {min_expected}"
+
+
+def test_fuzzy_score_empty_returns_zero() -> None:
+    from app.services.jellyfin import JellyfinClient
+
+    assert JellyfinClient._fuzzy_score("", "One Piece") == 0.0
+    assert JellyfinClient._fuzzy_score("One Piece", "") == 0.0
+
+
+def test_fuzzy_score_unrelated_is_low() -> None:
+    from app.services.jellyfin import JellyfinClient
+
+    score = JellyfinClient._fuzzy_score("star wars", "The Office")
+    assert score < 0.3
+
+
+def test_jellyfin_list_library_items_fuzzy_search(monkeypatch) -> None:
+    from app.services.jellyfin import JellyfinClient
+
+    api_calls: list[dict] = []
+
+    async def fake_api_get(self, path: str, params: dict[str, str] | None = None) -> dict:
+        api_calls.append({"path": path, "params": params or {}})
+        return {
+            "Items": [
+                {"Name": "One Piece", "Type": "Series", "Id": "s1", "Status": "Continuing"},
+                    {"Name": "One-Punch Man", "Type": "Series", "Id": "s2", "Status": "Ended", "EndDate": "2020-01-01T00:00:00.0000000Z"},
+                    {"Name": "Mushoku Tensei", "Type": "Series", "Id": "s3", "Status": "Continuing"},
+                    {"Name": "Attack on Titan", "Type": "Series", "Id": "s4", "Status": "Ended", "EndDate": "2024-01-01T00:00:00.0000000Z"},
+            ]
+        }
+
+    async def fake_api_get_user(self) -> str:
+        return "user-1"
+
+    async def fake_get_series_seasons(slf, series_id: str, user_id: str) -> dict:
+        return {"total_seasons": 1, "total_episodes": 12, "seasons": [{"season": 1, "episodes": 12}]}
+
+    async def fake_resolve_library(slf, name: str) -> dict:
+        return {"name": name, "id": "lib-1"}
+
+    monkeypatch.setattr(JellyfinClient, "_api_get", fake_api_get)
+    monkeypatch.setattr(JellyfinClient, "_get_user_id", fake_api_get_user)
+    monkeypatch.setattr(JellyfinClient, "_get_series_seasons", fake_get_series_seasons)
+    monkeypatch.setattr(JellyfinClient, "_resolve_library", fake_resolve_library)
+
+    client = JellyfinClient("http://jellyfin.local:8096", "secret", "Movies", "Shows")
+    result = asyncio.run(client.list_library_items(library_name="Shows", search="one peice", limit=5))
+
+    assert result["search"] == "one peice"
+    assert result["returned_items"] > 0
+
+    item_names = [item["name"] for item in result["items"]]
+    assert "One Piece" in item_names
+    assert "One-Punch Man" in item_names
+
+    assert "api_calls" not in result  # no internals leaked
+
+    assert len(api_calls) == 1
+    params = api_calls[0]["params"]
+    assert "SearchTerm" not in params, "should not pass SearchTerm to Jellyfin API"
+    assert int(params.get("Limit", "0")) == 200
 
 
 def test_jellyfin_series_status_continuing_is_treated_as_ongoing() -> None:

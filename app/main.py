@@ -537,7 +537,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get jellyfin library items",
-            "description": "List compact Jellyfin library items for movies and series. This tool is for existence checks, lightweight library browsing, and LLM-friendly summaries. It supports optional search and optional ongoing-series filtering. For series, it returns total season count, total episode count, and per-season episode counts instead of full episode listings.",
+                        "description": "List compact Jellyfin library items for movies and series. This tool is for existence checks, lightweight library browsing, and LLM-friendly summaries. It supports optional fuzzy search (client-side token overlap and similarity scoring handles typos and partial name matches) and optional ongoing-series filtering. For series, it returns total season count, total episode count, and per-season episode counts instead of full episode listings.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -547,7 +547,7 @@ def _mcp_tools() -> list[dict[str, object]]:
                     },
                     "search": {
                         "type": "string",
-                        "description": "Optional search term used to filter library items by name. Use this to check whether a movie or series already exists in the library."
+                        "description": "Optional search term for fuzzy matching by name (handles typos and partial matches client-side). Use this to check whether a movie or series already exists."
                     },
                     "ongoingOnly": {
                         "type": "boolean",
@@ -1158,7 +1158,7 @@ async def mcp(request: dict) -> JSONResponse:
                     limit=arguments.get("limit", 10),
                     ongoing_only=arguments.get("ongoingOnly", False),
                 )
-                result["next"] = "Use search to check whether a movie or series already exists in this library. Use ongoingOnly to focus on currently ongoing series."
+                result["next"] = "Search uses client-side fuzzy matching (token overlap + similarity scoring) so it handles typos and partial names. Use ongoingOnly to focus on currently ongoing series."
                 logger.info("TOOL <<< %s (library=%s)", name, library_name)
                 return JSONResponse(
                     {
