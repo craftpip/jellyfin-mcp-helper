@@ -25,7 +25,7 @@ from app.models.schemas import (
 from app.services.classifier import classify_candidate
 from app.services.jellyfin import JellyfinClient
 from app.services.download_client import QbittorrentClient
-from app.services.resolver import PathResolver
+from app.services.resolver import PathResolver, clear_resolver_cache
 from app.services.scanner import ScanPathError, scan_candidates, _to_absolute_path
 
 logger = logging.getLogger(__name__)
@@ -115,12 +115,16 @@ class ScanManager:
                 scan.error = str(exc)
                 scan.current_candidate = None
             logger.error("Scan %s failed: %s", scan_id, str(exc), exc_info=True)
+        finally:
+            clear_resolver_cache()
 
     def _run_scan_sync(self, scan_id: str, request: ScanRequest) -> None:
         scan = self._current_scan
         if not scan or scan.scan_id != scan_id:
             return
 
+        clear_resolver_cache()
+        self._resolver.reset_runtime_state()
         in_progress_paths = self._load_in_progress_paths_sync()
         scan.skipped_in_progress = len(in_progress_paths)
         planned_targets: dict[str, tuple[int, int]] = {}
@@ -271,6 +275,7 @@ class ScanManager:
                         reason=classification.reason,
                         target_path=resolved.target_path,
                         action=planned_action,
+                        folder_exists=resolved.folder_exists,
                     )
                 )
                 if planned_action == "skip":
@@ -307,6 +312,8 @@ class ScanManager:
                     )
                 )
                 scan.processed_candidates = index
+
+        self._resolver.reset_runtime_state()
 
     def _record_scan_errors(self, errors: list[ScanPathError]) -> None:
         scan = self._current_scan
@@ -353,6 +360,75 @@ class ScanManager:
     def _next_confirm_id(self, scan: ScanPlan) -> str:
         return f"i{len(scan.items) + 1}"
 
+    def update_scan(self, scan_id: str, items: list[dict]) -> ScanPlan:
+        scan = self.get_scan(scan_id)
+
+        if scan.status == "confirmed":
+            raise HTTPException(status_code=400, detail="Cannot update a confirmed scan")
+        if scan.status == "running":
+            raise HTTPException(status_code=400, detail="Scan is still running. Wait for it to complete before updating.")
+        if scan.status == "failed":
+            raise HTTPException(status_code=400, detail="Scan failed. Run a new scan before updating.")
+
+        allowed_roots = list(self._config.paths.movie_roots.values()) + list(self._config.paths.series_roots.values())
+        updates_by_id = {u["confirmId"]: u["targetPath"] for u in items}
+        updated_count = 0
+
+        for item in scan.items:
+            if item.confirm_id not in updates_by_id:
+                continue
+            new_target = updates_by_id[item.confirm_id]
+
+            if not any(new_target.startswith(root) for root in allowed_roots):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Target path '{new_target}' is not under any configured movie or series root",
+                )
+
+            if not new_target.endswith((".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv")):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Target path '{new_target}' does not have a valid video extension",
+                )
+
+            item.target_path = new_target
+            target_exists = Path(new_target).exists()
+            item.action = "replace" if target_exists else "move"
+            item.folder_exists = Path(new_target).parent.exists()
+            updated_count += 1
+
+        if not updated_count:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No matching items found for the given confirmIds: {list(updates_by_id.keys())}",
+            )
+
+        logger.info(
+            "Scan %s updated %d items: %s",
+            scan_id,
+            updated_count,
+            {uid: updates_by_id[uid] for uid in updates_by_id},
+        )
+        return scan
+
+    def _get_confirm_total(self, scan: ScanPlan, item_ids, source_paths, source_prefixes) -> int:
+        total = 0
+        for item in scan.items:
+            if item.action == "skip":
+                continue
+            if item.confirmed:
+                continue
+            if item_ids is not None and item.confirm_id not in item_ids:
+                continue
+            if source_paths is not None and item.source_path not in source_paths:
+                continue
+            if source_prefixes is not None and not any(
+                item.source_path.startswith(prefix) for prefix in source_prefixes
+            ):
+                continue
+            total += 1
+        return total
+
     async def confirm_scan(
         self,
         scan_id: str,
@@ -363,7 +439,7 @@ class ScanManager:
         scan = self.get_scan(scan_id)
 
         selective = item_ids is not None or source_paths is not None or source_prefixes is not None
-        logger.info("Confirm started for scan %s (selective=%s)", scan_id, selective)
+        logger.info("Confirm requested for scan %s (selective=%s)", scan_id, selective)
 
         if scan.status == "confirmed":
             raise HTTPException(status_code=400, detail="Scan already confirmed. Run 'scan library' for a new scan.")
@@ -374,7 +450,33 @@ class ScanManager:
         if scan.status == "failed":
             raise HTTPException(status_code=400, detail="Scan failed. Run 'scan library' for a new scan.")
 
-        touched_libraries: set[str] = set()
+        if scan.confirm_status == "running":
+            raise HTTPException(status_code=409, detail="Confirm already running. Check confirm progress instead of starting a new confirm.")
+
+        confirm_total = self._get_confirm_total(scan, item_ids, source_paths, source_prefixes)
+        if confirm_total == 0 and selective:
+            raise HTTPException(
+                status_code=400,
+                detail="No matching unconfirmed items found for the given itemIds/sourcePaths/sourcePrefixes.",
+            )
+
+        scan.confirm_status = "running"
+        scan.confirm_current_item = None
+        scan.confirm_started_at = datetime.now(UTC)
+        scan.confirm_total = confirm_total
+
+        create_task(self._run_confirm_task(scan_id, item_ids, source_paths, source_prefixes))
+        return scan
+
+    async def _run_confirm_task(
+        self,
+        scan_id: str,
+        item_ids: list[str] | None = None,
+        source_paths: list[str] | None = None,
+        source_prefixes: list[str] | None = None,
+    ) -> None:
+        scan = self.get_scan(scan_id)
+        updated_paths: set[str] = set()
         now = datetime.now(UTC)
         applied = 0
 
@@ -392,13 +494,14 @@ class ScanManager:
             ):
                 continue
 
+            scan.confirm_current_item = item.source_path
             try:
                 logger.info("Applying %s: %s -> %s", item.action, item.source_path, item.target_path)
                 await self._apply_item(item)
                 item.confirmed = True
                 applied += 1
                 if item.item_type in ("movie", "series"):
-                    touched_libraries.add(item.item_type)
+                    updated_paths.add(item.target_path)
 
                 if item.action == "move":
                     scan.counts.moved += 1
@@ -410,33 +513,30 @@ class ScanManager:
                 item.error = str(exc)
                 logger.error("Failed %s for %s: %s", item.action, item.source_path, str(exc), exc_info=True)
 
-        if applied == 0 and selective:
-            raise HTTPException(
-                status_code=400,
-                detail="No matching unconfirmed items found for the given itemIds/sourcePaths/sourcePrefixes.",
-            )
+        scan.confirm_current_item = None
 
-        await self._trigger_jellyfin_scans(touched_libraries)
+        await self._trigger_jellyfin_scans(updated_paths)
 
         all_confirmed = all(
             item.action == "skip" or item.confirmed
             for item in scan.items
         )
 
+        selective = item_ids is not None or source_paths is not None or source_prefixes is not None
+
         if not selective or all_confirmed:
             scan.status = "confirmed"
             scan.confirmed_at = now
 
+        scan.confirm_status = "completed"
+
         logger.info(
-            "Confirm finished for scan %s: moved=%s replaced=%s failed=%s confirmed=%s",
+            "Confirm finished for scan %s: moved=%s replaced=%s failed=%s",
             scan_id,
             scan.counts.moved,
             scan.counts.replaced,
             scan.counts.failed,
-            scan.status,
         )
-
-        return scan
 
     async def _apply_item(self, item: ScannedItem) -> None:
         source_path = Path(item.source_path)
@@ -576,32 +676,26 @@ class ScanManager:
                 return True
         return False
 
-    async def _trigger_jellyfin_scans(self, touched_libraries: set[str]) -> None:
-        if not touched_libraries:
+    async def _trigger_jellyfin_scans(self, updated_paths: set[str]) -> None:
+        if not updated_paths:
             return
 
         client = JellyfinClient.from_env()
         if not client:
             return
 
-        for item_type in sorted(touched_libraries):
-            try:
-                library_name = client.library_name_for_kind(item_type)
-                if not library_name:
-                    logger.warning("No Jellyfin library configured for item type: %s", item_type)
-                    continue
-                
-                logger.info("Triggering Jellyfin scan for library: %s", library_name)
-                await client.scan_library(library_name)
-                logger.info("Finished Jellyfin scan trigger for library: %s", library_name)
-            except Exception as exc:
-                error_msg = f"Error triggering Jellyfin scan for item type '{item_type}': {str(exc)}"
-                logger.error(error_msg, exc_info=True)
-                if self._current_scan:
-                    if "Jellyfin" not in self._current_scan.service_errors:
-                        self._current_scan.service_errors["Jellyfin"] = error_msg
-                    else:
-                        self._current_scan.service_errors["Jellyfin"] += f"; {error_msg}"
+        try:
+            logger.info("Triggering Jellyfin media update for %d path(s)", len(updated_paths))
+            await client.notify_media_updated(sorted(updated_paths))
+            logger.info("Finished Jellyfin media update for %d path(s)", len(updated_paths))
+        except Exception as exc:
+            error_msg = f"Error triggering Jellyfin media update: {str(exc)}"
+            logger.error(error_msg, exc_info=True)
+            if self._current_scan:
+                if "Jellyfin" not in self._current_scan.service_errors:
+                    self._current_scan.service_errors["Jellyfin"] = error_msg
+                else:
+                    self._current_scan.service_errors["Jellyfin"] += f"; {error_msg}"
 
     def delete_scan(self) -> None:
         self._current_scan = None

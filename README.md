@@ -1,151 +1,324 @@
 # jellyfin-mcp-helper
 
-An API service that automatically organizes downloaded media into your Jellyfin library. Scans download folders, classifies media (movie/series), resolves target paths, moves files, and triggers Jellyfin library scans.
+An API service and MCP server for organizing downloaded media into a Jellyfin library. It scans download folders, classifies items, plans target paths, lets you review or edit the plan, then confirms the move and optionally refreshes Jellyfin.
 
 ## Features
 
-- **Scan & Confirm** - Scan first to see what will happen, then confirm to apply
-- **AI Classification** - Uses Ollama to classify media as movie, series, or skip
-- **Smart Path Resolution** - Matches against existing library folders
-- **Download Client Integration** - Stops active downloads before moving files (e.g., qBittorrent)
-- **Jellyfin Integration** - Triggers library scans after moving files
-- **MCP Support** - Can be called via MCP from any LLM
+- **Scan -> review -> confirm workflow**: build a move plan before writing anything.
+- **Background progress + final report**: check scan progress first, then fetch an LLM-friendly report.
+- **Plan editing before confirm**: redirect specific items with `update move new downloads scan`.
+- **Multi-root curation**: movie and series roots can include descriptions to help root selection.
+- **Jellyfin tools**: list libraries, browse items, inspect ongoing series, and trigger targeted scans.
+- **Release Tracker**: store and query locally tracked next-release dates for ongoing series.
+- **qBittorrent integration**: can stop active downloads before moving files.
+- **Model-backed classification**: supports `ollama` or `openrouter`.
 
 ## Requirements
 
-1. **Ollama** - For AI classification (e.g., `llama3.2:1b`)
-2. **Download Client** - e.g., qBittorrent with MCP server for stopping active downloads
-3. **Jellyfin** - Optional, for triggering library scans
+1. Python 3.11+ or Docker.
+2. A model provider for classification:
+   - `ollama` (default), or
+   - `openrouter` with `OPENROUTER_API_KEY`.
+3. Optional qBittorrent MCP server for download-state checks and pre-move handling.
+4. Optional Jellyfin server + API key for library refresh and Jellyfin MCP tools.
 
 ## Quick Start
 
-### 1. Configure
+### 1. Configure `.env`
 
-Copy `.env.example` to `.env` and fill in your values:
+Copy `.env.example` to `.env` and update it for your setup.
 
 ```bash
-# Required - get from https://openrouter.ai/
-OPENROUTER_API_KEY=your-key
-
-# Download client config (e.g., qBittorrent via gluetun)
-DOWNLOAD_CLIENT=qbittorrent
-QBT_MCP_URL=http://host.docker.internal:8093/mcp
-QBT_MCP_API_KEY=your-mcp-key
-
-# Optional - Jellyfin for library scans
-JELLYFIN_BASE_URL=http://host.docker.internal:8096
-JELLYFIN_API_KEY=your-jellyfin-key
-
-# Paths - comma-separated, must match docker volumes
-DOWNLOAD_ROOTS=/downloads
-MOVIE_ROOTS=/downloads/movies
-SERIES_ROOTS=/downloads/series
+cp .env.example .env
 ```
 
-### 2. Update docker-compose.yml
+Common settings:
 
-Uncomment and update the volume mounts to match your paths:
+```env
+# Model provider
+MODEL_PROVIDER=ollama
+MODEL_BASE_URL=http://localhost:11434
+MODEL_NAME=llama3.2:1b
+
+# Or use OpenRouter instead
+# MODEL_PROVIDER=openrouter
+# OPENROUTER_API_KEY=your-key
+
+# Optional qBittorrent integration
+ENABLE_DOWNLOAD_CLIENT_CHECK=true
+DOWNLOAD_CLIENT=qbittorrent
+QBT_MCP_URL=http://localhost:8093/mcp
+QBT_MCP_API_KEY=your-mcp-key
+
+# Optional Jellyfin integration
+ENABLE_JELLYFIN_INTEGRATION=true
+JELLYFIN_BASE_URL=http://localhost:8096
+JELLYFIN_API_KEY=your-jellyfin-key
+JELLYFIN_MOVIE_LIBRARY_NAME=Movies
+JELLYFIN_SERIES_LIBRARY_NAME=Shows
+
+# Download + library roots
+DOWNLOAD_ROOTS=/media/torrents
+MOVIE_ROOTS=/media/movies::Standard movies,/media/movies_4k::4K movies
+SERIES_ROOTS=/media/series::Primary shows folder
+```
+
+Notes:
+
+1. `MOVIE_ROOTS` and `SERIES_ROOTS` accept comma-separated paths.
+2. Each library root can optionally include a description after `::`.
+3. Those descriptions are included in the scan report so an LLM can choose the right destination root.
+4. The paths in `.env` are container-side paths, not your host machine paths.
+5. That means every path in `DOWNLOAD_ROOTS`, `MOVIE_ROOTS`, and `SERIES_ROOTS` must exist inside the container via Docker volume mounts.
+
+### 2. Mount your media paths in Docker
+
+Update `docker-compose.yml` so the container can see the same download and library paths referenced in `.env`.
+
+Important:
+
+1. `/media1`, `/media2`, `/media3`, `/media/movies`, and `/media/series` are just examples.
+2. They are not a special built-in format. You can use any container paths you want.
+3. The only rule is that your `.env` values must match the paths as seen from inside the container.
+4. If Jellyfin stores movies under one mounted folder and series under another, mount both and list both in `.env`.
+
+Current compose example:
+
+```yaml
+services:
+  organizer:
+    ports:
+      - "18328:18327"
+    volumes:
+      - /path/to/downloads1:/media1
+      - /path/to/downloads2:/media2
+      - /path/to/downloads3:/media3
+      - ./app:/app/app
+      - ./config:/app/config
+      - ./logs:/app/logs
+      - ./reports:/app/reports
+```
+
+Example host-to-container mapping:
 
 ```yaml
 volumes:
-  - /path/to/your/downloads:/downloads
-  - /path/to/your/movies:/downloads/movies
-  - /path/to/your/series:/downloads/series
+  - /srv/downloads:/data/downloads
+  - /srv/jellyfin/movies:/data/movies
+  - /srv/jellyfin/series:/data/series
 ```
 
-### 3. Run
+Then your `.env` should use those container-side paths:
+
+```env
+DOWNLOAD_ROOTS=/data/downloads
+MOVIE_ROOTS=/data/movies::Main movies library
+SERIES_ROOTS=/data/series::Main series library
+```
+
+If you have multiple download or library locations, list every mounted container path as a comma-separated entry in `.env`.
+
+The app listens on port `18327` inside the container and is exposed on `18328` by default.
+
+### 3. Start the service
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
-
-## Usage
-
-### REST API
-
-```bash
-# Create a scan (preview what would happen)
-curl -X POST http://localhost:18327/scans
-
-# Get current scan
-curl http://localhost:18327/scans/current
-
-# Confirm and apply the scan
-curl -X POST http://localhost:18327/scans/{scan_id}/confirm
-
-# Discard current scan
-curl -X DELETE http://localhost:18327/scans/current
-```
-
-### MCP
-
-```bash
-# List available tools
-curl -X POST http://localhost:18327/mcp -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-
-# Scan library (returns scan_id + plan)
-curl -X POST http://localhost:18327/mcp -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"scan library","arguments":{}}}'
-
-# Confirm scan (apply the plan)
-curl -X POST http://localhost:18327/mcp -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"confirm scan","arguments":{"scanId":"abc123"}}}'
-```
-
-## Flow
-
-```
-1. LLM calls "scan library"
-   → Returns scan_id + list of files with targets
-   → Does NOT move any files
-
-2. User reviews the plan
-   → Can check target paths, confidence scores
-
-3. LLM calls "confirm scan scan_id"
-   → Actually moves files
-   → Stops active downloads in qBittorrent
-   → Triggers Jellyfin library scans
-```
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENROUTER_API_KEY` | Yes | API key for Ollama/OpenRouter |
-| `DOWNLOAD_CLIENT` | No | Download client type (default: `qbittorrent`) |
-| `QBT_MCP_URL` | Yes | qBittorrent MCP endpoint |
-| `QBT_MCP_API_KEY` | Yes | MCP API key |
-| `JELLYFIN_BASE_URL` | No | Jellyfin URL |
-| `JELLYFIN_API_KEY` | No | Jellyfin API key |
-| `MODEL_BASE_URL` | No | Ollama URL (default: http://localhost:11434) |
-| `MODEL_NAME` | No | Model name (default: llama3.2:1b) |
 
 ## Health Check
 
 ```bash
-curl http://localhost:18327/health
-# Returns: {"status":"ok"}
+curl http://localhost:18328/health
 ```
 
-## Example Response
+Expected response:
 
-**Scan library response:**
 ```json
-{
-  "scan_id": "abc123",
-  "status": "pending",
-  "items": [
-    {
-      "source_path": "/downloads/Movie (2024)/",
-      "name": "Movie (2024)",
-      "item_type": "movie",
-      "confidence": 0.92,
-      "target_path": "/downloads/movies/Movie (2024)/",
-      "action": "move"
-    }
-  ],
-  "counts": {"total": 5, "movies": 3, "series": 2, "skipped": 0}
-}
+{"status":"ok"}
+```
+
+## REST API
+
+The scan workflow is asynchronous.
+
+1. Create a scan.
+2. Poll progress until status is completed.
+3. Fetch the final report.
+4. Confirm the scan.
+
+Examples:
+
+```bash
+# Start a new scan
+curl -X POST http://localhost:18328/scans \
+  -H 'Content-Type: application/json' \
+  -d '{"replaceExisting":true}'
+
+# Check current scan progress
+curl http://localhost:18328/scans/current/progress
+
+# Get the final current scan report
+curl http://localhost:18328/scans/current/report
+
+# Inspect the raw scan state
+curl http://localhost:18328/scans/current
+
+# Confirm a completed scan
+curl -X POST http://localhost:18328/scans/{scan_id}/confirm
+
+# Delete the current scan
+curl -X DELETE http://localhost:18328/scans/current
+```
+
+Current REST endpoints:
+
+- `GET /health`
+- `POST /scans`
+- `GET /scans/current/progress`
+- `GET /scans/{scan_id}/progress`
+- `GET /scans/current/report`
+- `GET /scans/{scan_id}/report`
+- `GET /scans/current`
+- `GET /scans/{scan_id}`
+- `POST /scans/{scan_id}/confirm`
+- `DELETE /scans/current`
+
+Legacy compatibility endpoints still exist under `/runs`, but new integrations should use `/scans`.
+
+## MCP
+
+List tools:
+
+```bash
+curl -X POST http://localhost:18328/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+### Organizer Tools
+
+Core organizer flow:
+
+1. `move new downloads scan`
+2. `get move new downloads scan progress`
+3. `get move new downloads scan report`
+4. Optional: `update move new downloads scan`
+5. `confirm move new downloads scan`
+6. Optional: `get move new downloads confirm progress`
+
+Example scan:
+
+```bash
+curl -X POST http://localhost:18328/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"move new downloads scan","arguments":{"replaceExisting":true}}}'
+```
+
+Example report fetch:
+
+```bash
+curl -X POST http://localhost:18328/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get move new downloads scan report","arguments":{"scanId":"abc123"}}}'
+```
+
+Example target update:
+
+```bash
+curl -X POST http://localhost:18328/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"update move new downloads scan","arguments":{"scanId":"abc123","items":[{"confirmId":"m1","targetPath":"/media/movies_4k/Movie Title (2024)/Movie Title (2024).mkv"}]}}}'
+```
+
+Example confirm:
+
+```bash
+curl -X POST http://localhost:18328/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"confirm move new downloads scan","arguments":{"scanId":"abc123"}}}'
+```
+
+### Jellyfin Tools
+
+- `trigger jellyfin library scan`
+- `get available jellyfin libraries list`
+- `get jellyfin library items`
+- `get ongoing jellyfin series latest episodes`
+
+`trigger jellyfin library scan` supports:
+
+1. Whole-library scans.
+2. Targeted scans by `itemNames` or `itemIds`.
+3. `metadataRefreshMode` and `imageRefreshMode` values:
+   - `Default`
+   - `FullRefresh`
+   - `ValidationOnly`
+4. Optional `replaceAllMetadata` and `replaceAllImages` when using full refresh modes.
+
+### Release Tracker Tools
+
+- `store ongoing series next release`
+- `get ongoing series next release`
+- `get due ongoing series releases`
+- `get ongoing series next releases`
+- `delete ongoing series next release`
+
+Use Release Tracker for locally stored next-release markers for ongoing shows. If a user asks what date is already tracked for a series, the intended workflow is to query Release Tracker first before using live Jellyfin or the web.
+
+## Scan Report Flow
+
+The intended organizer workflow is:
+
+1. Start `move new downloads scan`.
+2. Poll `get move new downloads scan progress` until the scan completes.
+3. Read `get move new downloads scan report`.
+4. If any target path or root is wrong, fix it with `update move new downloads scan`.
+5. Fetch the report again and verify the updated targets.
+6. Run `confirm move new downloads scan`.
+7. If needed, poll `get move new downloads confirm progress` until complete.
+
+The final report includes:
+
+1. Summary counts.
+2. Available movie and series roots with descriptions.
+3. Markdown tables for movie and series move targets.
+4. Skipped-item summaries.
+5. LLM instructions for path validation and root curation.
+
+## Environment Variables
+
+Important variables from `.env.example`:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `MODEL_PROVIDER` | No | `ollama` or `openrouter` |
+| `OPENROUTER_API_KEY` | If using OpenRouter | OpenRouter API key |
+| `MODEL_BASE_URL` | Usually yes | Model endpoint URL |
+| `MODEL_NAME` | No | Model name, default `llama3.2:1b` |
+| `ENABLE_DOWNLOAD_CLIENT_CHECK` | No | Enable qBittorrent download-state checks |
+| `DOWNLOAD_CLIENT` | No | Download client type, currently `qbittorrent` |
+| `QBT_MCP_URL` | If qBittorrent enabled | qBittorrent MCP endpoint |
+| `QBT_MCP_API_KEY` | If qBittorrent enabled | qBittorrent MCP API key |
+| `ENABLE_JELLYFIN_INTEGRATION` | No | Enable Jellyfin refresh integration |
+| `JELLYFIN_BASE_URL` | If Jellyfin enabled | Jellyfin server URL |
+| `JELLYFIN_API_KEY` | If Jellyfin enabled | Jellyfin API key |
+| `JELLYFIN_MOVIE_LIBRARY_NAME` | No | Jellyfin movie library name |
+| `JELLYFIN_SERIES_LIBRARY_NAME` | No | Jellyfin series library name |
+| `DOWNLOAD_ROOTS` | Yes | Comma-separated download roots |
+| `MOVIE_ROOTS` | Yes | Comma-separated movie roots, optional `::description` |
+| `SERIES_ROOTS` | Yes | Comma-separated series roots, optional `::description` |
+
+## Development
+
+Run tests:
+
+```bash
+python3 -m pytest tests/
+```
+
+Rebuild after source changes:
+
+```bash
+docker compose build && docker compose restart
 ```

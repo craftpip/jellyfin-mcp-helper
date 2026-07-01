@@ -10,7 +10,7 @@ from app.models.schemas import CandidateItem, ClassificationResult, ResolvedTarg
 from app.services.classifier import classify_candidate
 from app.services.jellyfin import JellyfinClient
 from app.services.download_client import QbittorrentClient
-from app.services.resolver import PathResolver
+from app.services.resolver import PathResolver, clear_resolver_cache
 from app.services.scanner import scan_candidates
 
 
@@ -20,9 +20,11 @@ class OrganizerService:
         self._resolver = PathResolver(config)
 
     async def execute(self, run_state: RunState) -> RunState:
+        clear_resolver_cache()
+        self._resolver.reset_runtime_state()
         scan_result = scan_candidates(self._config.paths)
         candidates = scan_result.candidates
-        touched_libraries: set[str] = set()
+        updated_paths: set[str] = set()
         run_state.active_step = "scan"
         run_state.active_item_path = None
         run_state.ai_thinking = ""
@@ -100,7 +102,7 @@ class OrganizerService:
                 )
                 changed = await self._apply_action(run_state, candidate, classification, resolved)
                 if changed:
-                    self._track_touched_library(touched_libraries, classification)
+                    updated_paths.add(resolved.target_path)
             except Exception as exc:  # noqa: BLE001
                 run_state.counts.failed += 1
                 self._log(
@@ -116,8 +118,9 @@ class OrganizerService:
         run_state.ai_thinking = ""
         run_state.ai_output = ""
 
-        await self._trigger_jellyfin_scans(run_state, touched_libraries)
-
+        await self._trigger_jellyfin_scans(run_state, updated_paths)
+        self._resolver.reset_runtime_state()
+        clear_resolver_cache()
         return run_state
 
     async def _load_in_progress_paths(self, run_state: RunState) -> list[str]:
@@ -239,16 +242,8 @@ class OrganizerService:
         self._cleanup_empty_parents(source_path, Path(candidate.source_root))
         return True
 
-    def _track_touched_library(self, touched_libraries: set[str], classification: ClassificationResult) -> None:
-        client = JellyfinClient.from_env()
-        if not client:
-            return
-        library_name = client.library_name_for_kind(classification.kind)
-        if library_name:
-            touched_libraries.add(library_name)
-
-    async def _trigger_jellyfin_scans(self, run_state: RunState, touched_libraries: set[str]) -> None:
-        if run_state.dry_run or not touched_libraries:
+    async def _trigger_jellyfin_scans(self, run_state: RunState, updated_paths: set[str]) -> None:
+        if run_state.dry_run or not updated_paths:
             return
 
         client = JellyfinClient.from_env()
@@ -261,24 +256,23 @@ class OrganizerService:
             )
             return
 
-        for library_name in sorted(touched_libraries):
-            try:
-                target = await client.scan_library(library_name)
-                self._log(
-                    run_state,
-                    "info",
-                    "jellyfin.scan.started",
-                    f"Triggered Jellyfin scan for {target['name']}",
-                    details={"library": target["name"], "libraryId": target["id"]},
-                )
-            except Exception as exc:  # noqa: BLE001
-                self._log(
-                    run_state,
-                    "error",
-                    "jellyfin.scan.failed",
-                    f"Failed to trigger Jellyfin scan for {library_name}: {exc}",
-                    details={"library": library_name},
-                )
+        try:
+            result = await client.notify_media_updated(sorted(updated_paths))
+            self._log(
+                run_state,
+                "info",
+                "jellyfin.scan.started",
+                f"Triggered Jellyfin update for {len(result.get('updated_paths', []))} path(s)",
+                details={"updatedPaths": result.get("updated_paths", [])},
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._log(
+                run_state,
+                "error",
+                "jellyfin.scan.failed",
+                f"Failed to trigger Jellyfin media update: {exc}",
+                details={"updatedPaths": sorted(updated_paths)},
+            )
 
     async def _stop_seeding_if_needed(self, run_state: RunState, candidate: CandidateItem) -> None:
         client = QbittorrentClient.from_env()

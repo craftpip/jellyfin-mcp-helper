@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import os
 import re
+import logging
 from datetime import UTC, datetime
+from functools import cache
 from pathlib import Path
 import json
 from difflib import SequenceMatcher
 
+logger = logging.getLogger(__name__)
+
 from app.core.config import AppConfig
 from app.models.schemas import CandidateItem, ClassificationResult, ResolvedTarget, RunLogEntry, RunState
-from app.services.scanner import list_target_paths
+from app.services.scanner import VIDEO_EXTENSIONS, list_target_paths
 
 
 INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*]')
@@ -36,22 +41,33 @@ def tokenize(value: str) -> set[str]:
     return set(WORD_RE.findall(value.lower()))
 
 
+def series_lookup_key(title: str, year: int | None = None) -> str:
+    normalized = normalize_series_text(title)
+    if year is not None:
+        return f"{normalized}::{year}"
+    return normalized
+
+
+@cache
 def series_aliases(path: str) -> set[str]:
     root = Path(path)
     aliases = {root.name}
     if not root.exists() or not root.is_dir():
         return aliases
 
+    logger.debug("Building aliases for %s", path)
     sample_count = 0
-    for file_path in sorted(root.rglob("*")):
+    for ext in VIDEO_EXTENSIONS:
+        for file_path in root.rglob(f"*{ext}"):
+            if sample_count >= 12:
+                break
+            cleaned = EPISODE_TAG_RE.sub("", file_path.stem).strip(" -._")
+            if cleaned:
+                aliases.add(cleaned)
+            sample_count += 1
         if sample_count >= 12:
             break
-        if not file_path.is_file() or file_path.suffix.lower() not in {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv"}:
-            continue
-        cleaned = EPISODE_TAG_RE.sub("", file_path.stem).strip(" -._")
-        if cleaned:
-            aliases.add(cleaned)
-        sample_count += 1
+    logger.debug("Built %d aliases for %s (folder=%s)", len(aliases), path, root.name)
     return aliases
 
 
@@ -64,6 +80,7 @@ def season_dir_candidates(season_number: int) -> set[str]:
     }
 
 
+@cache
 def series_video_count(path: str) -> int:
     root = Path(path)
     if not root.exists() or not root.is_dir():
@@ -77,9 +94,20 @@ def series_video_count(path: str) -> int:
     return count
 
 
+def clear_resolver_cache() -> None:
+    series_aliases.cache_clear()
+    series_video_count.cache_clear()
+
+
 class PathResolver:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
+        self._series_path_memory: dict[str, str] = {}
+        self._series_alias_seasons: dict[tuple[str, str], int] = {}
+
+    def reset_runtime_state(self) -> None:
+        self._series_path_memory.clear()
+        self._series_alias_seasons.clear()
 
     async def resolve(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
         if classification.kind == "movie":
@@ -89,7 +117,7 @@ class PathResolver:
     async def _resolve_movie(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
         index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0
         movie_roots_list = list(self._config.paths.movie_roots.values())
-        movie_root = movie_roots_list[index] if index < len(movie_roots_list) else movie_roots_list[0]
+        movie_root = self._pick_drive_root(candidate.source_path, movie_roots_list, index)
         
         all_existing_paths = []
         for root in movie_roots_list:
@@ -107,24 +135,65 @@ class PathResolver:
         base_dir = Path(best_match) if best_match else Path(movie_root) / folder_name
         target_dir = base_dir if base_dir.is_dir() or not base_dir.suffix else base_dir.parent
         target_path = str(target_dir / f"{folder_name}{ext}")
+        if best_match:
+            logger.info("  [resolver] matched existing movie folder: %s", best_match)
+        else:
+            logger.info("  [resolver] new movie folder: %s", folder_name)
         return ResolvedTarget(
             root_key=candidate.source_root_key,
             target_dir=str(target_dir),
             target_path=target_path,
             created_movie_folder=best_match is None,
             existing_match=best_match,
+            folder_exists=best_match is not None,
         )
+
+    @staticmethod
+    def _pick_drive_root(source_path: str, roots: list[str], default_index: int) -> str:
+        fallback = roots[default_index] if default_index < len(roots) else roots[0]
+        try:
+            source_dev = os.stat(source_path).st_dev
+        except OSError:
+            return fallback
+
+        same_drive = []
+        for root in roots:
+            try:
+                if os.stat(root).st_dev == source_dev:
+                    same_drive.append(root)
+            except OSError:
+                continue
+
+        if same_drive:
+            if fallback in same_drive:
+                return fallback
+            return same_drive[0]
+
+        return fallback
 
     async def _resolve_series(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
         index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0
         series_roots_list = list(self._config.paths.series_roots.values())
-        series_root = series_roots_list[index] if index < len(series_roots_list) else series_roots_list[0]
+        series_root = self._pick_drive_root(candidate.source_path, series_roots_list, index)
         
         all_existing_paths = []
         for root in series_roots_list:
             all_existing_paths.extend(list_target_paths(root))
         show_name = sanitize_name(classification.title or candidate.name)
         show_name = re.sub(r"([^a-zA-Z0-9])\1+$", r"\1", show_name)
+        series_key = series_lookup_key(show_name, classification.year)
+        logger.info(
+            "  [resolver] resolving series=%s season=%s episode=%s candidate=%s",
+            show_name, classification.season, classification.episode, candidate.source_path,
+        )
+        logger.info("  [resolver] existing paths count: %d", len(all_existing_paths))
+        if classification.series_alias:
+            alias_season = self._lookup_series_alias_season(series_key, classification.series_alias)
+            if alias_season:
+                logger.info("  [resolver] alias \"%s\" → season %d (from memory)", classification.series_alias, alias_season)
+        season_number = classification.season or self._lookup_series_alias_season(series_key, classification.series_alias) or 1
+        if classification.series_alias and season_number != (classification.season or 1):
+            logger.info("  [resolver] using season %d from alias \"%s\"", season_number, classification.series_alias)
         best_match = await self._pick_existing_path(
             media_kind="series",
             title=show_name,
@@ -133,21 +202,78 @@ class PathResolver:
             desired_name=show_name,
         )
 
-        show_dir = Path(best_match) if best_match else Path(series_root) / show_name
-        season_number = classification.season or 1
+        created_show_folder = False
+        if best_match:
+            show_dir = Path(best_match)
+            logger.info("  [resolver] matched existing show folder: %s", best_match)
+            self._remember_series_path(series_key, show_dir)
+        else:
+            remembered_path = self._lookup_series_path(series_key)
+            if remembered_path:
+                show_dir = Path(remembered_path)
+                logger.info("  [resolver] reused show folder from memory: %s", remembered_path)
+            else:
+                show_dir = Path(series_root) / show_name
+                logger.info("  [resolver] new show folder: %s", show_dir)
+                self._remember_series_path(series_key, show_dir)
+                created_show_folder = True
         episode_number = classification.episode or 1
-        season_dir = self._pick_existing_season_dir(show_dir, season_number) or (show_dir / f"Season {season_number:02d}")
+        existing_season_dir = self._pick_existing_season_dir(show_dir, season_number)
+        if existing_season_dir:
+            season_dir = existing_season_dir
+            logger.info("  [resolver] matched existing season dir: %s", existing_season_dir)
+        else:
+            season_dir = show_dir / f"Season {season_number:02d}"
+            logger.info("  [resolver] new season dir: %s", season_dir)
         ext = Path(candidate.source_path).suffix or ".mkv"
         episode_title = sanitize_name(classification.episode_title or classification.title or show_dir.name)
         episode_base = f"{episode_title} - S{season_number:02d}E{episode_number:02d}"
         target_path = str(season_dir / f"{episode_base}{ext}")
+        logger.info("  [resolver] target: %s", target_path)
+        self._remember_series_alias_season(series_key, classification.series_alias, season_number)
+        if classification.series_alias and season_number:
+            logger.info("  [resolver] remembered alias \"%s\" → season %d", classification.series_alias, season_number)
+        folder_exists = show_dir.exists()
         return ResolvedTarget(
             root_key=candidate.source_root_key,
             target_dir=str(season_dir),
             target_path=target_path,
-            created_show_folder=best_match is None,
+            created_show_folder=created_show_folder,
             existing_match=best_match,
+            folder_exists=folder_exists,
         )
+
+    def _lookup_series_path(self, series_key: str) -> str | None:
+        remembered_path = self._series_path_memory.get(series_key)
+        if remembered_path and self._is_valid_series_path(remembered_path):
+            return remembered_path
+        if remembered_path:
+            self._series_path_memory.pop(series_key, None)
+        return None
+
+    def _remember_series_path(self, series_key: str, show_dir: Path) -> None:
+        self._series_path_memory[series_key] = str(show_dir)
+
+    def _lookup_series_alias_season(self, series_key: str, series_alias: str | None) -> int | None:
+        if not series_alias:
+            return None
+        return self._series_alias_seasons.get((series_key, normalize_series_text(series_alias)))
+
+    def _remember_series_alias_season(self, series_key: str, series_alias: str | None, season_number: int) -> None:
+        if not series_alias:
+            return
+        self._series_alias_seasons[(series_key, normalize_series_text(series_alias))] = season_number
+
+    def _is_valid_series_path(self, target_path: str) -> bool:
+        candidate = Path(target_path)
+        for root in self._config.paths.series_roots.values():
+            root_path = Path(root)
+            try:
+                candidate.relative_to(root_path)
+                return True
+            except ValueError:
+                continue
+        return False
 
     async def _pick_existing_path(
         self,
@@ -221,11 +347,24 @@ class PathResolver:
         if not wanted:
             return None
 
-        for path in target_paths:
+        logger.info("  [resolver] exact path match looking for %s among %d paths", title, len(target_paths))
+        for idx, path in enumerate(target_paths):
             folder_name = Path(path).name
-            alias_values = series_aliases(path) if media_kind == "series" else {folder_name}
-            if any(normalizer(alias) in wanted for alias in alias_values):
+            folder_norm = normalizer(folder_name)
+            if folder_norm in wanted:
+                logger.info("  [resolver] exact match via folder name: %s", path)
                 return path
+            if media_kind != "series":
+                continue
+            if not tokenize(title) & tokenize(folder_name):
+                continue
+            alias_values = series_aliases(path)
+            if any(normalizer(alias) in wanted for alias in alias_values):
+                logger.info("  [resolver] exact match via file alias in %s: %s", folder_name, path)
+                return path
+            if idx > 0 and idx % 50 == 0:
+                logger.info("  [resolver] exact match checked %d/%d paths...", idx, len(target_paths))
+        logger.info("  [resolver] no exact path match found for %s", title)
         return None
 
     def _shortlist_target_paths(
@@ -237,7 +376,9 @@ class PathResolver:
         desired_name: str,
     ) -> list[str]:
         if len(target_paths) <= MAX_AI_PATH_CHOICES:
+            logger.info("  [resolver] shortlist: only %d paths, keeping all", len(target_paths))
             return target_paths
+        logger.info("  [resolver] shortlist: scoring %d paths for %s", len(target_paths), title)
 
         title_norm = normalize_text(title)
         desired_norm = normalize_text(desired_name)
@@ -280,10 +421,13 @@ class PathResolver:
                 scored.append((score, path))
 
         if not scored:
+            logger.info("  [resolver] shortlist: no scored paths for %s", title)
             return []
 
         scored.sort(key=lambda item: (-item[0], item[1]))
-        return [path for _, path in scored[:MAX_AI_PATH_CHOICES]]
+        shortlisted = [path for _, path in scored[:MAX_AI_PATH_CHOICES]]
+        logger.info("  [resolver] shortlist: %d candidates for %s", len(shortlisted), title)
+        return shortlisted
 
     def _best_path_match(
         self,
@@ -355,6 +499,10 @@ class PathResolver:
                 best_score = score
                 best_path = path
 
+        logger.info(
+            "  [resolver] best match for %s: %s (score=%.2f)",
+            title, best_path or "none", best_score,
+        )
         return best_path, best_score
 
     def _pick_existing_season_dir(self, show_dir: Path, season_number: int) -> Path | None:

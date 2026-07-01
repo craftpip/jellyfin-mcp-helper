@@ -63,6 +63,21 @@ def test_season_word_dash_episode() -> None:
     assert result.episode == 12
 
 
+def test_alternative_title_becomes_series_alias() -> None:
+    result = classify_candidate(_candidate(name="[Judas] Show Name - Future Arc - S04E01v2.mkv"))
+    assert result.kind == "series"
+    assert result.season == 4
+    assert result.series_alias == "Future Arc"
+
+
+def test_episode_title_can_be_used_as_series_alias_when_no_season_exists() -> None:
+    result = classify_candidate(_candidate(name="[sam] Show Name - Future Arc - 25.mkv"))
+    assert result.kind == "series"
+    assert result.season is None
+    assert result.episode == 25
+    assert result.series_alias == "Future Arc"
+
+
 def test_season_from_folder_when_missing_in_filename() -> None:
     candidate = _candidate(
         name="Show Name - 03.mkv",

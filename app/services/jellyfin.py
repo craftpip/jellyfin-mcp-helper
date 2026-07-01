@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import re
 from datetime import UTC, datetime
+from difflib import SequenceMatcher
 
 import httpx
 
@@ -45,22 +48,95 @@ class JellyfinClient:
         libraries = await self._api_get("/Library/VirtualFolders")
         return [{"name": item.get("Name", ""), "id": item.get("ItemId", "")} for item in libraries]
 
-    async def scan_library(self, library_name: str) -> dict:
+    async def scan_library(
+        self,
+        library_name: str,
+        item_ids: list[str] | None = None,
+        item_names: list[str] | None = None,
+        recursive: bool = True,
+        metadata_refresh_mode: str = "Default",
+        image_refresh_mode: str = "Default",
+        replace_all_metadata: bool = False,
+        replace_all_images: bool = False,
+    ) -> dict:
         target = await self._resolve_library(library_name)
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{self._base_url}/Items/{target['id']}/Refresh",
-                params={
+        resolved_ids: list[str] = []
+        scanned_names: list[str] = []
+        not_found: list[str] = []
+
+        if item_ids:
+            resolved_ids.extend(item_ids)
+
+        if item_names:
+            user_id = await self._get_user_id()
+            for name in item_names:
+                params: dict[str, str] = {
+                    "ParentId": target["id"],
                     "Recursive": "true",
-                    "MetadataRefreshMode": "FullRefresh",
-                    "ImageRefreshMode": "FullRefresh",
-                    "ReplaceAllMetadata": "false",
-                    "ReplaceAllImages": "false",
-                },
+                    "SearchTerm": name,
+                    "IncludeItemTypes": "Series,Movie",
+                    "Limit": "10",
+                    "UserId": user_id,
+                }
+                data = await self._api_get("/Items", params)
+                items = data.get("Items", [])
+                if items:
+                    resolved_ids.append(items[0]["Id"])
+                    scanned_names.append(items[0].get("Name", name))
+                else:
+                    not_found.append(name)
+
+        refresh_params = {
+            "Recursive": str(recursive).lower(),
+            "MetadataRefreshMode": metadata_refresh_mode,
+            "ImageRefreshMode": image_refresh_mode,
+            "ReplaceAllMetadata": str(replace_all_metadata).lower(),
+            "ReplaceAllImages": str(replace_all_images).lower(),
+        }
+
+        async with httpx.AsyncClient(timeout=120) as httpx_client:
+            if resolved_ids:
+                async def _refresh_one(item_id: str) -> None:
+                    r = await httpx_client.post(
+                        f"{self._base_url}/Items/{item_id}/Refresh",
+                        params=refresh_params,
+                        headers={"X-Emby-Token": self._api_key},
+                    )
+                    r.raise_for_status()
+
+                await asyncio.gather(*[_refresh_one(iid) for iid in resolved_ids])
+            else:
+                response = await httpx_client.post(
+                    f"{self._base_url}/Items/{target['id']}/Refresh",
+                    params=refresh_params,
+                    headers={"X-Emby-Token": self._api_key},
+                )
+                response.raise_for_status()
+
+        result: dict = {"name": target["name"], "id": target["id"]}
+        if scanned_names:
+            result["scanned_items"] = scanned_names
+        elif item_ids and not scanned_names:
+            result["scanned_items"] = item_ids
+        if not_found:
+            result["not_found"] = not_found
+        return result
+
+    async def notify_media_updated(self, paths: list[str]) -> dict:
+        unique_paths = [path for path in dict.fromkeys(path.strip() for path in paths) if path]
+        if not unique_paths:
+            return {"updated_paths": []}
+
+        payload = {"updates": [{"path": path} for path in unique_paths]}
+        async with httpx.AsyncClient(timeout=120) as httpx_client:
+            response = await httpx_client.post(
+                f"{self._base_url}/Library/Media/Updated",
+                json=payload,
                 headers={"X-Emby-Token": self._api_key},
             )
             response.raise_for_status()
-        return target
+
+        return {"updated_paths": unique_paths}
 
     async def _resolve_library(self, library_name: str) -> dict:
         libraries = await self.list_libraries()
@@ -94,6 +170,28 @@ class JellyfinClient:
                 return uid
         raise ValueError("Could not resolve Jellyfin user for item queries")
 
+    @staticmethod
+    def _fuzzy_score(query: str, name: str) -> float:
+        q = query.lower().strip()
+        n = name.lower().strip()
+
+        if not q or not n:
+            return 0.0
+
+        if q == n:
+            return 1.0
+
+        if q in n or n in q:
+            return 0.85 + 0.15 * (min(len(q), len(n)) / max(len(q), len(n)))
+
+        q_tokens = set(re.findall(r"\w+", q))
+        n_tokens = set(re.findall(r"\w+", n))
+        overlap = len(q_tokens & n_tokens) / max(len(q_tokens), 1) if q_tokens else 0.0
+
+        seq_ratio = SequenceMatcher(None, q, n).ratio()
+
+        return (overlap * 0.45) + (seq_ratio * 0.55)
+
     async def list_library_items(
         self,
         library_name: str,
@@ -104,18 +202,18 @@ class JellyfinClient:
         library = await self._resolve_library(library_name)
         user_id = await self._get_user_id()
 
+        fetch_limit = 200 if search else limit
+
         params: dict[str, str] = {
             "ParentId": library["id"],
             "Recursive": "true",
             "IncludeItemTypes": "Series,Movie",
             "Fields": "ProductionYear,EndDate,Status",
-            "Limit": str(limit),
+            "Limit": str(fetch_limit),
             "UserId": user_id,
-            "SortBy": "ProductionYear,SortName",
-            "SortOrder": "Descending",
+            "SortBy": "SortName",
+            "SortOrder": "Ascending",
         }
-        if search:
-            params["SearchTerm"] = search
 
         data = await self._api_get("/Items", params)
         items = data.get("Items", [])
@@ -123,12 +221,22 @@ class JellyfinClient:
 
         for item in items:
             item_type = item.get("Type", "").lower()
+            item_name = item.get("Name", "")
+
+            if search:
+                score = self._fuzzy_score(search, item_name)
+                if score < 0.3:
+                    continue
+
             if item_type == "movie":
-                result_items.append({
-                    "name": item.get("Name", ""),
+                entry: dict = {
+                    "name": item_name,
                     "type": "movie",
                     "year": item.get("ProductionYear"),
-                })
+                }
+                if search:
+                    entry["_score"] = score
+                result_items.append(entry)
             elif item_type == "series":
                 series_id = item.get("Id")
                 ongoing = self._is_ongoing_series(item)
@@ -142,14 +250,23 @@ class JellyfinClient:
                 except Exception:
                     pass
 
-                result_items.append({
-                    "name": item.get("Name", ""),
+                entry = {
+                    "name": item_name,
                     "type": "series",
                     "ongoing": ongoing,
                     "season_count": seasons_info["total_seasons"],
                     "episode_count": seasons_info["total_episodes"],
                     "seasons": seasons_info["seasons"],
-                })
+                }
+                if search:
+                    entry["_score"] = score
+                result_items.append(entry)
+
+        if search:
+            result_items.sort(key=lambda x: x.get("_score", 0), reverse=True)
+            result_items = result_items[:limit]
+            for r in result_items:
+                r.pop("_score", None)
 
         return {
             "library_name": library_name,

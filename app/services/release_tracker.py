@@ -75,6 +75,22 @@ class ReleaseTracker:
             "items": items,
         }
 
+    def get_release(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        library_name = str(payload.get("libraryName") or "").strip()
+        series_name = str(payload.get("seriesName") or "").strip()
+        series_id = str(payload.get("seriesId") or "").strip() or None
+
+        if not library_name:
+            raise ValueError("libraryName is required")
+        if not series_name:
+            raise ValueError("seriesName is required")
+
+        records = self._load_records()
+        existing_key = self._find_existing_key(records, library_name, series_name, series_id)
+        if not existing_key:
+            return None
+        return dict(records[existing_key])
+
     def get_due_releases(
         self,
         library_name: str | None = None,

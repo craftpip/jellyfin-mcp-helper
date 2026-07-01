@@ -9,7 +9,7 @@ from guessit import guessit
 from app.models.schemas import CandidateItem, ClassificationResult
 
 
-EXTRA_MARKERS = re.compile(r"\b(ncop\d*|nced\d*|op\d*|ed\d*|ova|ona|special|extras?|bonus|recap|trailer)\b", re.IGNORECASE)
+EXTRA_MARKERS = re.compile(r"\b(ncop\d*|nced\d*|op\d*|ed\d*|sp\d*|ova|ona|special|extras?|bonus|recap|trailer)\b", re.IGNORECASE)
 SAMPLE_MARKERS = re.compile(r"\bsample\b", re.IGNORECASE)
 SAMPLE_SIZE_THRESHOLD = 150 * 1024 * 1024  # 150MB
 SEASON_EPISODE_RE = re.compile(r"s\d{1,2}e\d{1,3}", re.IGNORECASE)
@@ -42,6 +42,7 @@ def classify_candidate(candidate: CandidateItem) -> ClassificationResult:
 
     title = _extract_title(parsed, candidate)
     episode_title = _extract_episode_title(parsed, candidate)
+    series_alias = _extract_series_alias(parsed, title)
     year = _extract_int(parsed.get("year"))
     season = _extract_int(parsed.get("season"))
     episode = _extract_int(parsed.get("episode"))
@@ -81,6 +82,7 @@ def classify_candidate(candidate: CandidateItem) -> ClassificationResult:
         type=kind,
         title=title,
         episode_title=episode_title,
+        series_alias=series_alias,
         year=year,
         season=season,
         episode=episode,
@@ -124,12 +126,17 @@ def _extract_title(parsed: dict[str, Any], candidate: CandidateItem) -> str | No
 
 
 _SEASON_MARKER_RE = re.compile(r"\s+(?:S\d{1,2}(?:\+?P\d{1,2})?(?:\+SP)?|\(?Season\s*\d{1,2}\)?)(?:\s|$)", re.IGNORECASE)
+_SEASON_PLUS_TEXT_RE = re.compile(r"\s+S\d{1,2}\+.*$", re.IGNORECASE)
 _TECH_TAG_RE = re.compile(
     r"\s+\[?(?:\d{3,4}p|(?:Dual\s+)?Audio|BDRip|BluRay|WEB[.-]?DL|WebRip|HDRip|x264|x265|HEVC|10\s*bit)",
     re.IGNORECASE,
 )
 _TRAILING_GROUP_RE = re.compile(r"\s*[-–]\s*[A-Za-z0-9]+$")
 _TRAILING_BRACKET_RE = re.compile(r"\s*\[.*?\]\s*$")
+_TRAILING_PAREN_TECH_RE = re.compile(
+    r"\s*\([^)]*\b(?:\d{3,4}p|x264|x265|HEVC|BDRip|BluRay|WEB[.-]?DL|WEBRip|HDRip|Dual\s*Audio|10\s*bit)\b[^)]*\)\s*$",
+    re.IGNORECASE,
+)
 _LEADING_BRACKET_RE = re.compile(r"^(?:\[[^\]]+\]\s*)+")
 
 
@@ -159,6 +166,48 @@ def _extract_episode_title(parsed: dict[str, Any], candidate: CandidateItem) -> 
     return None
 
 
+def _extract_series_alias(parsed: dict[str, Any], title: str | None) -> str | None:
+    alternative_title = parsed.get("alternative_title")
+    candidates: list[str] = []
+    if isinstance(alternative_title, str):
+        candidates.append(alternative_title.strip())
+    elif isinstance(alternative_title, list):
+        for item in alternative_title:
+            if isinstance(item, str):
+                candidates.append(item.strip())
+
+    for cleaned in candidates:
+        if _is_series_alias_text(cleaned, title):
+            return cleaned
+
+    episode_title = parsed.get("episode_title")
+    if isinstance(episode_title, str):
+        cleaned = episode_title.strip()
+        if _is_series_alias_text(cleaned, title):
+            return cleaned
+
+    return None
+
+
+def _is_series_alias_text(value: str, title: str | None) -> bool:
+    cleaned = value.strip()
+    if not cleaned or not re.search(r"[A-Za-z]", cleaned):
+        return False
+    if SEASON_EPISODE_RE.search(cleaned):
+        return False
+    if SEASON_EPISODE_TOKEN_RE.search(cleaned):
+        return False
+    if SEASON_DASH_EPISODE_RE.search(cleaned):
+        return False
+    if SEASON_WORD_DASH_EPISODE_RE.search(cleaned):
+        return False
+
+    def _normalize_alias_text(text: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9]+", text.lower()))
+
+    return _normalize_alias_text(cleaned) != _normalize_alias_text(title or "")
+
+
 def _extract_series_from_source(candidate: CandidateItem) -> str | None:
     path_str = candidate.container_path
     if not path_str:
@@ -171,17 +220,23 @@ def _extract_series_from_source(candidate: CandidateItem) -> str | None:
     cleaned = _LEADING_BRACKET_RE.sub("", raw_name)
     while _TRAILING_BRACKET_RE.search(cleaned):
         cleaned = _TRAILING_BRACKET_RE.sub("", cleaned)
+    cleaned = _TRAILING_PAREN_TECH_RE.sub("", cleaned)
     cleaned = _TRAILING_GROUP_RE.sub("", cleaned)
     parts = _SEASON_MARKER_RE.split(cleaned, maxsplit=1)
     if len(parts) > 1:
         result = parts[0].strip()
         if result:
             return result
+    original = cleaned
+    cleaned = _SEASON_PLUS_TEXT_RE.sub("", cleaned).strip()
+    any_change = cleaned != original
     parts = _TECH_TAG_RE.split(cleaned, maxsplit=1)
     if len(parts) > 1:
         result = parts[0].strip()
         if result:
             return result
+    if any_change:
+        return cleaned or None
     return None
 
 

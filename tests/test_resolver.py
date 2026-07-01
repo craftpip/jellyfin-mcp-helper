@@ -359,6 +359,90 @@ def test_resolve_defaults_season_to_one(tmp_path) -> None:
     assert result.target_dir.endswith("Season 01")
 
 
+def test_resolve_series_reuses_first_planned_show_path_within_same_scan(tmp_path) -> None:
+    series_root = tmp_path / "series"
+    series_root.mkdir()
+    config = _make_config(series_roots=[str(series_root)])
+    resolver = PathResolver(config)
+
+    first_candidate = CandidateItem(
+        source_root_key="downloads_0",
+        source_root="/data/torrents",
+        source_path="/data/torrents/Show Alpha/Show Alpha - 01.mkv",
+        name="Show Alpha - 01.mkv",
+    )
+    second_candidate = CandidateItem(
+        source_root_key="downloads_0",
+        source_root="/data/torrents",
+        source_path="/data/torrents/SHOW ALPHA/Future Arc - 25.mkv",
+        name="Science Future - 25.mkv",
+    )
+
+    first = asyncio.run(
+        resolver._resolve_series(
+            first_candidate,
+            ClassificationResult(type="series", title="Show Alpha", season=1, episode=1),
+        )
+    )
+    second = asyncio.run(
+        resolver._resolve_series(
+            second_candidate,
+            ClassificationResult(type="series", title="Show. Alpha", season=4, episode=25),
+        )
+    )
+
+    assert first.created_show_folder is True
+    assert second.created_show_folder is False
+    assert first.target_dir == str(series_root / "Show Alpha" / "Season 01")
+    assert second.target_dir == str(series_root / "Show Alpha" / "Season 04")
+
+
+def test_resolve_series_reuses_alias_season_within_same_scan(tmp_path) -> None:
+    series_root = tmp_path / "series"
+    series_root.mkdir()
+    resolver = PathResolver(_make_config(series_roots=[str(series_root)]))
+
+    explicit = asyncio.run(
+        resolver._resolve_series(
+            CandidateItem(
+                source_root_key="downloads_0",
+                source_root="/data/torrents",
+                source_path="/data/torrents/[Group] Show Alpha - Future Arc - S04E01.mkv",
+                name="[Group] Show Alpha - Future Arc - S04E01.mkv",
+            ),
+            ClassificationResult(
+                type="series",
+                title="Show Alpha",
+                series_alias="Future Arc",
+                season=4,
+                episode=1,
+            ),
+        )
+    )
+
+    inferred = asyncio.run(
+        resolver._resolve_series(
+            CandidateItem(
+                source_root_key="downloads_0",
+                source_root="/data/torrents",
+                source_path="/data/torrents/[sam] SHOW ALPHA - Future Arc - 25.mkv",
+                name="[sam] SHOW ALPHA - Future Arc - 25.mkv",
+            ),
+            ClassificationResult(
+                type="series",
+                title="SHOW ALPHA",
+                series_alias="Future Arc",
+                season=None,
+                episode=25,
+            ),
+        )
+    )
+
+    assert explicit.target_dir == str(series_root / "Show Alpha" / "Season 04")
+    assert inferred.target_dir == str(series_root / "Show Alpha" / "Season 04")
+    assert inferred.target_path.endswith("S04E25.mkv")
+
+
 def _make_config(
     movie_roots: list[str] | None = None,
     series_roots: list[str] | None = None,

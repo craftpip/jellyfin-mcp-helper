@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
+from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,13 +17,22 @@ from fastapi.responses import StreamingResponse
 from app.core.config import get_config
 from app.core.logging import configure_logging
 from app.core.version import VERSION
-from app.models.schemas import ScanLogEntry, ScanPlan, ScanRequest
+from app.models.schemas import ScanLogEntry, ScanPlan, ScanRequest, ScannedItem
 from app.services.jellyfin import JellyfinClient
 from app.services.release_tracker import ReleaseTracker
 from app.services.scan_manager import ScanManager
 
 
 logger = logging.getLogger(__name__)
+
+_cached_library_list: str = ""
+
+RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS = [
+    "Release Tracker answers questions about what is stored, tracked, or saved locally for a series.",
+    "If the user asks for the tracked/saved date or stored next release for a specific series, call the Release Tracker lookup tool before using Jellyfin or any external source.",
+    "Only use Jellyfin or an external source when the user explicitly asks for live verification/current availability, or when no stored Release Tracker marker exists.",
+    "When answering, clearly label whether the date came from Release Tracker local storage, Jellyfin library state, or an external source.",
+]
 
 
 def _mcp_request_body(request_body: bytes) -> dict[str, object]:
@@ -156,6 +167,22 @@ def _format_scan_report(scan: ScanPlan) -> dict:
         if item.action in items_by_action:
             items_by_action[item.action].append(item)
 
+    config = get_config()
+    movie_roots_info = [
+        {
+            "path": path,
+            "description": config.paths.movie_root_descriptions.get(key, ""),
+        }
+        for key, path in config.paths.movie_roots.items()
+    ]
+    series_roots_info = [
+        {
+            "path": path,
+            "description": config.paths.series_root_descriptions.get(key, ""),
+        }
+        for key, path in config.paths.series_roots.items()
+    ]
+
     summary = {
         "scan_id": scan.scan_id,
         "status": scan.status,
@@ -166,71 +193,130 @@ def _format_scan_report(scan: ScanPlan) -> dict:
         "action_required": len(items_by_action["move"]) + len(items_by_action["replace"]),
     }
 
-    movies = []
-    series = []
-
-    for item in items_by_action["move"]:
-        entry = {
-            "confirmId": item.confirm_id,
-            "name": item.name,
-            "destination": Path(item.target_path).parent.name,
-            "full_destination": item.target_path,
-            "sourcePath": item.source_path,
-        }
-        if item.item_type == "movie":
-            movies.append(entry)
-        elif item.item_type == "series":
-            series.append(entry)
-
-    for item in items_by_action["replace"]:
-        entry = {
-            "confirmId": item.confirm_id,
-            "name": item.name,
-            "destination": Path(item.target_path).parent.name,
-            "full_destination": item.target_path,
-            "sourcePath": item.source_path,
-        }
-        if item.item_type == "movie":
-            movies.append(entry)
-        elif item.item_type == "series":
-            series.append(entry)
+    if movie_roots_info:
+        summary["movie_roots"] = movie_roots_info
+    if series_roots_info:
+        summary["series_roots"] = series_roots_info
 
     report = {
         "summary": summary,
-        "movies": movies,
-        "series": series,
+        "report_md": _format_report_md(items_by_action, movie_roots_info, series_roots_info),
     }
-
-    if items_by_action["skip"]:
-        report["skipped"] = [
-            {
-                "confirmId": item.confirm_id,
-                "name": item.name,
-                "reason": item.reason,
-                "sourcePath": item.source_path,
-                "error": item.error,
-            }
-            for item in items_by_action["skip"]
-        ]
 
     if scan.service_errors:
         report["service_errors"] = scan.service_errors
 
-    unconfirmed = len(items_by_action["move"]) + len(items_by_action["replace"])
-    if unconfirmed > 0 and scan.status != "confirmed":
-        next_step = (
-            f"To apply all remaining items: call 'confirm move new downloads scan' with scanId={scan.scan_id}. "
-            f"To apply specific items only: call 'confirm move new downloads scan' with scanId={scan.scan_id} "
-            f"and preferably itemIds=[list of confirmId values from the report], or use either sourcePaths=[list of sourcePath values from the report] or "
-            f"sourcePrefixes=[common parent folder prefixes from the report]. "
-            f"After confirming, call 'get move new downloads scan report' again to review remaining items."
-        )
-    else:
-        next_step = "All items have been confirmed. Run 'move new downloads scan' for a new scan."
-    if "Filesystem" in scan.service_errors:
-        next_step += " Some download paths could not be scanned due to filesystem errors; review skipped items for the exact paths."
-    report["next"] = next_step
+    report["llm_instructions"] = _report_llm_instructions(scan, movie_roots_info, series_roots_info)
+    report["next"] = _report_next_step(scan)
     return report
+
+
+EPISODE_TAG_RE = re.compile(r"S\d{2}E\d{2,3}", re.IGNORECASE)
+
+
+def _format_report_md(
+    items_by_action: dict[str, list[ScannedItem]],
+    movie_roots_info: list[dict],
+    series_roots_info: list[dict],
+) -> str:
+    lines = []
+    movies = [i for i in items_by_action["move"] + items_by_action["replace"] if i.item_type == "movie"]
+    series = [i for i in items_by_action["move"] + items_by_action["replace"] if i.item_type == "series"]
+
+    if movies:
+        lines.append("## Movies (%d)" % len(movies))
+        lines.append("| cid | Title | Exists | Target |")
+        lines.append("|-----|-------|--------|--------|")
+        for item in movies:
+            title = Path(item.target_path).parent.name
+            exists = "yes" if item.folder_exists else "no"
+            lines.append("| %s | %s | %s | `%s` |" % (item.confirm_id, title, exists, item.target_path))
+        lines.append("")
+
+    if series:
+        lines.append("## Series (%d)" % len(series))
+        lines.append("| cid | Show | Season | Ep | Exists | Target |")
+        lines.append("|-----|------|--------|----|--------|--------|")
+        for item in series:
+            p = Path(item.target_path)
+            show = p.parent.parent.name if p.parent.parent else p.parent.name
+            season = p.parent.name
+            tag_match = EPISODE_TAG_RE.search(p.name)
+            ep = tag_match.group(0) if tag_match else p.stem
+            exists = "yes" if item.folder_exists else "no"
+            lines.append("| %s | %s | %s | %s | %s | `%s` |" % (item.confirm_id, show, season, ep, exists, item.target_path))
+        lines.append("")
+
+    if items_by_action["skip"]:
+        by_reason: dict[str, list[str]] = {}
+        for item in items_by_action["skip"]:
+            key = item.reason[:120]
+            by_reason.setdefault(key, []).append(item.source_path)
+
+        lines.append("## Skipped (%d)" % len(items_by_action["skip"]))
+        for reason, paths in by_reason.items():
+            lines.append("- [%d] %s" % (len(paths), reason))
+            for p in paths[:2]:
+                lines.append("  - `%s`" % p)
+            if len(paths) > 2:
+                lines.append("  - ... and %d more" % (len(paths) - 2))
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def _report_llm_instructions(scan: ScanPlan, movie_roots_info: list[dict], series_roots_info: list[dict]) -> list[str]:
+    unconfirmed = scan.counts.movies + scan.counts.series
+    if unconfirmed == 0 or scan.status == "confirmed":
+        return []
+
+    roots = []
+    for label, info in [("movies", movie_roots_info), ("series", series_roots_info)]:
+        for r in info:
+            roots.append(f"  {r['path']} → {r['description']}")
+
+    instructions = [
+        "You are curating the library, not just moving files.",
+        "folderExists=true  → already on disk, keep it there",
+        "folderExists=false → new item, can redirect",
+    ]
+
+    if roots:
+        instructions.append("Available roots:\n" + "\n".join(roots))
+
+    instructions.extend([
+        "Path validation: compare each item's Source filename with its targetPath. "
+        "If the show or movie folder names in targetPath look wrong or don't match "
+        "the source, update them using the update tool below.",
+        "Root curation: each root has a description. "
+        "Check whether each item's content belongs in its assigned root based on the root descriptions. "
+        "If another root is a better fit, redirect the item there.",
+    ])
+
+    instructions.append(
+        "To redirect an item, call 'update move new downloads scan' "
+        "with items=[{\"confirmId\": \"...\", \"targetPath\": \"<new full path>\"}]. "
+        "Then fetch this report again, then confirm."
+    )
+
+    return instructions
+
+
+def _report_next_step(scan: ScanPlan) -> str:
+    unconfirmed = len([item for item in scan.items if not item.confirmed and item.action in ("move", "replace")])
+
+    if unconfirmed == 0 or scan.status == "confirmed":
+        parts = ["All items done. Run 'move new downloads scan' for a new scan."]
+    else:
+        parts = [
+            f"{unconfirmed} items pending. Review each item below.",
+            "Check that target paths are correct and roots match the content description before confirming.",
+        ]
+
+    next_step = " ".join(parts)
+    if "Filesystem" in scan.service_errors:
+        next_step += " Some paths could not be scanned; check skipped items."
+    return next_step
 
 
 def _format_duration(seconds: float | None) -> str | None:
@@ -244,6 +330,45 @@ def _format_duration(seconds: float | None) -> str | None:
     if minutes:
         return f"{minutes}m {secs}s"
     return f"{secs}s"
+
+
+def _format_confirm_progress(scan: ScanPlan) -> dict:
+    now = datetime.now(UTC)
+    started_at = scan.confirm_started_at or now
+    elapsed_seconds = max((now - started_at).total_seconds(), 0.0)
+    processed = scan.counts.moved + scan.counts.replaced + scan.counts.failed
+    total = scan.confirm_total
+    percent = round((processed / total) * 100, 1) if total else 0.0
+    eta_seconds = None
+    if scan.confirm_status == "running" and processed > 0 and total > processed:
+        seconds_per_item = elapsed_seconds / processed
+        eta_seconds = seconds_per_item * (total - processed)
+
+    next_step = "Confirm finished. Call 'get move new downloads scan report' to see results."
+    if scan.confirm_status == "running":
+        next_step = "Confirm is running. Call 'get move new downloads confirm progress' again later."
+    elif scan.confirm_status == "idle":
+        next_step = "No confirm has been started. Use 'confirm move new downloads scan' first."
+
+    return {
+        "tool_purpose": "Reports progress for a running confirm operation. This tool is read-only and does not move files.",
+        "scan_id": scan.scan_id,
+        "status": scan.confirm_status,
+        "processed": processed,
+        "total": total,
+        "percent": percent,
+        "current_file": scan.confirm_current_item,
+        "elapsed_seconds": round(elapsed_seconds, 1),
+        "elapsed": _format_duration(elapsed_seconds),
+        "eta_seconds": round(eta_seconds, 1) if eta_seconds is not None else None,
+        "eta": _format_duration(eta_seconds),
+        "counts": {
+            "moved": scan.counts.moved,
+            "replaced": scan.counts.replaced,
+            "failed": scan.counts.failed,
+        },
+        "next": next_step,
+    }
 
 
 def _format_scan_progress(scan: ScanPlan) -> dict:
@@ -296,6 +421,17 @@ async def lifespan(app: FastAPI):
     config = get_config()
     app.state.scan_manager = ScanManager(config)
     app.state.release_tracker = ReleaseTracker()
+    global _cached_library_list
+    try:
+        client = JellyfinClient.from_env()
+        if client:
+            libraries = await client.list_libraries()
+            names = [lib["name"] for lib in libraries if lib.get("name")]
+            if names:
+                _cached_library_list = "Available: " + ", ".join(names) + "."
+                logger.info("Cached Jellyfin library list: %s", _cached_library_list)
+    except Exception:
+        logger.warning("Failed to fetch Jellyfin library list at startup", exc_info=True)
     yield
     logger.info("Organizer service shutting down")
 
@@ -356,6 +492,7 @@ async def log_requests(request: Request, call_next):
 
 
 def _mcp_tools() -> list[dict[str, object]]:
+    _lib_hint = _cached_library_list or ""
     return [
         {
             "name": "move new downloads scan",
@@ -373,7 +510,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "confirm move new downloads scan",
-            "description": "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. Use it only after the scan report has been reviewed and approved. For selective confirmation, prefer itemIds from the scan report.",
+            "description": "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. Use it only after the scan report has been reviewed and approved. If you need to redirect items to a different root, call 'update move new downloads scan' first, then fetch the report again, then confirm.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -414,6 +551,19 @@ def _mcp_tools() -> list[dict[str, object]]:
             },
         },
         {
+            "name": "get move new downloads confirm progress",
+            "description": "Check progress for a confirm operation that is currently running or has already finished. Returns confirm status, current file, processed and total counts, elapsed time, and ETA when available. Use this after starting a confirm and before asking for the final report.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "scanId": {
+                        "type": "string",
+                        "description": "Optional scan_id to check confirm progress for a specific scan. If omitted, the current active scan is used."
+                    }
+                }
+            },
+        },
+        {
             "name": "get move new downloads scan report",
             "description": "Get the final organizer scan report after a scan completes. Returns planned items and actions such as move, replace, or skip. If the scan is still running, this tool returns compact progress guidance instead of a full report.",
             "inputSchema": {
@@ -427,14 +577,81 @@ def _mcp_tools() -> list[dict[str, object]]:
             },
         },
         {
+            "name": "update move new downloads scan",
+            "description": "Update planned target destinations for items in a completed scan report. Use this to redirect movie or series items to a different root before confirming. After updating, fetch the report again to verify, then confirm. This tool does not move files.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "scanId": {
+                        "type": "string",
+                        "description": "The scan_id returned by 'move new downloads scan'."
+                    },
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "confirmId": {
+                                    "type": "string",
+                                    "description": "The confirmId from the scan report for the item to update."
+                                },
+                                "targetPath": {
+                                    "type": "string",
+                                    "description": "The new full destination path for this item. Must be under one of the configured movie or series roots."
+                                }
+                            },
+                            "required": ["confirmId", "targetPath"]
+                        },
+                        "description": "List of item updates. Each update specifies a confirmId and the new targetPath."
+                    }
+                },
+                "required": ["scanId", "items"]
+            },
+        },
+        {
             "name": "trigger jellyfin library scan",
-            "description": "Trigger a Jellyfin metadata refresh and library scan for one named library, such as Movies or Shows. Use this after files have been moved and Jellyfin needs to pick up the new content or location changes.",
+            "description": "Trigger a Jellyfin metadata refresh and library scan for a named library, such as Movies or Shows. By default refreshes the whole library. Use itemNames or itemIds to scan specific items only. Use refresh mode params to control whether metadata, images, or both are force-refreshed.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "libraryName": {
                         "type": "string",
                         "description": "The Jellyfin library name to refresh, for example 'Movies' or 'Shows'."
+                    },
+                    "itemNames": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of specific movie or series names to scan instead of the whole library."
+                    },
+                    "itemIds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of Jellyfin item IDs to scan instead of the whole library."
+                    },
+                    "recursive": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "When true, scan recursively including all children items."
+                    },
+                    "metadataRefreshMode": {
+                        "type": "string",
+                        "default": "Default",
+                        "description": "Metadata refresh mode. Matches Jellyfin UI options: Default (scan for new/updated files), FullRefresh (search for missing metadata), ValidationOnly."
+                    },
+                    "imageRefreshMode": {
+                        "type": "string",
+                        "default": "Default",
+                        "description": "Image refresh mode. Matches Jellyfin UI options: Default (scan for new/updated images), FullRefresh (replace existing images), ValidationOnly."
+                    },
+                    "replaceAllMetadata": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "When true, replace all existing metadata instead of merging. Only applies when metadataRefreshMode is FullRefresh."
+                    },
+                    "replaceAllImages": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "When true, replace all existing images instead of merging. Only applies when imageRefreshMode is FullRefresh."
                     }
                 },
                 "required": ["libraryName"]
@@ -442,7 +659,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get available jellyfin libraries list",
-            "description": "List all Jellyfin libraries that are available to the configured Jellyfin user. Use this when you need the exact library names before calling other Jellyfin tools.",
+            "description": "List all Jellyfin libraries that are available to the configured Jellyfin user." + (f" {_lib_hint}" if _lib_hint else "") + " Use this when you need the exact library names before calling other Jellyfin tools.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
@@ -450,7 +667,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get jellyfin library items",
-            "description": "List compact Jellyfin library items for movies and series. This tool is for existence checks, lightweight library browsing, and LLM-friendly summaries. It supports optional search and optional ongoing-series filtering. For series, it returns total season count, total episode count, and per-season episode counts instead of full episode listings.",
+                        "description": "List compact Jellyfin library items for movies and series. This tool is for existence checks, lightweight library browsing, and LLM-friendly summaries. It supports optional fuzzy search (client-side token overlap and similarity scoring handles typos and partial name matches) and optional ongoing-series filtering. For series, it returns total season count, total episode count, and per-season episode counts instead of full episode listings.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -460,7 +677,7 @@ def _mcp_tools() -> list[dict[str, object]]:
                     },
                     "search": {
                         "type": "string",
-                        "description": "Optional search term used to filter library items by name. Use this to check whether a movie or series already exists in the library."
+                        "description": "Optional search term for fuzzy matching by name (handles typos and partial matches client-side). Use this to check whether a movie or series already exists."
                     },
                     "ongoingOnly": {
                         "type": "boolean",
@@ -501,7 +718,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "store ongoing series next release",
-            "description": "Release Tracker: store or update one locally tracked next-release marker for an ongoing Jellyfin series. Use this after an external source determines the next expected release date for the next episode that should appear in Jellyfin.",
+            "description": "Release Tracker: store or update one locally tracked next-release marker for an ongoing Jellyfin series. Use this after an external source determines the next expected release date for the next episode that should appear in Jellyfin. Later, if the user asks what date is stored or tracked for that series, read Release Tracker first instead of using Jellyfin or the web.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -546,6 +763,28 @@ def _mcp_tools() -> list[dict[str, object]]:
             },
         },
         {
+            "name": "get ongoing series next release",
+            "description": "Release Tracker: return the single locally stored next-release marker for one ongoing Jellyfin series. This is the local-memory lookup tool. Use it first when the user asks what date is stored, tracked, or saved for a specific series. Do not use Jellyfin or the web before this tool unless the user explicitly asks for live verification.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "libraryName": {
+                        "type": "string",
+                        "description": "Jellyfin library name for the series, for example 'Shows'."
+                    },
+                    "seriesName": {
+                        "type": "string",
+                        "description": "Series name to look up in the local Release Tracker store. Required for direct lookup."
+                    },
+                    "seriesId": {
+                        "type": "string",
+                        "description": "Optional Jellyfin series item id. Prefer this when available because it is the most stable key."
+                    }
+                },
+                "required": ["libraryName", "seriesName"]
+            },
+        },
+        {
             "name": "get due ongoing series releases",
             "description": "Release Tracker: return locally tracked ongoing-series release markers whose nextReleaseDate is due now or overdue. Use this for cron-driven checks before re-checking Jellyfin for newly arrived episodes.",
             "inputSchema": {
@@ -570,7 +809,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get ongoing series next releases",
-            "description": "Release Tracker: list all locally stored upcoming release markers for ongoing series. This is useful for planning, debugging, and confirming what is currently tracked before checking which ones are due.",
+            "description": "Release Tracker: list all locally stored upcoming release markers for ongoing series. This is useful for planning, debugging, and confirming what is currently tracked before checking which ones are due. For a single-series stored-date question, prefer 'get ongoing series next release' first.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -610,7 +849,6 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
     ]
 
-
 @app.post("/mcp")
 async def mcp(request: dict) -> JSONResponse:
     method = request.get("method")
@@ -636,7 +874,16 @@ async def mcp(request: dict) -> JSONResponse:
         return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": {}})
 
     if method == "tools/list":
-        return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": {"tools": _mcp_tools()}})
+        return JSONResponse(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "tools": _mcp_tools(),
+                    "llm_instructions": RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS,
+                },
+            }
+        )
 
     if method == "tools/call":
         params = request.get("params") or {}
@@ -706,6 +953,29 @@ async def mcp(request: dict) -> JSONResponse:
 
             try:
                 scan = await manager.confirm_scan(scan_id, item_ids, source_paths, source_prefixes)
+                logger.info("TOOL <<< %s (scan_id=%s)", name, scan_id)
+                response = _format_confirm_progress(scan)
+                response["message"] = "Confirm started in the background. This tool returns immediately. No files were moved yet."
+                response["tool_purpose"] = "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. It returns immediately and processes in the background. Use the confirm progress tool to track progress."
+                response["what_happens_now"] = [
+                    "The service stops seeding for each source file if qBittorrent is configured.",
+                    "Each planned item is moved or replaced.",
+                    "After all items are processed, Jellyfin library scans are triggered if items were moved.",
+                ]
+                response["available_now"] = [
+                    "scan_id",
+                    "status",
+                    "processed/total counters when available",
+                    "current_file when processing has started",
+                    "elapsed time and ETA when enough progress exists",
+                ]
+                response["llm_instructions"] = [
+                    "Tell the user the confirm has started.",
+                    "To check progress, call the 'get move new downloads confirm progress' tool with this scanId.",
+                    "Keep using the confirm progress tool until it returns status='completed' or status='failed'.",
+                    "After confirm is done, call 'get move new downloads scan report' to see the results.",
+                ]
+                response["next"] = "Use 'get move new downloads confirm progress' for updates. Use 'get move new downloads scan report' after confirm is complete to see results."
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -714,7 +984,7 @@ async def mcp(request: dict) -> JSONResponse:
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": json.dumps(scan.model_dump(mode="json", by_alias=True)),
+                                    "text": json.dumps(response),
                                 }
                             ],
                             "isError": False,
@@ -732,7 +1002,8 @@ async def mcp(request: dict) -> JSONResponse:
                 else:
                     scan = manager.get_current_scan()
                 if not scan:
-                    payload = {"hint": "No scan. Call 'move new downloads scan' to start."}
+                    logger.info("TOOL <<< %s (no active scan)", name)
+                    payload = {"hint": "No scan found. Ask the user if they want to start a new scan before doing anything."}
                 else:
                     payload = _format_scan_progress(scan)
                 return JSONResponse(
@@ -753,6 +1024,38 @@ async def mcp(request: dict) -> JSONResponse:
             except HTTPException as exc:
                 return _mcp_error_response(request_id, -32000, exc.detail)
 
+        if name == "get move new downloads confirm progress":
+            scan_id = arguments.get("scanId")
+            try:
+                if scan_id:
+                    scan = manager.get_scan(scan_id)
+                else:
+                    scan = manager.get_current_scan()
+                if not scan:
+                    logger.info("TOOL <<< %s (no active scan)", name)
+                    payload = {"hint": "No scan found. Ask the user if they want to start a new scan before doing anything."}
+                else:
+                    logger.info("TOOL <<< %s", name)
+                    payload = _format_confirm_progress(scan)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(payload),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except HTTPException as exc:
+                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
+                return _mcp_error_response(request_id, -32000, exc.detail)
+
         if name == "get move new downloads scan report":
             scan_id = arguments.get("scanId")
             try:
@@ -769,7 +1072,7 @@ async def mcp(request: dict) -> JSONResponse:
                                 "content": [
                                     {
                                         "type": "text",
-                                        "text": json.dumps({"hint": "No scan. Call 'move new downloads scan' to start."}),
+                                        "text": json.dumps({"hint": "No scan found. Ask the user if they want to start a new scan before doing anything."}),
                                     }
                                 ],
                                 "isError": False,
@@ -793,6 +1096,39 @@ async def mcp(request: dict) -> JSONResponse:
                 )
             except HTTPException as exc:
                 return _mcp_error_response(request_id, -32000, exc.detail)
+
+        if name == "update move new downloads scan":
+            scan_id = arguments.get("scanId")
+            items = arguments.get("items")
+            if not scan_id:
+                return _mcp_error_response(request_id, -32602, "scanId is required")
+            if not items or not isinstance(items, list):
+                return _mcp_error_response(request_id, -32602, "items is required and must be a list")
+
+            try:
+                updated_scan = manager.update_scan(scan_id, items)
+                logger.info("TOOL <<< %s (scan_id=%s, updated=%d)", name, scan_id, len(items))
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(_format_scan_report(updated_scan)),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except HTTPException as exc:
+                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
+                return _mcp_error_response(request_id, -32000, exc.detail)
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
 
         if name == "trigger jellyfin library scan":
             library_name = arguments.get("libraryName")
@@ -822,7 +1158,22 @@ async def mcp(request: dict) -> JSONResponse:
                 )
 
             try:
-                target = await client.scan_library(library_name)
+                result = await client.scan_library(
+                    library_name=library_name,
+                    item_ids=arguments.get("itemIds"),
+                    item_names=arguments.get("itemNames"),
+                    recursive=arguments.get("recursive", True),
+                    metadata_refresh_mode=arguments.get("metadataRefreshMode", "Default"),
+                    image_refresh_mode=arguments.get("imageRefreshMode", "Default"),
+                    replace_all_metadata=arguments.get("replaceAllMetadata", False),
+                    replace_all_images=arguments.get("replaceAllImages", False),
+                )
+                logger.info("TOOL <<< %s (library=%s)", name, library_name)
+
+                response_data: dict = {
+                    "message": f"Triggered Jellyfin library scan for '{result['name']}'",
+                    "library": result,
+                }
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -831,12 +1182,7 @@ async def mcp(request: dict) -> JSONResponse:
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": json.dumps(
-                                        {
-                                            "message": f"Triggered Jellyfin library scan for '{target.get('name', library_name)}'",
-                                            "library": target,
-                                        }
-                                    ),
+                                    "text": json.dumps(response_data),
                                 }
                             ],
                             "isError": False,
@@ -923,7 +1269,8 @@ async def mcp(request: dict) -> JSONResponse:
                     limit=arguments.get("limit", 10),
                     ongoing_only=arguments.get("ongoingOnly", False),
                 )
-                result["next"] = "Use search to check whether a movie or series already exists in this library. Use ongoingOnly to focus on currently ongoing series."
+                result["next"] = "Search uses client-side fuzzy matching (token overlap + similarity scoring) so it handles typos and partial names. Use ongoingOnly to focus on currently ongoing series."
+                logger.info("TOOL <<< %s (library=%s)", name, library_name)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -999,8 +1346,11 @@ async def mcp(request: dict) -> JSONResponse:
                 record = release_tracker.upsert_release(arguments)
                 payload = {
                     "message": f"Release Tracker stored the next release for '{record['seriesName']}' in '{record['libraryName']}'.",
+                    "dataOrigin": "release_tracker",
+                    "authorityScope": "stored_tracker_value",
                     "record": record,
-                    "llm_instructions": [
+                    "llm_instructions": RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS
+                    + [
                         "Release Tracker stores one marker per ongoing series for the next expected episode release.",
                         "Prefer seriesId when available because it is more stable than the series name.",
                         "When the release becomes due, call 'get due ongoing series releases', then check Jellyfin latest episodes, then update this marker again with the following expected release.",
@@ -1025,6 +1375,49 @@ async def mcp(request: dict) -> JSONResponse:
                 logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
                 return _mcp_error_response(request_id, -32000, str(exc))
 
+        if name == "get ongoing series next release":
+            try:
+                record = release_tracker.get_release(arguments)
+                payload = {
+                    "found": record is not None,
+                    "dataOrigin": "release_tracker",
+                    "authorityScope": "stored_tracker_value",
+                    "record": record,
+                    "message": (
+                        f"Release Tracker returned the stored next release for '{record['seriesName']}' in '{record['libraryName']}'."
+                        if record
+                        else "No matching Release Tracker marker was found."
+                    ),
+                    "llm_instructions": RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS
+                    + [
+                        "Use this tool to answer questions about what date is stored, tracked, or saved for one series.",
+                        "If found=false, say there is no stored Release Tracker marker yet before considering Jellyfin or any external source.",
+                        "If the user wants the live current status instead of the stored value, then use Jellyfin or another explicitly requested source after stating that you are switching from stored tracker data to live verification.",
+                    ],
+                    "next": (
+                        "If the user wants live verification, check Jellyfin latest episodes next. Otherwise answer from this stored Release Tracker value."
+                        if record
+                        else "If the user wants to save a tracker value, call 'store ongoing series next release'. If the user wants live verification instead, check Jellyfin latest episodes or another requested source."
+                    ),
+                }
+                logger.info("TOOL <<< %s", name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [{"type": "text", "text": json.dumps(payload)}],
+                            "isError": False,
+                        },
+                    }
+                )
+            except ValueError as exc:
+                logger.warning("TOOL xxx %s (%s)", name, str(exc))
+                return _mcp_error_response(request_id, -32602, str(exc))
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
+
         if name == "get due ongoing series releases":
             try:
                 payload = release_tracker.get_due_releases(
@@ -1032,7 +1425,9 @@ async def mcp(request: dict) -> JSONResponse:
                     before=arguments.get("before", "now"),
                     limit=arguments.get("limit", 50),
                 )
-                payload["llm_instructions"] = [
+                payload["dataOrigin"] = "release_tracker"
+                payload["authorityScope"] = "stored_tracker_value"
+                payload["llm_instructions"] = RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS + [
                     "Treat each returned item as a Release Tracker marker that should now be checked against Jellyfin.",
                     "For each due item, call 'get ongoing jellyfin series latest episodes' using the series name as search text and compare the returned latest episode to nextSeason and nextEpisode when those fields exist.",
                     "If the expected episode has arrived, calculate the following release and call 'store ongoing series next release' again.",
@@ -1063,9 +1458,12 @@ async def mcp(request: dict) -> JSONResponse:
                     library_name=arguments.get("libraryName"),
                     limit=arguments.get("limit", 100),
                 )
-                payload["llm_instructions"] = [
+                payload["dataOrigin"] = "release_tracker"
+                payload["authorityScope"] = "stored_tracker_value"
+                payload["llm_instructions"] = RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS + [
                     "Use this tool to inspect all stored Release Tracker markers, not just overdue ones.",
                     "Use 'get due ongoing series releases' when you want only the markers that should be checked now.",
+                    "For a single-series stored lookup, prefer 'get ongoing series next release' because it avoids ambiguous list scanning.",
                 ]
                 payload["next"] = "Use this list to inspect tracked Release Tracker markers. Use 'get due ongoing series releases' to focus only on markers that should be checked now."
                 logger.info("TOOL <<< %s", name)
@@ -1091,9 +1489,12 @@ async def mcp(request: dict) -> JSONResponse:
                 deleted = release_tracker.delete_release(arguments)
                 payload = {
                     "deleted": deleted is not None,
+                    "dataOrigin": "release_tracker",
+                    "authorityScope": "stored_tracker_value",
                     "record": deleted,
                     "message": "Release Tracker marker deleted." if deleted else "No matching Release Tracker marker was found.",
-                    "llm_instructions": [
+                    "llm_instructions": RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS
+                    + [
                         "Prefer seriesId when available so the correct marker is deleted.",
                         "Use this only when a Release Tracker marker is wrong or no longer needed.",
                     ],

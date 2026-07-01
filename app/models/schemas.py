@@ -33,6 +33,7 @@ class ScannedItem(BaseModel):
     action: Literal["move", "replace", "skip"]
     error: str | None = None
     confirmed: bool = False
+    folder_exists: bool = Field(default=False, alias="folderExists")
 
     model_config = {"populate_by_name": True}
 
@@ -64,6 +65,10 @@ class ScanPlan(BaseModel):
     confirmed_at: datetime | None = None
     error: str | None = None
     service_errors: dict[str, str] = Field(default_factory=dict)
+    confirm_status: Literal["idle", "running", "completed", "failed"] = "idle"
+    confirm_current_item: str | None = None
+    confirm_started_at: datetime | None = None
+    confirm_total: int = 0
 
 
 class ScanLogEntry(BaseModel):
@@ -109,6 +114,7 @@ class ClassificationResult(BaseModel):
     kind: ItemKind = Field(alias="type")
     title: str | None = None
     episode_title: str | None = None
+    series_alias: str | None = None
     year: int | None = None
     season: int | None = None
     episode: int | None = None
@@ -125,6 +131,7 @@ class ResolvedTarget(BaseModel):
     created_show_folder: bool = False
     created_movie_folder: bool = False
     existing_match: str | None = None
+    folder_exists: bool = False
 
 
 class CandidateItem(BaseModel):
