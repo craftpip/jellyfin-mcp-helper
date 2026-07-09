@@ -389,6 +389,8 @@ class PathResolver:
         scored: list[tuple[float, str]] = []
         for path in target_paths:
             folder_name = Path(path).name
+            if media_kind == "series" and not (tokenize(title) & tokenize(folder_name)):
+                continue
             alias_values = series_aliases(path) if media_kind == "series" else {folder_name}
             folder_norm = ""
             folder_tokens: set[str] = set()

@@ -19,7 +19,9 @@ The skill contains:
 ## Commands
 
 - Test: python3 -m pytest tests/
-- Rebuild after source changes: docker compose build && docker compose restart
+- Rebuild after source changes: docker compose build && docker compose up -d
+- Web UI: enabled via WEB_UI_ENABLED=true in .env, served on port 18329
+- MCP API: port 18328 (external), 18327 (internal)
 
 ## Project Structure
 
@@ -38,6 +40,8 @@ The skill contains:
 - app/services/scan_manager.py: scan-plan workflow, scan then confirm
 - app/services/scanner.py: filesystem scanner
 - app/main.py: FastAPI entry point and MCP handlers
+- app/ui/server.py: Web UI FastAPI server with MCP proxy
+- app/ui/index.html: Web UI single-page HTML+JS frontend
 - tests/: pytest test suite
 - config/: config files
 - logs/: runtime logs
@@ -192,11 +196,12 @@ Use `JellyfinClient.scan_library()` for the MCP tool `trigger jellyfin library s
 - `app/services/resolver.py` (`series_aliases`, `_pick_exact_path_match`)
 - `app/services/download_client.py` (qBittorrent view filter)
 
-**Fixes (three parts):**
+**Fixes (four parts):**
 
 1. **Remove `sorted()` from `series_aliases`** — let `rglob("*")` stop at the `break` naturally.
 2. **Use targeted extension globs** (`root.rglob(f"*{ext}")` for each extension) instead of `root.rglob("*")` — only yields video files, no directory entries to filter.
 3. **Token overlap check in `_pick_exact_path_match`** — before calling `series_aliases(path)` (which walks the dir tree), check if `tokenize(title) & tokenize(folder_name)` is non-empty. Non-matching directories like "One Piece" when searching for "Mushoku Tensei" skip the walk entirely. This is the most impactful optimization.
+4. **Token overlap check in `_shortlist_target_paths`** — same check before calling `series_aliases(path)` during the shortlist scoring loop. The shortlist runs across all existing paths when no exact match is found. Without this check, every path's directory tree is walked even when the folder name shares no tokens with the target title.
 
 **Before (resolver.py) — series_aliases:**
 ```python

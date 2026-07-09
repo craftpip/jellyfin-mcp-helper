@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 from collections import Counter
 from contextlib import asynccontextmanager
@@ -10,17 +11,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 
-from app.core.config import get_config
+from app.core.config import get_config, get_settings
 from app.core.logging import configure_logging
 from app.core.version import VERSION
 from app.models.schemas import ScanLogEntry, ScanPlan, ScanRequest, ScannedItem
 from app.services.jellyfin import JellyfinClient
 from app.services.release_tracker import ReleaseTracker
 from app.services.scan_manager import ScanManager
+from app.ui.server import create_ui_app
 
 
 logger = logging.getLogger(__name__)
@@ -153,11 +156,13 @@ def _format_scan_report(scan: ScanPlan) -> dict:
             "progress": progress,
             "llm_instructions": [
                 "Do not review or summarize the full report yet because the scan is still running.",
-                "Call 'get move new downloads scan progress' with this scanId to check current progress and ETA.",
-                "After progress status is completed, call 'get move new downloads scan report' again to review planned actions.",
+                "Tell the user the scan is still running and ask if they want to check progress.",
+                "If the user says yes, call 'get move new downloads scan progress' with this scanId.",
+                "If still running, tell the user and ask if they want to check again later.",
+                "After progress status is completed, call this report tool again to review planned actions.",
                 "Do not confirm/apply anything until the completed report has been reviewed and the user explicitly approves.",
             ],
-            "next": "Scan is still running. Call 'get move new downloads scan progress' until status is completed, then call this report tool again.",
+            "next": "Scan is still running. Tell the user and ask if they want progress.",
         }
 
     items_by_action = {"move": [], "replace": [], "skip": []}
@@ -225,26 +230,28 @@ def _format_report_md(
 
     if movies:
         lines.append("## Movies (%d)" % len(movies))
-        lines.append("| cid | Title | Exists | Target |")
-        lines.append("|-----|-------|--------|--------|")
+        lines.append("| cid | Title | Source | Exists | Target |")
+        lines.append("|-----|-------|--------|--------|--------|")
         for item in movies:
             title = Path(item.target_path).parent.name
+            source = Path(item.source_path).name
             exists = "yes" if item.folder_exists else "no"
-            lines.append("| %s | %s | %s | `%s` |" % (item.confirm_id, title, exists, item.target_path))
+            lines.append("| %s | %s | %s | %s | `%s` |" % (item.confirm_id, title, source, exists, item.target_path))
         lines.append("")
 
     if series:
         lines.append("## Series (%d)" % len(series))
-        lines.append("| cid | Show | Season | Ep | Exists | Target |")
-        lines.append("|-----|------|--------|----|--------|--------|")
+        lines.append("| cid | Show | Season | Ep | Source | Exists | Target |")
+        lines.append("|-----|------|--------|----|--------|--------|--------|")
         for item in series:
             p = Path(item.target_path)
             show = p.parent.parent.name if p.parent.parent else p.parent.name
             season = p.parent.name
             tag_match = EPISODE_TAG_RE.search(p.name)
             ep = tag_match.group(0) if tag_match else p.stem
+            source = Path(item.source_path).name
             exists = "yes" if item.folder_exists else "no"
-            lines.append("| %s | %s | %s | %s | %s | `%s` |" % (item.confirm_id, show, season, ep, exists, item.target_path))
+            lines.append("| %s | %s | %s | %s | %s | %s | `%s` |" % (item.confirm_id, show, season, ep, source, exists, item.target_path))
         lines.append("")
 
     if items_by_action["skip"]:
@@ -371,6 +378,27 @@ def _format_confirm_progress(scan: ScanPlan) -> dict:
     }
 
 
+def _is_cross_drive_transfer() -> bool:
+    config = get_config()
+    download_paths = [Path(p) for p in config.paths.download_roots if Path(p).exists()]
+    media_paths = [Path(p) for p in list(config.paths.movie_roots.values()) + list(config.paths.series_roots.values()) if Path(p).exists()]
+    if not download_paths or not media_paths:
+        return False
+    devices: set[int] = set()
+    for p in download_paths:
+        try:
+            devices.add(p.stat().st_dev)
+        except OSError:
+            pass
+    for p in media_paths:
+        try:
+            if p.stat().st_dev not in devices:
+                return True
+        except OSError:
+            pass
+    return False
+
+
 def _format_scan_progress(scan: ScanPlan) -> dict:
     now = datetime.now(UTC)
     started_at = scan.started_at or scan.created_at
@@ -386,7 +414,7 @@ def _format_scan_progress(scan: ScanPlan) -> dict:
 
     next_step = "Scan is complete. Call 'get move new downloads scan report' to review planned moves before confirming."
     if scan.status == "running":
-        next_step = "Scan is running. Call 'get move new downloads scan progress' again later. Do not confirm until status is completed and the report has been reviewed."
+        next_step = "Scan is still running. Tell the user and ask if they want to check progress again later."
     elif scan.status == "failed":
         next_step = "Scan failed. Review the error, then run 'move new downloads scan' again after fixing the issue."
 
@@ -414,6 +442,20 @@ def _format_scan_progress(scan: ScanPlan) -> dict:
     }
 
 
+def _start_ui_server(config):
+    settings = get_settings()
+    if not settings.web_ui_enabled:
+        return
+    ui_port = settings.web_ui_port
+    mcp_port = 18327
+    ui_app = create_ui_app(mcp_port)
+    logger.info("Web UI server starting on port %s (proxying MCP from port %s)", ui_port, mcp_port)
+    try:
+        uvicorn.run(ui_app, host="0.0.0.0", port=ui_port, log_level="info")
+    except OSError:
+        logger.warning("Web UI port %s already in use — skipping", ui_port)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
@@ -422,6 +464,13 @@ async def lifespan(app: FastAPI):
     app.state.scan_manager = ScanManager(config)
     app.state.release_tracker = ReleaseTracker()
     global _cached_library_list
+
+    settings = get_settings()
+    if settings.web_ui_enabled:
+        thread = threading.Thread(target=_start_ui_server, args=(config,), daemon=True)
+        thread.start()
+        logger.info("Web UI thread started on port %s", settings.web_ui_port)
+
     try:
         client = JellyfinClient.from_env()
         if client:
@@ -496,7 +545,7 @@ def _mcp_tools() -> list[dict[str, object]]:
     return [
         {
             "name": "move new downloads scan",
-            "description": "Start a new background organizer scan of the configured download folders. This tool is read-only: it classifies candidates and prepares a move plan, but it does not move files. After calling this tool, use the progress tool until the scan completes, then use the report tool to review planned actions before confirming.",
+            "description": "Start a new background organizer scan of the configured download folders. This tool is read-only: it classifies candidates and prepares a move plan, but it does not move files. After calling this tool, use the progress tool until the scan completes, then use the report tool to review planned actions before confirming. IMPORTANT: When polling the progress tool, wait at least 10 seconds between calls. Do not poll more than once per second or the LLM will appear stuck in a loop.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -539,7 +588,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get move new downloads scan progress",
-            "description": "Check progress for an organizer scan that is currently running or has already finished. Returns status, current file, processed and total counts, elapsed time, and ETA when available. Use this after starting a scan and before asking for the final report.",
+            "description": "Check progress for an organizer scan that is currently running or has already finished. Returns status, current file, processed and total counts, elapsed time, and ETA when available. Use this after starting a scan and before asking for the final report. IMPORTANT: Wait at least 10 seconds between calls. Polling faster just wastes turns and the LLM will appear stuck in a loop.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -552,7 +601,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get move new downloads confirm progress",
-            "description": "Check progress for a confirm operation that is currently running or has already finished. Returns confirm status, current file, processed and total counts, elapsed time, and ETA when available. Use this after starting a confirm and before asking for the final report.",
+            "description": "Check progress for a confirm operation that is currently running or has already finished. Returns confirm status, current file, processed and total counts, elapsed time, and ETA when available. Use this after starting a confirm and before asking for the final report. IMPORTANT: Wait at least 10 seconds between calls. Polling faster just wastes turns.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -916,14 +965,18 @@ async def mcp(request: dict) -> JSONResponse:
                     "current file when processing has started",
                     "elapsed time and ETA when enough progress exists",
                 ]
-                response["llm_instructions"] = [
-                    "Tell the user the scan has started.",
-                    "To check recent progress, call the 'get move new downloads scan progress' tool with this scanId.",
-                    "Keep using the progress tool until it returns status='completed' or status='failed'.",
-                    "Only after status='completed', call the 'get move new downloads scan report' tool with this scanId to review planned moves/replaces/skips.",
-                    "Do not call the confirm tool until the completed report has been reviewed and the user explicitly approves applying it.",
+                instructions = [
+                    "Tell the user the scan has started in the background.",
+                    "Ask the user if they want to check progress. Do not call any tool automatically.",
+                    "If the user says yes, call 'get move new downloads scan progress' with this scanId once.",
+                    "If still running, tell the user and ask if they want to check again later.",
+                    "Only after status='completed', call 'get move new downloads scan report' to review planned moves/replaces/skips.",
+                    "Do not call the confirm tool until the report has been reviewed and the user approves.",
                 ]
-                response["next"] = "Use 'get move new downloads scan progress' for updates. Use 'get move new downloads scan report' only after progress status is completed."
+                if _is_cross_drive_transfer():
+                    instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer. Warn the user about this.")
+                response["llm_instructions"] = instructions
+                response["next"] = "Tell the user the scan started and ask if they want progress."
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -969,13 +1022,17 @@ async def mcp(request: dict) -> JSONResponse:
                     "current_file when processing has started",
                     "elapsed time and ETA when enough progress exists",
                 ]
-                response["llm_instructions"] = [
-                    "Tell the user the confirm has started.",
-                    "To check progress, call the 'get move new downloads confirm progress' tool with this scanId.",
-                    "Keep using the confirm progress tool until it returns status='completed' or status='failed'.",
+                instructions = [
+                    "Tell the user the confirm has started in the background.",
+                    "Ask the user if they want to check progress. Do not call any tool automatically.",
+                    "If the user says yes, call 'get move new downloads confirm progress' with this scanId once.",
+                    "If still running, tell the user and ask if they want to check again later.",
                     "After confirm is done, call 'get move new downloads scan report' to see the results.",
                 ]
-                response["next"] = "Use 'get move new downloads confirm progress' for updates. Use 'get move new downloads scan report' after confirm is complete to see results."
+                if _is_cross_drive_transfer():
+                    instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer. Warn the user about this.")
+                response["llm_instructions"] = instructions
+                response["next"] = "Tell the user the confirm started and ask if they want progress."
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",

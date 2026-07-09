@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     model_request_timeout_seconds: float = Field(default=120.0, alias="MODEL_REQUEST_TIMEOUT_SECONDS")
     model_retry_attempts: int = Field(default=2, alias="MODEL_RETRY_ATTEMPTS")
 
+    # Web UI settings
+    web_ui_enabled: bool = Field(default=False, alias="WEB_UI_ENABLED")
+    web_ui_port: int = Field(default=18329, alias="WEB_UI_PORT")
+
     # Paths settings
     download_roots: str = Field(default="", alias="DOWNLOAD_ROOTS")
     movie_roots: str = Field(default="", alias="MOVIE_ROOTS")

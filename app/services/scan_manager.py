@@ -66,7 +66,12 @@ class ScanManager:
     async def create_scan(self, request: ScanRequest) -> ScanPlan:
         self._loop = get_running_loop()
         if self._current_scan and self._current_scan.status == "running":
-            raise HTTPException(status_code=409, detail="Scan already running. Check scan progress instead of starting a new scan.")
+            if request.replace_existing:
+                logger.info("Scan %s: overriding current scan", request.operation)
+                self._current_scan.status = "cancelled"
+                self._current_scan = None
+            else:
+                raise HTTPException(status_code=409, detail="Scan already running. Check scan progress instead of starting a new scan.")
 
         now = datetime.now(UTC)
         scan_id = uuid4().hex

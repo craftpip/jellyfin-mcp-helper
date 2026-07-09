@@ -160,9 +160,9 @@ def test_create_scan_rejects_second_running_scan(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(manager, "_run_scan_sync", fake_run_scan)
 
     async def run_test():
-        scan = await manager.create_scan(ScanRequest())
+        scan = await manager.create_scan(ScanRequest(replaceExisting=False))
         try:
-            await manager.create_scan(ScanRequest())
+            await manager.create_scan(ScanRequest(replaceExisting=False))
         except Exception as exc:
             assert getattr(exc, "status_code", None) == 409
         else:

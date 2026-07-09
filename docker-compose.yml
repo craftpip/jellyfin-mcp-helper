@@ -6,6 +6,7 @@ services:
     restart: unless-stopped
     ports:
       - "18328:18327"
+      - "18329:18329"
     env_file:
       - .env
     extra_hosts:

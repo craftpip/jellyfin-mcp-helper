@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jellyfin MCP Organizer</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    margin: 0; padding: 20px; background: #0d1117; color: #c9d1d9;
+  }
+  h1 { margin: 0 0 4px 0; font-size: 1.4rem; }
+  .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 16px; }
+  .top-bar {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .top-bar .status {
+    font-size: 0.8rem; padding: 2px 10px; border-radius: 10px;
+    background: #21262d; color: #8b949e;
+  }
+  .top-bar .status.connected { background: #1b3827; color: #3fb950; }
+  .top-bar .status.error { background: #3d1417; color: #f85149; }
+
+  .panel {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 16px; margin-bottom: 12px;
+  }
+  .panel h2 {
+    margin: 0 0 10px 0; font-size: 1rem; color: #e6edf3;
+  }
+
+  button {
+    background: #21262d; color: #c9d1d9; border: 1px solid #30363d;
+    border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 0.85rem;
+    transition: background .15s;
+  }
+  button:hover { background: #30363d; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary { background: #238636; border-color: #2ea043; }
+  button.primary:hover { background: #2ea043; }
+  button.danger { background: #b6232c; border-color: #da3633; }
+  button.danger:hover { background: #da3633; }
+  button.small { padding: 3px 10px; font-size: 0.78rem; }
+
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  label { font-size: 0.85rem; color: #8b949e; }
+  input, select, textarea {
+    background: #0d1117; color: #c9d1d9; border: 1px solid #30363d;
+    border-radius: 6px; padding: 6px 10px; font-size: 0.85rem; width: 100%;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #58a6ff; }
+  .field { margin-bottom: 8px; }
+  .field label { display: block; margin-bottom: 3px; }
+
+  .log {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+    padding: 10px; max-height: 300px; overflow-y: auto; font-family: monospace;
+    font-size: 0.78rem; line-height: 1.5; white-space: pre-wrap;
+  }
+  .log .info { color: #58a6ff; }
+  .log .good { color: #3fb950; }
+  .log .err { color: #f85149; }
+  .log .warn { color: #d29922; }
+
+  .progress-bar {
+    height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; margin: 6px 0;
+  }
+  .progress-bar .fill {
+    height: 100%; background: #238636; border-radius: 4px; transition: width .3s;
+  }
+  .progress-info {
+    display: flex; gap: 16px; font-size: 0.82rem; color: #8b949e; flex-wrap: wrap;
+  }
+  .progress-info span { white-space: nowrap; }
+
+  table {
+    width: 100%; border-collapse: collapse; font-size: 0.82rem;
+  }
+  th, td {
+    text-align: left; padding: 6px 8px; border-bottom: 1px solid #21262d;
+    vertical-align: middle;
+  }
+  th { color: #8b949e; font-weight: 500; }
+  td input[type="text"] { font-size: 0.78rem; padding: 3px 6px; }
+  td input[type="checkbox"] { accent-color: #238636; }
+
+  .tabs { display: flex; gap: 0; border-bottom: 1px solid #30363d; margin-bottom: 12px; }
+  .tabs button {
+    border-radius: 0; border: none; border-bottom: 2px solid transparent;
+    background: none; padding: 8px 16px; color: #8b949e;
+  }
+  .tabs button.active { color: #e6edf3; border-bottom-color: #f78166; }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  .badge {
+    display: inline-block; padding: 0 8px; border-radius: 10px;
+    font-size: 0.75rem; font-weight: 500;
+  }
+  .badge.move { background: #1b3827; color: #3fb950; }
+  .badge.replace { background: #3d2715; color: #d29922; }
+  .badge.skip { background: #21262d; color: #8b949e; }
+
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid #30363d; border-top-color: #58a6ff;
+    border-radius: 50%; animation: spin .6s linear infinite;
+    vertical-align: middle; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .toast {
+    position: fixed; top: 20px; right: 20px; z-index: 100;
+    padding: 10px 18px; border-radius: 6px; font-size: 0.85rem;
+    max-width: 400px; animation: fadein .2s;
+  }
+  .toast.info { background: #1f3a5f; border: 1px solid #58a6ff; color: #58a6ff; }
+  .toast.good { background: #1b3827; border: 1px solid #3fb950; color: #3fb950; }
+  .toast.err { background: #3d1417; border: 1px solid #f85149; color: #f85149; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: flex; align-items: center; justify-content: center; z-index: 200;
+  }
+  .modal {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 20px; max-width: 640px; width: 90%; max-height: 80vh; overflow-y: auto;
+  }
+  .modal h3 { margin: 0 0 12px 0; }
+
+  .hint {
+    color: #8b949e; font-size: 0.82rem; line-height: 1.45;
+  }
+  .flow {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 8px; margin-top: 10px;
+  }
+  .flow-step {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px 12px;
+  }
+  .flow-step strong {
+    display: block; color: #e6edf3; font-size: 0.82rem; margin-bottom: 4px;
+  }
+  .summary-strip {
+    display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 12px 0;
+  }
+  .summary-pill {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 999px;
+    padding: 6px 10px; font-size: 0.8rem; color: #c9d1d9;
+  }
+  .source-meta {
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .source-name {
+    font-family: monospace; font-size: 0.78rem; color: #c9d1d9;
+  }
+  .target-inline label {
+    display: block; margin-bottom: 3px; font-size: 0.72rem; color: #8b949e;
+  }
+  .report-toolbar {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 8px; flex-wrap: wrap; margin-bottom: 10px;
+  }
+  .report-actions {
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }
+
+  .hidden { display: none !important; }
+  .mt-8 { margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<div class="top-bar">
+  <div>
+    <h1>Jellyfin MCP Organizer</h1>
+    <div class="subtitle">Scan, review, and move download files into your media library</div>
+  </div>
+  <div class="status" id="connStatus">connecting...</div>
+</div>
+
+<div class="tabs">
+  <button class="active" data-tab="scan">Scan &amp; Move</button>
+  <button data-tab="tracker">Release Tracker</button>
+</div>
+
+<!-- ====== SCAN TAB ====== -->
+<div class="tab-content active" id="tab-scan">
+  <div class="panel">
+    <div class="hint">Main flow lives here now. Start a scan, review the planned paths, then confirm the items you actually want to move.</div>
+    <div class="flow">
+      <div class="flow-step"><strong>1. Start Scan</strong>Build the current move plan from your downloads.</div>
+      <div class="flow-step"><strong>2. Review Report</strong>Check target paths, whether the destination path already exists, and skipped items.</div>
+      <div class="flow-step"><strong>3. Confirm Selected</strong>Move only the checked items and watch progress live.</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Actions</h2>
+    <div class="btn-row">
+      <button class="primary" id="btnStartScan">Start Scan</button>
+      <button id="btnProgress">Check Progress</button>
+      <button id="btnReport">Get Report</button>
+      <button class="danger" id="btnConfirm" disabled>Confirm Selected</button>
+      <label style="display:inline-flex;align-items:center;gap:4px;margin-left:4px;font-size:0.82rem;color:#8b949e;cursor:pointer;white-space:nowrap">
+        <input type="checkbox" id="chkReplaceExisting"> Override existing scan
+      </label>
+    </div>
+  </div>
+
+  <div id="progressPanel" class="panel hidden">
+    <h2>Progress</h2>
+    <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
+    <div class="progress-info" id="progressInfo"></div>
+  </div>
+
+  <div id="reportPanel" class="panel hidden">
+    <h2>Scan Report</h2>
+    <div style="font-size:0.8rem;color:#8b949e;margin-bottom:8px" id="reportSummary"></div>
+    <div class="hint" style="margin-bottom:8px">`Path Exists` means the destination path already exists in your library. That can mean adding into an existing series/movie path or replacing an existing file.</div>
+    <div class="summary-strip" id="reportSummaryStrip"></div>
+    <div class="report-toolbar">
+      <div class="hint" id="selectionSummary">No report items loaded yet.</div>
+      <div class="report-actions">
+        <button class="small" id="btnSelectAll" disabled>Select All</button>
+        <button class="small" id="btnSelectNone" disabled>Select None</button>
+        <button class="small" id="btnSelectExisting" disabled>Select Existing Paths</button>
+      </div>
+    </div>
+    <div id="reportItems"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Log</h2>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<!-- ====== TRACKER TAB ====== -->
+<div class="tab-content" id="tab-tracker">
+  <div class="panel">
+    <div class="btn-row">
+      <button id="btnListReleases">List All Tracked Releases</button>
+      <button id="btnDueReleases">Check Due Releases</button>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Store / Update Release Marker</h2>
+    <div class="field"><label>Library</label><select id="trackerLibrary"><option value="">-- select --</option></select></div>
+    <div class="field"><label>Series Name</label><input type="text" id="trackerSeriesName" placeholder="One Piece"></div>
+    <div class="field"><label>Next Release Date</label><input type="text" id="trackerDate" placeholder="2026-07-15 or ISO datetime"></div>
+    <div class="field"><label>Season (optional)</label><input type="number" id="trackerSeason" placeholder="1"></div>
+    <div class="field"><label>Episode (optional)</label><input type="number" id="trackerEpisode" placeholder="1"></div>
+    <button class="primary" id="btnStoreRelease">Store Release Marker</button>
+  </div>
+  <div class="panel">
+    <h2>Lookup Release</h2>
+    <div class="field"><label>Library</label><select id="lookupLibrary"><option value="">-- select --</option></select></div>
+    <div class="field"><label>Series Name</label><input type="text" id="lookupSeriesName" placeholder="One Piece"></div>
+    <button id="btnLookupRelease">Lookup</button>
+    <div id="lookupResult" class="mt-8"></div>
+  </div>
+  <div id="trackerResults" class="mt-8"></div>
+</div>
+
+<script>
+// ====== CONFIG ======
+const MCP_URL = '/mcp';
+// ====== STATE ======
+let scanId = null;
+let confirmActive = false;
+let pollTimer = null;
+let currentItems = [];
+const POLL_INTERVAL_MS = 2000;
+
+// ====== HELPERS ======
+function $(id) { return document.getElementById(id); }
+
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+function log(msg, type = 'info') {
+  const el = $('log');
+  const line = document.createElement('div');
+  line.className = type;
+  line.textContent = msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+async function mcpCall(name, args = {}) {
+  const body = { jsonrpc: '2.0', method: 'tools/call', id: Date.now(), params: { name, arguments: args } };
+  const res = await fetch(MCP_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message || 'MCP error');
+  const text = json.result?.content?.[0]?.text;
+  if (text) return JSON.parse(text);
+  return json.result || {};
+}
+
+async function mcpListTools() {
+  const body = { jsonrpc: '2.0', method: 'tools/list', id: Date.now() };
+  const res = await fetch(MCP_URL, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(json.error.message || 'MCP error');
+  return json.result?.tools || [];
+}
+
+function showProgress(percent, info) {
+  const panel = $('progressPanel');
+  panel.classList.remove('hidden');
+  $('progressFill').style.width = Math.min(percent, 100) + '%';
+  $('progressInfo').innerHTML = info.map(s => `<span>${s}</span>`).join('');
+}
+
+function focusProgressPanel() {
+  const panel = $('progressPanel');
+  if (panel.classList.contains('hidden')) return;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function hideProgress() {
+  $('progressPanel').classList.add('hidden');
+}
+
+function setConfirmButtonLabel(label) {
+  $('btnConfirm').textContent = label;
+  const smallConfirm = $('btnConfirmSmall');
+  if (smallConfirm) smallConfirm.textContent = label;
+}
+
+function updateSelectionSummary() {
+  const total = currentItems.length;
+  const selected = document.querySelectorAll('.item-check:checked').length;
+  $('selectionSummary').textContent = total
+    ? selected + ' of ' + total + ' item(s) selected for confirm'
+    : 'No report items loaded yet.';
+  const hasItems = total > 0;
+  const hasSelection = selected > 0;
+  $('btnConfirm').disabled = !hasSelection || confirmActive;
+  const smallConfirm = $('btnConfirmSmall');
+  if (smallConfirm) smallConfirm.disabled = !hasSelection || confirmActive;
+  ['btnSelectAll', 'btnSelectNone', 'btnSelectExisting'].forEach(id => {
+    $(id).disabled = !hasItems;
+  });
+}
+
+function setCheckedItems(mode) {
+  const checks = document.querySelectorAll('.item-check');
+  checks.forEach(cb => {
+    if (mode === 'all') cb.checked = true;
+    if (mode === 'none') cb.checked = false;
+    if (mode === 'existing') cb.checked = cb.dataset.exists === 'yes';
+  });
+  const selectAll = $('selectAll');
+  if (selectAll) selectAll.checked = mode === 'all';
+  updateSelectionSummary();
+}
+
+// ====== TAB SWITCHING ======
+document.querySelectorAll('.tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    $('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+// ====== CONNECTION CHECK ======
+async function checkConnection() {
+  const el = $('connStatus');
+  try {
+    const tools = await mcpListTools();
+    if (tools.length) {
+      el.textContent = 'connected (' + tools.length + ' tools)';
+      el.className = 'status connected';
+      log('Connected — found ' + tools.length + ' MCP tools', 'good');
+      // populate library selects
+      try {
+        const libs = await mcpCall('get available jellyfin libraries list');
+        const names = (libs.libraries || []).map(l => l.name);
+        ['trackerLibrary', 'lookupLibrary'].forEach(id => {
+          const sel = $(id);
+          sel.innerHTML = '<option value="">-- select library --</option>';
+          names.forEach(n => {
+            const opt = document.createElement('option');
+            opt.value = n; opt.textContent = n;
+            sel.appendChild(opt);
+          });
+        });
+        log('Loaded ' + names.length + ' libraries', 'good');
+      } catch (e) {
+        log('Could not load libraries: ' + e.message, 'warn');
+      }
+    }
+  } catch (e) {
+    el.textContent = 'error: ' + e.message;
+    el.className = 'status error';
+    log('Connection failed: ' + e.message, 'err');
+  }
+}
+checkConnection();
+
+// ====== START SCAN ======
+$('btnStartScan').addEventListener('click', async () => {
+  try {
+    $('btnStartScan').disabled = true;
+    const replace = $('chkReplaceExisting').checked;
+    log('Starting scan (replaceExisting=' + replace + ')...', 'info');
+    hideProgress();
+    if (pollTimer) clearTimeout(pollTimer);
+    showProgress(0, [
+      'Starting scan...',
+      'Waiting for backend to create the scan plan',
+    ]);
+    focusProgressPanel();
+    const result = await mcpCall('move new downloads scan', { replaceExisting: replace });
+    scanId = result.scan_id || null;
+    log('Scan started! ID: ' + scanId + ' — ' + (result.message || ''), 'good');
+    toast('Scan started', 'good');
+    log('Progress: ' + result.processed + '/' + result.total + ' (' + (result.percent || 0) + '%)', 'info');
+    showProgress(result.percent || 0, [
+      'ID: ' + scanId,
+      result.status ? 'Status: ' + result.status : '',
+      result.processed !== undefined ? result.processed + '/' + result.total : '',
+      result.current_file ? result.current_file : '',
+      result.elapsed ? result.elapsed : '',
+      result.eta ? 'ETA: ' + result.eta : '',
+    ].filter(Boolean));
+  } catch (e) {
+    log('Scan error: ' + e.message, 'err');
+    toast('Scan error: ' + e.message, 'err');
+  } finally {
+    $('btnStartScan').disabled = false;
+  }
+
+  // Auto-poll progress after starting
+  await pollScanProgress();
+});
+
+// ====== SCAN POLL ======
+async function pollScanProgress() {
+  try {
+    const result = await mcpCall('get move new downloads scan progress', scanId ? { scanId } : {});
+    if (!result || result.hint) {
+      log(result?.hint || 'No active scan found', 'warn');
+      hideProgress();
+      scanId = null;
+      return;
+    }
+    scanId = result.scan_id || scanId;
+    if (result.status === 'running' || result.status === 'completed') {
+      log('Progress: ' + result.processed + '/' + result.total + ' (' + (result.percent || 0) + '%)', 'info');
+      if (result.current_file) log('  File: ' + result.current_file, 'info');
+    }
+    showProgress(result.percent || 0, [
+      'ID: ' + (result.scan_id || ''),
+      'Status: ' + (result.status || ''),
+      result.processed !== undefined ? result.processed + '/' + result.total : '',
+      result.current_file ? result.current_file : '',
+      result.elapsed ? result.elapsed : '',
+      result.eta ? 'ETA: ' + result.eta : '',
+    ].filter(Boolean));
+
+    if (result.status === 'completed') {
+      toast('Scan completed!', 'good');
+      // Auto-fetch report when done
+      setTimeout(fetchReport, 1000);
+    } else if (result.status === 'running') {
+      toast('Scan still running (' + result.percent + '%)', 'info');
+      pollTimer = setTimeout(pollScanProgress, POLL_INTERVAL_MS);
+    }
+  } catch (e) {
+    log('Progress error: ' + e.message, 'err');
+  }
+}
+
+// ====== CHECK PROGRESS (manual, smart) ======
+$('btnProgress').addEventListener('click', () => {
+  if (confirmActive) {
+    pollConfirmProgress();
+  } else {
+    pollScanProgress();
+  }
+});
+
+// ====== GET REPORT ======
+async function fetchReport() {
+  try {
+    const result = await mcpCall('get move new downloads scan report', scanId ? { scanId } : {});
+    if (!result || result.hint) {
+      log(result?.hint || 'No scan report available', 'warn');
+      toast('No scan to report — start one first!', 'info');
+      $('reportPanel').classList.add('hidden');
+      return;
+    }
+    if (result.progress) {
+      log('Scan is still running — check progress first', 'warn');
+      toast('Scan still running — check progress first', 'info');
+      return;
+    }
+    scanId = result.summary?.scan_id || scanId;
+    renderReport(result);
+    log('Report loaded — ' + (result.summary?.action_required || 0) + ' actions pending', 'good');
+    toast('Report loaded', 'good');
+  } catch (e) {
+    log('Report error: ' + e.message, 'err');
+    toast('Report error: ' + e.message, 'err');
+  }
+  $('btnReport').disabled = false;
+}
+
+$('btnReport').addEventListener('click', () => {
+  $('btnReport').disabled = true;
+  fetchReport();
+});
+
+function renderReport(report) {
+  const s = report.summary || {};
+  $('reportPanel').classList.remove('hidden');
+  $('reportSummary').textContent = [
+    (s.total ?? '?') + ' candidates',
+    (s.movies ?? '?') + ' movies',
+    (s.series ?? '?') + ' series',
+    (s.skipped ?? '?') + ' skipped',
+    (s.action_required ?? '?') + ' actions needed',
+    s.scan_id ? 'scan_id: ' + s.scan_id : '',
+  ].filter(Boolean).join(' | ');
+  $('reportSummaryStrip').innerHTML = [
+    ['Movies', s.movies ?? 0],
+    ['Series', s.series ?? 0],
+    ['Skipped', s.skipped ?? 0],
+    ['Actions Needed', s.action_required ?? 0],
+  ].map(([label, value]) => `<div class="summary-pill"><strong>${value}</strong> ${label}</div>`).join('');
+
+  renderItemsFromReport(report);
+}
+
+function renderItemsFromReport(report) {
+  const container = $('reportItems');
+  const s = report.summary || {};
+  const md = report.report_md || '';
+
+  if (md) {
+    // Parse the markdown table to reconstruct items
+    const items = parseReportMd(md, s.scan_id);
+    currentItems = items;
+    renderItemsTable(container, items);
+    updateSelectionSummary();
+  } else {
+    container.innerHTML = '<div style="color:#8b949e">No report items found. Try fetching the report again after a scan completes.</div>';
+    currentItems = [];
+    updateSelectionSummary();
+  }
+}
+
+function parseReportMd(md, scanId) {
+  const items = [];
+  const lines = md.split('\n');
+  let section = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line.startsWith('## Movies')) {
+      section = 'movie';
+      i += 2; // skip header + separator
+      continue;
+    }
+    if (line.startsWith('## Series')) {
+      section = 'series';
+      i += 2;
+      continue;
+    }
+    if (line.startsWith('## Skipped')) {
+      section = 'skip';
+      continue;
+    }
+
+    if (section === 'movie' && line.startsWith('|')) {
+      const parts = line.split('|').map(s => s.trim()).filter(Boolean);
+      if (parts.length >= 5 && parts[0] !== 'cid' && parts[0] !== '-----') {
+        items.push({
+          confirmId: parts[0],
+          title: parts[1],
+          sourceName: parts[2],
+          folderExists: parts[3],
+          targetPath: parts[4].replace(/`/g, ''),
+          itemType: 'movie',
+          originalTarget: parts[4].replace(/`/g, ''),
+        });
+      }
+    }
+
+    if (section === 'series' && line.startsWith('|')) {
+      const parts = line.split('|').map(s => s.trim()).filter(Boolean);
+      if (parts.length >= 7 && parts[0] !== 'cid' && parts[0] !== '-----') {
+        const target = parts[6].replace(/`/g, '');
+        items.push({
+          confirmId: parts[0],
+          title: parts[1],
+          season: parts[2],
+          episode: parts[3],
+          sourceName: parts[4],
+          folderExists: parts[5],
+          targetPath: target,
+          itemType: 'series',
+          originalTarget: target,
+        });
+      }
+    }
+  }
+
+  return items;
+}
+
+function renderItemsTable(container, items) {
+  if (!items.length) {
+    container.innerHTML = '<div style="color:#8b949e">No move/replace items to review.</div>';
+    updateSelectionSummary();
+    return;
+  }
+
+  let html = `<table><thead><tr>
+    <th style="width:32px"><input type="checkbox" id="selectAll" onchange="toggleAll(event)"></th>
+    <th>Type</th>
+    <th>Title</th>
+    <th>Original File / Target Path</th>
+    <th style="width:90px">Path Exists</th>
+  </tr></thead><tbody>`;
+
+  items.forEach((item, idx) => {
+    const existsLabel = item.folderExists === 'yes' ? '<span style="color:#3fb950">yes</span>' : '<span style="color:#8b949e">no</span>';
+    html += `<tr>
+      <td><input type="checkbox" class="item-check" data-index="${idx}" data-exists="${item.folderExists}" checked></td>
+      <td><span class="badge ${item.itemType === 'movie' ? 'move' : 'replace'}">${item.itemType === 'movie' ? 'movie' : item.season || 'series'}</span></td>
+      <td>${escHtml(item.title)}${item.episode ? ' <span style="color:#8b949e">' + escHtml(item.episode) + '</span>' : ''}</td>
+      <td>
+        <div class="source-meta">
+          <div class="source-name">${escHtml(item.sourceName || '')}</div>
+          <div class="target-inline">
+            <label>Target Path</label>
+            <input type="text" class="target-input" data-index="${idx}" value="${escHtml(item.targetPath)}" style="font-family:monospace;font-size:0.78rem">
+          </div>
+        </div>
+      </td>
+      <td>${existsLabel}</td>
+    </tr>`;
+  });
+
+  html += '</tbody></table>';
+  html += `<div style="margin-top:8px">
+    <button class="primary small" onclick="applyTargetEdits()">Update Selected Paths</button>
+    <button class="danger small" onclick="confirmSelected()" id="btnConfirmSmall">Confirm Selected</button>
+  </div>`;
+
+  container.innerHTML = html;
+}
+
+function toggleAll(e) {
+  document.querySelectorAll('.item-check').forEach(cb => cb.checked = e.target.checked);
+  updateSelectionSummary();
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ====== UPDATE PATHS ======
+async function applyTargetEdits() {
+  const inputs = document.querySelectorAll('.target-input');
+  const updates = [];
+  inputs.forEach(inp => {
+    const idx = parseInt(inp.dataset.index);
+    const item = currentItems[idx];
+    const newPath = inp.value.trim();
+    if (item && newPath !== item.originalTarget) {
+      updates.push({ confirmId: item.confirmId, targetPath: newPath });
+    }
+  });
+
+  if (!updates.length) {
+    toast('No paths changed', 'info');
+    return;
+  }
+
+  try {
+    await mcpCall('update move new downloads scan', { scanId, items: updates });
+    log('Updated ' + updates.length + ' target paths', 'good');
+    toast('Paths updated! Fetch report again to verify.', 'good');
+    // Update original targets
+    updates.forEach(u => {
+      const item = currentItems.find(i => i.confirmId === u.confirmId);
+      if (item) item.originalTarget = u.targetPath;
+    });
+  } catch (e) {
+    log('Update error: ' + e.message, 'err');
+    toast('Update error: ' + e.message, 'err');
+  }
+}
+
+// ====== CONFIRM ======
+async function confirmSelected() {
+  const checked = document.querySelectorAll('.item-check:checked');
+  if (!checked.length) {
+    toast('Select at least one item to confirm', 'info');
+    return;
+  }
+
+  if (!confirm('Move ' + checked.length + ' item(s)? This cannot be undone easily.')) return;
+
+  try {
+    $('btnConfirm').disabled = true;
+    const smallConfirm = $('btnConfirmSmall');
+    if (smallConfirm) smallConfirm.disabled = true;
+    if (pollTimer) clearTimeout(pollTimer);
+    setConfirmButtonLabel('Confirming...');
+    showProgress(0, [
+      'Preparing confirm...',
+      'Waiting for backend to start moving files',
+    ]);
+    $('progressFill').style.background = '#d29922';
+    focusProgressPanel();
+    // Support both itemIds and sourcePaths mechanisms
+    const itemIds = [];
+    checked.forEach(cb => {
+      const idx = parseInt(cb.dataset.index);
+      if (currentItems[idx]) itemIds.push(currentItems[idx].confirmId);
+    });
+
+    log('Confirming ' + itemIds.length + ' items...', 'info');
+    const result = await mcpCall('confirm move new downloads scan', { scanId, itemIds });
+    confirmActive = true;
+    log('Confirm started! ID: ' + scanId, 'good');
+    toast('Confirm started in background', 'good');
+
+    // Show confirm progress
+    const p0 = result.processed ?? 0;
+    const t0 = result.total ?? 0;
+    showProgress(result.percent || 0, [
+      '🔄 Confirm: ' + p0 + '/' + t0,
+      result.current_file ? result.current_file : '',
+    ].filter(Boolean));
+    $('progressFill').style.background = '#d29922';
+    log('Confirm progress: ' + p0 + '/' + t0 + ' (' + (result.status || 'running') + ')', 'info');
+    toast('Confirm running: ' + p0 + '/' + t0, 'info');
+    focusProgressPanel();
+    setConfirmButtonLabel('Confirm Running...');
+
+    // Poll confirm progress
+    pollConfirmProgress();
+  } catch (e) {
+    log('Confirm error: ' + e.message, 'err');
+    toast('Confirm error: ' + e.message, 'err');
+    setConfirmButtonLabel('Confirm Selected');
+    updateSelectionSummary();
+  }
+}
+
+async function pollConfirmProgress() {
+  if (!confirmActive) return;
+  try {
+    const result = await mcpCall('get move new downloads confirm progress', scanId ? { scanId } : {});
+    const p = result.processed ?? 0;
+    const t = result.total ?? 0;
+    log('Confirm progress: ' + p + '/' + t + ' (' + (result.status || 'unknown') + ')' + (result.current_file ? ' — ' + result.current_file : ''), 'info');
+    showProgress(result.percent || 0, [
+      '🔄 Confirm: ' + p + '/' + t,
+      'Moved: ' + (result.counts?.moved || 0) + '  Replaced: ' + (result.counts?.replaced || 0) + '  Failed: ' + (result.counts?.failed || 0),
+      result.current_file ? result.current_file : '',
+      result.elapsed ? result.elapsed : '',
+      result.eta ? 'ETA: ' + result.eta : '',
+    ].filter(Boolean));
+    $('progressFill').style.background = '#d29922';
+
+    if (result.status === 'completed' || result.status === 'idle') {
+      confirmActive = false;
+      setConfirmButtonLabel('Confirm Selected');
+      updateSelectionSummary();
+      toast('Confirm completed! Moved: ' + (result.counts?.moved || 0) + ', Replaced: ' + (result.counts?.replaced || 0) + ', Failed: ' + (result.counts?.failed || 0), 'good');
+      log('Confirm completed. Moved: ' + (result.counts?.moved || 0) + ', Replaced: ' + (result.counts?.replaced || 0) + ', Failed: ' + (result.counts?.failed || 0), 'good');
+      $('progressFill').style.background = '';
+      setTimeout(fetchReport, 1000);
+      return;
+    }
+    if (result.status === 'running') {
+      toast('Confirm progress: ' + p + '/' + t + (result.current_file ? ' — ' + result.current_file.split('/').pop() : ''), 'info');
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = setTimeout(pollConfirmProgress, POLL_INTERVAL_MS);
+    } else {
+      confirmActive = false;
+      setConfirmButtonLabel('Confirm Selected');
+      updateSelectionSummary();
+    }
+  } catch (e) {
+    log('Confirm progress error: ' + e.message, 'err');
+    toast('Confirm progress error: ' + e.message, 'err');
+    confirmActive = false;
+    setConfirmButtonLabel('Confirm Selected');
+    updateSelectionSummary();
+  }
+}
+
+$('btnSelectAll').addEventListener('click', () => setCheckedItems('all'));
+$('btnSelectNone').addEventListener('click', () => setCheckedItems('none'));
+$('btnSelectExisting').addEventListener('click', () => setCheckedItems('existing'));
+document.addEventListener('change', e => {
+  if (e.target.classList && e.target.classList.contains('item-check')) {
+    updateSelectionSummary();
+  }
+});
+updateSelectionSummary();
+
+// ====== RELEASE TRACKER ======
+$('btnListReleases').addEventListener('click', async () => {
+  try {
+    const result = await mcpCall('get ongoing series next releases', { limit: 50 });
+    const markers = result.markers || [];
+    const el = $('trackerResults');
+    if (markers.length) {
+      let html = '<table><thead><tr><th>Series</th><th>Next Release</th><th>S/E</th><th>Source</th></tr></thead><tbody>';
+      markers.forEach(m => {
+        html += `<tr>
+          <td>${escHtml(m.seriesName || '')}</td>
+          <td>${m.nextReleaseDate || ''}</td>
+          <td>${m.nextSeason != null ? 'S' + m.nextSeason : ''}${m.nextEpisode != null ? 'E' + m.nextEpisode : ''}</td>
+          <td style="color:#8b949e">${m.source || ''}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      el.innerHTML = html;
+    } else {
+      el.innerHTML = '<div style="color:#8b949e">No tracked releases</div>';
+    }
+    log('Listed ' + markers.length + ' tracked releases', 'good');
+  } catch (e) {
+    log('List releases error: ' + e.message, 'err');
+  }
+});
+
+$('btnDueReleases').addEventListener('click', async () => {
+  try {
+    const result = await mcpCall('get due ongoing series releases', { before: 'now', limit: 50 });
+    const markers = result.markers || [];
+    const el = $('trackerResults');
+    if (markers.length) {
+      let html = '<table><thead><tr><th>Series</th><th>Due</th><th>S/E</th></tr></thead><tbody>';
+      markers.forEach(m => {
+        html += `<tr>
+          <td>${escHtml(m.seriesName || '')}</td>
+          <td style="color:#d29922">${m.nextReleaseDate || ''}</td>
+          <td>${m.nextSeason != null ? 'S' + m.nextSeason : ''}${m.nextEpisode != null ? 'E' + m.nextEpisode : ''}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      el.innerHTML = html;
+    } else {
+      el.innerHTML = '<div style="color:#8b949e">No due releases</div>';
+    }
+    log('Checked due releases: ' + markers.length + ' due', markers.length ? 'warn' : 'good');
+  } catch (e) {
+    log('Due releases error: ' + e.message, 'err');
+  }
+});
+
+$('btnStoreRelease').addEventListener('click', async () => {
+  const libraryName = $('trackerLibrary').value;
+  const seriesName = $('trackerSeriesName').value.trim();
+  const nextReleaseDate = $('trackerDate').value.trim();
+  if (!libraryName || !seriesName || !nextReleaseDate) {
+    toast('Library, Series Name, and Date are required', 'info');
+    return;
+  }
+  const args = {
+    libraryName,
+    seriesName,
+    nextReleaseDate,
+    ...($('trackerSeason').value ? { nextSeason: parseInt($('trackerSeason').value) } : {}),
+    ...($('trackerEpisode').value ? { nextEpisode: parseInt($('trackerEpisode').value) } : {}),
+  };
+  try {
+    await mcpCall('store ongoing series next release', args);
+    log('Stored release marker for ' + seriesName, 'good');
+    toast('Release stored!', 'good');
+  } catch (e) {
+    log('Store release error: ' + e.message, 'err');
+  }
+});
+
+$('btnLookupRelease').addEventListener('click', async () => {
+  const libraryName = $('lookupLibrary').value;
+  const seriesName = $('lookupSeriesName').value.trim();
+  if (!libraryName || !seriesName) { toast('Library and Series Name required', 'info'); return; }
+  try {
+    const result = await mcpCall('get ongoing series next release', { libraryName, seriesName });
+    const el = $('lookupResult');
+    if (result && result.seriesName) {
+      el.innerHTML = `<div style="background:#1b3827;padding:10px;border-radius:6px;font-size:0.85rem">
+        <strong>${escHtml(result.seriesName)}</strong><br>
+        Next: <strong>${result.nextReleaseDate || '?'}</strong>
+        ${result.nextSeason != null ? ' Season ' + result.nextSeason : ''}
+        ${result.nextEpisode != null ? ' Episode ' + result.nextEpisode : ''}
+        ${result.source ? '<br>Source: ' + result.source : ''}
+        ${result.notes ? '<br>Notes: ' + result.notes : ''}
+      </div>`;
+    } else {
+      el.innerHTML = '<div style="color:#8b949e">No marker found for this series</div>';
+    }
+    log('Looked up release for ' + seriesName, 'good');
+  } catch (e) {
+    log('Lookup error: ' + e.message, 'err');
+  }
+});
+</script>
+</body>
+</html>
