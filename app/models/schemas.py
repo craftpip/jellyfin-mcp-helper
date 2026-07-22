@@ -33,7 +33,10 @@ class ScannedItem(BaseModel):
     action: Literal["move", "replace", "skip"]
     error: str | None = None
     confirmed: bool = False
-    folder_exists: bool = Field(default=False, alias="folderExists")
+    show_folder_exists: bool = Field(default=False, alias="showFolderExists")
+    season_folder_exists: bool = Field(default=False, alias="seasonFolderExists")
+    file_exists: bool = Field(default=False, alias="fileExists")
+    file_size: int | None = Field(default=None, alias="fileSize")
 
     model_config = {"populate_by_name": True}
 
@@ -66,9 +69,27 @@ class ScanPlan(BaseModel):
     error: str | None = None
     service_errors: dict[str, str] = Field(default_factory=dict)
     confirm_status: Literal["idle", "running", "completed", "failed"] = "idle"
+    confirm_phase: Literal[
+        "idle",
+        "preparing",
+        "stopping_seeding",
+        "moving",
+        "deleting_source",
+        "triggering_jellyfin",
+        "completed",
+        "failed",
+    ] = "idle"
     confirm_current_item: str | None = None
+    confirm_current_target: str | None = None
     confirm_started_at: datetime | None = None
     confirm_total: int = 0
+    confirm_current_size_bytes: int | None = None
+    confirm_current_copied_bytes: int | None = None
+    confirm_current_speed_bytes: float | None = None
+    confirm_current_percent: float | None = None
+    confirm_cross_drive: bool | None = None
+    confirm_note: str | None = None
+    confirm_last_update_at: datetime | None = None
 
 
 class ScanLogEntry(BaseModel):
@@ -131,7 +152,8 @@ class ResolvedTarget(BaseModel):
     created_show_folder: bool = False
     created_movie_folder: bool = False
     existing_match: str | None = None
-    folder_exists: bool = False
+    show_folder_exists: bool = False
+    season_folder_exists: bool = False
 
 
 class CandidateItem(BaseModel):

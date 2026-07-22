@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.core.config import AppConfig, ModelConfig, PathsConfig
-from app.main import _format_scan_progress, _format_scan_report
-from app.models.schemas import ScanRequest
+from app.main import _format_confirm_progress, _format_scan_progress, _format_scan_report
+from app.models.schemas import ScanPlan, ScanRequest, ScannedItem
+from app.services.download_client import _extract_paths
 from app.services.scan_manager import ScanManager
 from app.services.scanner import ScanCandidatesResult, ScanPathError, scan_candidates
 
@@ -224,3 +226,421 @@ def test_confirm_rejects_running_scan(tmp_path) -> None:
             await asyncio.sleep(0)
 
     asyncio.run(run_test())
+
+
+def test_format_confirm_progress_includes_phase_and_transfer_metrics(tmp_path) -> None:
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(downloadRoots=[]),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+    scan = asyncio.run(manager.create_scan(ScanRequest()))
+    scan.status = "completed"
+    scan.confirm_status = "running"
+    scan.confirm_phase = "moving"
+    scan.confirm_started_at = datetime.now(UTC) - timedelta(seconds=10)
+    scan.confirm_total = 4
+    scan.counts.moved = 1
+    scan.confirm_current_item = "/downloads/show.mkv"
+    scan.confirm_current_target = "/media/show.mkv"
+    scan.confirm_current_size_bytes = 1000
+    scan.confirm_current_copied_bytes = 250
+    scan.confirm_current_speed_bytes = 50.0
+    scan.confirm_current_percent = 25.0
+    scan.confirm_cross_drive = True
+    scan.confirm_note = "Copying file to target drive."
+    scan.confirm_last_update_at = datetime.now(UTC)
+
+    progress = _format_confirm_progress(scan)
+
+    assert progress["status"] == "running"
+    assert progress["phase"] == "moving"
+    assert progress["processed"] == 1
+    assert progress["total"] == 4
+    assert progress["current_file"] == "/downloads/show.mkv"
+    assert progress["current_target"] == "/media/show.mkv"
+    assert progress["current_size_bytes"] == 1000
+    assert progress["current_copied_bytes"] == 250
+    assert progress["current_percent"] == 25.0
+    assert progress["current_speed"] == "50 B/s"
+    assert progress["current_eta"] == "15s"
+    assert progress["cross_drive"] is True
+    assert progress["note"] == "Copying file to target drive."
+
+
+def test_copy_file_with_progress_updates_scan_metrics(tmp_path) -> None:
+    source = tmp_path / "source.mkv"
+    source.write_bytes(b"x" * 1024)
+    target = tmp_path / "target.mkv"
+
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(downloadRoots=[]),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+    scan = ScanPlan(
+        scan_id="scan-1",
+        status="completed",
+        operation="organize",
+        items=[],
+        created_at=datetime.now(UTC),
+    )
+
+    manager._copy_file_with_progress(scan, source, target, source.stat().st_size)
+
+    assert target.read_bytes() == b"x" * 1024
+    assert scan.confirm_phase == "moving"
+    assert scan.confirm_current_copied_bytes == 1024
+    assert scan.confirm_current_percent == 100.0
+    assert scan.confirm_current_speed_bytes is not None
+    assert scan.confirm_note == "Copying file to target drive."
+
+
+def test_confirm_uses_tracked_copy_for_cross_drive_file(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "download.mkv"
+    source.write_bytes(b"video-bytes")
+    target_dir = tmp_path / "library"
+    target = target_dir / "download.mkv"
+
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(downloadRoots=[]),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+
+    async def run_test() -> None:
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        scan.items = [
+            ScannedItem(
+                confirmId="c1",
+                sourcePath=str(source),
+                name=source.name,
+                item_type="movie",
+                confidence=1.0,
+                reason="test",
+                target_path=str(target),
+                action="move",
+            )
+        ]
+        scan.counts.movies = 1
+
+        async def fake_stop_seeding(items) -> None:
+            return None
+
+        async def fake_trigger_jellyfin(updated_paths) -> None:
+            return None
+
+        real_path_stat = Path.stat
+        copied = {"called": False}
+
+        class FakeStat:
+            def __init__(self, real_stat, st_dev=None):
+                self._real_stat = real_stat
+                self.st_dev = real_stat.st_dev if st_dev is None else st_dev
+
+            def __getattr__(self, name):
+                return getattr(self._real_stat, name)
+
+        def fake_path_stat(path_obj, *args, **kwargs):
+            stat_result = real_path_stat(path_obj, *args, **kwargs)
+            if path_obj == target_dir:
+                return FakeStat(stat_result, st_dev=stat_result.st_dev + 1)
+            return stat_result
+
+        def fake_copy(scan_obj, source_path, target_path, source_size):
+            copied["called"] = True
+            target_path.write_bytes(source_path.read_bytes())
+            manager._update_confirm_state(
+                scan_obj,
+                confirm_phase="moving",
+                confirm_current_copied_bytes=source_size,
+                confirm_current_speed_bytes=1024.0,
+                confirm_current_percent=100.0,
+                confirm_note="Copying file to target drive.",
+            )
+
+        monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
+        monkeypatch.setattr(manager, "_trigger_jellyfin_scans", fake_trigger_jellyfin)
+        monkeypatch.setattr(manager, "_copy_file_with_progress", fake_copy)
+        monkeypatch.setattr("pathlib.Path.stat", fake_path_stat)
+
+        await manager.confirm_scan(scan.scan_id)
+        while scan.confirm_status == "running":
+            await asyncio.sleep(0)
+
+        assert copied["called"] is True
+        assert source.exists() is False
+        assert target.read_bytes() == b"video-bytes"
+        assert scan.confirm_status == "completed"
+        assert scan.confirm_phase == "completed"
+        assert scan.confirm_cross_drive is True
+        assert scan.counts.moved == 1
+
+    asyncio.run(run_test())
+
+
+def test_confirm_stops_seeding_once_for_selected_items(tmp_path, monkeypatch) -> None:
+    source1 = tmp_path / "one.mkv"
+    source2 = tmp_path / "two.mkv"
+    source1.write_bytes(b"one")
+    source2.write_bytes(b"two")
+    target_dir = tmp_path / "library"
+    target1 = target_dir / "one.mkv"
+    target2 = target_dir / "two.mkv"
+
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(downloadRoots=[]),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+
+    async def run_test() -> None:
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        scan.items = [
+            ScannedItem(
+                confirmId="c1",
+                sourcePath=str(source1),
+                name=source1.name,
+                item_type="movie",
+                confidence=1.0,
+                reason="test",
+                target_path=str(target1),
+                action="move",
+            ),
+            ScannedItem(
+                confirmId="c2",
+                sourcePath=str(source2),
+                name=source2.name,
+                item_type="movie",
+                confidence=1.0,
+                reason="test",
+                target_path=str(target2),
+                action="move",
+            ),
+        ]
+        scan.counts.movies = 2
+
+        stop_calls: list[list[str]] = []
+
+        async def fake_stop_seeding(items) -> None:
+            stop_calls.append([item.source_path for item in items])
+
+        async def fake_trigger_jellyfin(updated_paths) -> None:
+            return None
+
+        monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
+        monkeypatch.setattr(manager, "_trigger_jellyfin_scans", fake_trigger_jellyfin)
+
+        await manager.confirm_scan(scan.scan_id)
+        while scan.confirm_status == "running":
+            await asyncio.sleep(0)
+
+        assert stop_calls == [[str(source1), str(source2)]]
+        assert scan.counts.moved == 2
+
+    asyncio.run(run_test())
+
+
+def test_extract_paths_adds_download_root_torrent_name_fallback(tmp_path) -> None:
+    paths_config = PathsConfig(downloadRoots=[str(tmp_path / "torrents1"), str(tmp_path / "torrents2")])
+
+    paths = _extract_paths(
+        [
+            {
+                "name": "My Active Torrent",
+                "save_path": "/remote/downloads",
+            }
+        ],
+        paths_config,
+    )
+
+    assert str(tmp_path / "torrents1" / "My Active Torrent") in paths
+    assert str(tmp_path / "torrents2" / "My Active Torrent") in paths
+
+
+def test_scan_marks_candidate_in_progress_when_folder_matches_torrent_name(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "torrents"
+    release_dir = root / "My Active Torrent"
+    release_dir.mkdir(parents=True)
+    video = release_dir / "episode01.mkv"
+    video.write_bytes(b"video")
+
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)]),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+
+    monkeypatch.setattr(
+        manager,
+        "_load_in_progress_paths_sync",
+        lambda: [str(root / "My Active Torrent")],
+    )
+
+    async def run_scan():
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        return scan
+
+    scan = asyncio.run(run_scan())
+
+    assert scan.counts.skipped == 1
+    assert scan.items[0].source_path == str(video)
+    assert scan.items[0].reason == "In-progress download"
+
+
+def test_scan_marks_single_file_in_progress_when_torrent_name_matches_filename(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "torrents"
+    root.mkdir(parents=True)
+    video = root / "Toy.Story.5.2026.1080p.DCPRIP.x264.Dual YG.mkv"
+    video.write_bytes(b"video")
+
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)]),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+
+    monkeypatch.setattr(
+        manager,
+        "_load_in_progress_paths_sync",
+        lambda: [str(root / "Toy.Story.5.2026.1080p.DCPRIP.x264.Dual.YG⭐")],
+    )
+
+    async def run_scan():
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        return scan
+
+    scan = asyncio.run(run_scan())
+
+    assert scan.counts.skipped == 1
+    assert scan.items[0].source_path == str(video)
+    assert scan.items[0].reason == "In-progress download"
+
+
+def test_scan_does_not_match_unrelated_single_file_just_because_it_shares_download_root(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "torrents"
+    root.mkdir(parents=True)
+    video = root / "Completely.Different.Movie.2024.mkv"
+    video.write_bytes(b"video")
+
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)]),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+
+    monkeypatch.setattr(
+        manager,
+        "_load_in_progress_paths_sync",
+        lambda: [str(root / "Toy.Story.5.2026.1080p.DCPRIP.x264.Dual.YG⭐")],
+    )
+    monkeypatch.setattr(
+        "app.services.scan_manager.classify_candidate",
+        lambda candidate: type("Classification", (), {
+            "kind": "movie",
+            "confidence": 1.0,
+            "reason": "test",
+        })(),
+    )
+    monkeypatch.setattr(
+        manager,
+        "_resolve_sync",
+        lambda candidate, classification: type("Resolved", (), {
+            "target_path": str(tmp_path / "movies" / video.name),
+            "folder_exists": False,
+        })(),
+    )
+
+    async def run_scan():
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        return scan
+
+    scan = asyncio.run(run_scan())
+
+    assert scan.items[0].reason != "In-progress download"
+
+
+def test_scan_report_includes_structured_items_with_skipped(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "torrents"
+    root.mkdir(parents=True)
+    good = root / "Active S01E01.mkv"
+    good.write_bytes(b"video")
+    skipped_file = root / "Skipped Thing S01E02.mkv"
+    skipped_file.write_bytes(b"video")
+
+    config = AppConfig(
+        paths=PathsConfig(
+            downloadRoots=[str(root)],
+            movieRoots={"default": str(tmp_path / "movies")},
+            seriesRoots={"default": str(tmp_path / "series")},
+        ),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+
+    monkeypatch.setattr(
+        manager,
+        "_load_in_progress_paths_sync",
+        lambda: [str(root / "Skipped Thing S01E02.mkv")],
+    )
+
+    async def run_scan():
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        return scan
+
+    scan = asyncio.run(run_scan())
+    report = _format_scan_report(scan)
+
+    assert "items" in report
+    assert isinstance(report["items"], list)
+
+    actionable = [i for i in report["items"] if i["action"] in ("move", "replace")]
+    skipped = [i for i in report["items"] if i["action"] == "skip"]
+
+    assert len(actionable) >= 1
+    assert len(skipped) >= 1
+
+    skipped_item = skipped[0]
+    assert skipped_item["sourcePath"] == str(skipped_file)
+    assert skipped_item["reason"] == "In-progress download"
+    assert skipped_item["action"] == "skip"
+
+    actionable_item = actionable[0]
+    assert actionable_item["sourcePath"] == str(good)
+    assert actionable_item["action"] in ("move", "replace")
+    assert "targetPath" in actionable_item
+    assert "folderExists" in actionable_item
+
+    assert report["report_md"]

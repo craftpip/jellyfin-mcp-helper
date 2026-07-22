@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from datetime import datetime, UTC
 from pathlib import Path
@@ -12,6 +13,23 @@ from app.services.jellyfin import JellyfinClient
 from app.services.download_client import QbittorrentClient
 from app.services.resolver import PathResolver, clear_resolver_cache
 from app.services.scanner import scan_candidates
+
+
+IN_PROGRESS_LABEL_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _normalize_in_progress_label(value: str) -> str:
+    lowered = value.casefold()
+    return IN_PROGRESS_LABEL_RE.sub(" ", lowered).strip()
+
+
+def _path_name_labels(path_value: str) -> set[str]:
+    path = Path(path_value)
+    labels = {
+        _normalize_in_progress_label(path.name),
+        _normalize_in_progress_label(path.stem),
+    }
+    return {label for label in labels if label}
 
 
 class OrganizerService:
@@ -124,7 +142,7 @@ class OrganizerService:
         return run_state
 
     async def _load_in_progress_paths(self, run_state: RunState) -> list[str]:
-        client = QbittorrentClient.from_env()
+        client = QbittorrentClient.from_env(self._config.paths)
         if not client:
             self._log(
                 run_state,
@@ -153,14 +171,38 @@ class OrganizerService:
             )
             return []
 
-    @staticmethod
-    def _is_in_progress(candidate_path: str, in_progress_paths: list[str]) -> bool:
+    def _candidate_release_labels(self, candidate_path: str) -> set[str]:
+        candidate = Path(candidate_path)
+        for root in self._config.paths.download_roots:
+            root_path = Path(root)
+            try:
+                relative = candidate.relative_to(root_path)
+            except ValueError:
+                continue
+
+            if not relative.parts:
+                break
+
+            first_part = relative.parts[0]
+            return {
+                label for label in {
+                    _normalize_in_progress_label(first_part),
+                    _normalize_in_progress_label(Path(first_part).stem),
+                } if label
+            }
+
+        return _path_name_labels(str(candidate))
+
+    def _is_in_progress(self, candidate_path: str, in_progress_paths: list[str]) -> bool:
         candidate_norm = str(Path(candidate_path)).rstrip("/")
+        candidate_labels = self._candidate_release_labels(candidate_norm)
         for path in in_progress_paths:
             active_norm = str(Path(path)).rstrip("/")
             if candidate_norm == active_norm:
                 return True
             if candidate_norm.startswith(active_norm + "/"):
+                return True
+            if candidate_labels and candidate_labels & _path_name_labels(active_norm):
                 return True
         return False
 
@@ -275,7 +317,7 @@ class OrganizerService:
             )
 
     async def _stop_seeding_if_needed(self, run_state: RunState, candidate: CandidateItem) -> None:
-        client = QbittorrentClient.from_env()
+        client = QbittorrentClient.from_env(self._config.paths)
         if not client:
             return
 

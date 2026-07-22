@@ -209,7 +209,7 @@ def test_jellyfin_list_library_items_fuzzy_search(monkeypatch) -> None:
     assert len(api_calls) == 1
     params = api_calls[0]["params"]
     assert "SearchTerm" not in params, "should not pass SearchTerm to Jellyfin API"
-    assert int(params.get("Limit", "0")) == 200
+    assert int(params.get("Limit", "0")) == 5000
 
 
 def test_jellyfin_series_status_continuing_is_treated_as_ongoing() -> None:

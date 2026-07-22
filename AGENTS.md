@@ -42,6 +42,7 @@ The skill contains:
 - app/main.py: FastAPI entry point and MCP handlers
 - app/ui/server.py: Web UI FastAPI server with MCP proxy
 - app/ui/index.html: Web UI single-page HTML+JS frontend
+- plan/: project plans and roadmap documents (markdown)
 - tests/: pytest test suite
 - config/: config files
 - logs/: runtime logs
@@ -170,6 +171,18 @@ if not new_target.endswith((".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".fl
 
 **Verification:** `python3 -m pytest tests/` and call update with at least one item.
 
+### Replace existing checkbox default
+
+**Problem:** Good candidates like Mortal Kombat (1995) were skipped with reason "Matched movie pattern" despite being correctly classified as a movie.
+
+**Cause:** `app/ui/index.html` had the "Replace existing files" checkbox unchecked by default, sending `replaceExisting: false` to the backend. When the target path already exists AND `replaceExisting` is false, the scan manager (line 281 in `scan_manager.py`) sets the action to `"skip"`.
+
+**Fix:** Set `checked` on the checkbox input so it defaults to ON, matching the backend default of `replace_existing=True` in `ScanRequest`.
+
+**The checkbox label matters:** Use clear labels like "Replace existing files" not "Override existing scan".
+
+**Verification:** After rebuild, a file whose target already exists should show as "replace" not "skip" when the checkbox is left at its default state.
+
 ### Jellyfin library scan trigger endpoint
 
 **Problem:** `trigger jellyfin library scan` can return success while Jellyfin does not show a real library scan if the handler calls the wrong update path or only trusts a fast HTTP response.
@@ -245,6 +258,22 @@ alias_values = series_aliases(path)
 - `[resolver] exact match via file alias in FOLDER: PATH` — match found by file alias fallback
 
 **Verification:** Scan 226 candidates with 132 existing series folders completes in ~3 seconds (previously stuck for 5+ minutes). Run `python3 -m pytest tests/` to confirm no regressions.
+
+### Docker bind mount I/O error (Errno 5) on scan
+
+**Problem:** Scan fails with `OSError: [Errno 5] Input/output error` on a `/media*/` path. Host can access the path fine.
+
+**Cause:** Docker bind mount can enter a stale I/O state when the underlying filesystem has a transient error. The container's view of the mount becomes broken even though the host can still access files.
+
+**Fix:** Restart the container with `docker compose down && docker compose up -d` (or `docker compose restart`). This re-establishes the bind mount and resolves the I/O error without rebuilding the image.
+
+**Verification:** `docker exec jellyfin-mcp-helper ls /media3/series/` should list directories. Then run the scan again.
+
+**Note:** If a full restart doesn't help, check the host mount (`mount | grep media3`), disk health (`smartctl -H /dev/sdX`), and kernel messages (`sudo dmesg | grep -iE "sdX|EXT4-fs error"`) for hardware or filesystem issues.
+
+## Plans
+
+The `plan/` directory is the central location for all project plans and roadmap documents. Each plan is a markdown file. When working on a plan, reference the plan file path in conversations and use it as a checklist. Plans can be created, implemented incrementally, and marked complete within the same file.
 
 ## Project Learnings
 

@@ -74,6 +74,24 @@
     display: flex; gap: 16px; font-size: 0.82rem; color: #8b949e; flex-wrap: wrap;
   }
   .progress-info span { white-space: nowrap; }
+  .progress-stack {
+    display: grid; gap: 10px;
+  }
+  .progress-section {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 10px 12px;
+  }
+  .progress-section h3 {
+    margin: 0 0 8px 0; font-size: 0.86rem; color: #e6edf3;
+  }
+  .progress-kv {
+    display: grid; gap: 6px; font-size: 0.8rem; color: #8b949e;
+  }
+  .progress-kv strong {
+    color: #c9d1d9;
+  }
+  .progress-note {
+    font-size: 0.8rem; color: #d29922;
+  }
 
   table {
     width: 100%; border-collapse: collapse; font-size: 0.82rem;
@@ -151,14 +169,16 @@
     background: #0d1117; border: 1px solid #30363d; border-radius: 999px;
     padding: 6px 10px; font-size: 0.8rem; color: #c9d1d9;
   }
-  .source-meta {
-    display: flex; flex-direction: column; gap: 6px;
+  .path-cell {
+    display: flex; flex-direction: column; gap: 4px;
   }
-  .source-name {
-    font-family: monospace; font-size: 0.78rem; color: #c9d1d9;
+  .path-cell .source-name {
+    font-family: monospace; font-size: 0.72rem; color: #6e7681;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .target-inline label {
-    display: block; margin-bottom: 3px; font-size: 0.72rem; color: #8b949e;
+  .path-cell .target-input {
+    font-family: monospace; font-size: 0.92rem; width: 100%;
+    padding: 5px 8px;
   }
   .report-toolbar {
     display: flex; justify-content: space-between; align-items: center;
@@ -167,6 +187,57 @@
   .report-actions {
     display: flex; gap: 8px; flex-wrap: wrap;
   }
+
+  .group-header {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+    padding: 8px 10px; margin: 6px 0 0 0; cursor: pointer;
+    display: flex; align-items: center; gap: 10px;
+    user-select: none;
+  }
+  .group-header:hover { background: #161b22; }
+  .group-header .arrow { color: #8b949e; font-size: 0.7rem; transition: transform .15s; }
+  .group-header .arrow.collapsed { transform: rotate(-90deg); }
+  .group-header .g-title { color: #e6edf3; font-weight: 500; font-size: 0.85rem; }
+  .group-header .g-count { color: #8b949e; font-size: 0.78rem; }
+  .group-header .g-size { color: #8b949e; font-size: 0.78rem; margin-left: auto; }
+  .group-body { border: 1px solid #21262d; border-top: none; border-radius: 0 0 6px 6px; margin-bottom: 4px; }
+  .group-body table { border: none; }
+  .group-body table td:first-child { padding-left: 12px; }
+  .group-body.collapsed { display: none; }
+  .group-toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 7px 8px 7px 12px; border-bottom: 1px solid #30363d; background: #161b22;
+  }
+  .chk-label {
+    font-size: 0.82rem; color: #c9d1d9; cursor: pointer;
+    display: flex; align-items: center; gap: 10px;
+    min-width: 0; flex: 1;
+  }
+  .chk-label input[type=checkbox] { width: 20px; height: 20px; flex: none; }
+  .chk-label .chk-text {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chk-label input { margin: 0; }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 0.72rem; white-space: nowrap;
+  }
+  .status-pill .dot {
+    width: 7px; height: 7px; border-radius: 50%; display: inline-block;
+  }
+  .status-pill .dot.exists { background: #3fb950; }
+  .status-pill .dot.missing { background: #f85149; }
+  .status-pill .dot.partial { background: #d29922; }
+
+  .search-bar {
+    display: flex; gap: 8px; margin-bottom: 8px; align-items: center;
+  }
+  .search-bar input { flex: 1; }
+  .search-bar select { width: auto; min-width: 120px; }
+
+  .badge.action-move { background: #1b3827; color: #3fb950; }
+  .badge.action-replace { background: #3d2715; color: #d29922; }
 
   .hidden { display: none !important; }
   .mt-8 { margin-top: 8px; }
@@ -184,7 +255,6 @@
 
 <div class="tabs">
   <button class="active" data-tab="scan">Scan &amp; Move</button>
-  <button data-tab="tracker">Release Tracker</button>
 </div>
 
 <!-- ====== SCAN TAB ====== -->
@@ -205,9 +275,13 @@
       <button id="btnProgress">Check Progress</button>
       <button id="btnReport">Get Report</button>
       <button class="danger" id="btnConfirm" disabled>Confirm Selected</button>
-      <label style="display:inline-flex;align-items:center;gap:4px;margin-left:4px;font-size:0.82rem;color:#8b949e;cursor:pointer;white-space:nowrap">
-        <input type="checkbox" id="chkReplaceExisting"> Override existing scan
-      </label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Jellyfin Library Scans</h2>
+    <div class="btn-row" id="libraryScanButtons">
+      <span style="color:#8b949e;font-size:0.82rem">Loading libraries...</span>
     </div>
   </div>
 
@@ -215,6 +289,18 @@
     <h2>Progress</h2>
     <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
     <div class="progress-info" id="progressInfo"></div>
+    <div id="confirmProgressExtra" class="progress-stack hidden mt-8">
+      <div class="progress-section">
+        <h3 id="confirmHeadline">Confirm running</h3>
+        <div class="progress-note" id="confirmNote"></div>
+        <div class="progress-kv" id="confirmMeta"></div>
+      </div>
+      <div class="progress-section">
+        <h3>Current File</h3>
+        <div class="progress-bar"><div class="fill" id="currentFileFill" style="width:0%;background:#58a6ff"></div></div>
+        <div class="progress-kv" id="currentFileMeta"></div>
+      </div>
+    </div>
   </div>
 
   <div id="reportPanel" class="panel hidden">
@@ -222,15 +308,29 @@
     <div style="font-size:0.8rem;color:#8b949e;margin-bottom:8px" id="reportSummary"></div>
     <div class="hint" style="margin-bottom:8px">`Path Exists` means the destination path already exists in your library. That can mean adding into an existing series/movie path or replacing an existing file.</div>
     <div class="summary-strip" id="reportSummaryStrip"></div>
+    <div class="search-bar">
+      <input type="text" id="filterInput" placeholder="Search by title, path..." oninput="applyFilter()">
+      <select id="filterSelect" onchange="applyFilter()">
+        <option value="all">All items</option>
+        <option value="move">Move only</option>
+        <option value="replace">Replace only</option>
+        <option value="existing">Path exists</option>
+        <option value="new">Path new</option>
+      </select>
+    </div>
     <div class="report-toolbar">
       <div class="hint" id="selectionSummary">No report items loaded yet.</div>
       <div class="report-actions">
         <button class="small" id="btnSelectAll" disabled>Select All</button>
         <button class="small" id="btnSelectNone" disabled>Select None</button>
-        <button class="small" id="btnSelectExisting" disabled>Select Existing Paths</button>
+        <button class="small" id="btnSelectExisting" disabled>Select existing paths</button>
+        <button class="small" id="btnSelectMove" disabled>Select all Move</button>
+        <button class="small" id="btnSelectReplace" disabled>Select all Replace</button>
+        <button class="small" id="btnToggleSkipped" disabled style="display:none">Show skipped items</button>
       </div>
     </div>
     <div id="reportItems"></div>
+    <div id="skippedItems" style="margin-top:12px"></div>
   </div>
 
   <div class="panel">
@@ -239,32 +339,7 @@
   </div>
 </div>
 
-<!-- ====== TRACKER TAB ====== -->
-<div class="tab-content" id="tab-tracker">
-  <div class="panel">
-    <div class="btn-row">
-      <button id="btnListReleases">List All Tracked Releases</button>
-      <button id="btnDueReleases">Check Due Releases</button>
-    </div>
-  </div>
-  <div class="panel">
-    <h2>Store / Update Release Marker</h2>
-    <div class="field"><label>Library</label><select id="trackerLibrary"><option value="">-- select --</option></select></div>
-    <div class="field"><label>Series Name</label><input type="text" id="trackerSeriesName" placeholder="One Piece"></div>
-    <div class="field"><label>Next Release Date</label><input type="text" id="trackerDate" placeholder="2026-07-15 or ISO datetime"></div>
-    <div class="field"><label>Season (optional)</label><input type="number" id="trackerSeason" placeholder="1"></div>
-    <div class="field"><label>Episode (optional)</label><input type="number" id="trackerEpisode" placeholder="1"></div>
-    <button class="primary" id="btnStoreRelease">Store Release Marker</button>
-  </div>
-  <div class="panel">
-    <h2>Lookup Release</h2>
-    <div class="field"><label>Library</label><select id="lookupLibrary"><option value="">-- select --</option></select></div>
-    <div class="field"><label>Series Name</label><input type="text" id="lookupSeriesName" placeholder="One Piece"></div>
-    <button id="btnLookupRelease">Lookup</button>
-    <div id="lookupResult" class="mt-8"></div>
-  </div>
-  <div id="trackerResults" class="mt-8"></div>
-</div>
+
 
 <script>
 // ====== CONFIG ======
@@ -274,6 +349,8 @@ let scanId = null;
 let confirmActive = false;
 let pollTimer = null;
 let currentItems = [];
+let currentSkippedItems = [];
+let jellyfinLibraries = [];
 const POLL_INTERVAL_MS = 2000;
 
 // ====== HELPERS ======
@@ -329,6 +406,76 @@ function showProgress(percent, info) {
   $('progressInfo').innerHTML = info.map(s => `<span>${s}</span>`).join('');
 }
 
+function hideConfirmProgressExtra() {
+  $('confirmProgressExtra').classList.add('hidden');
+  $('confirmHeadline').textContent = 'Confirm running';
+  $('confirmNote').textContent = '';
+  $('confirmMeta').innerHTML = '';
+  $('currentFileMeta').innerHTML = '';
+  $('currentFileFill').style.width = '0%';
+}
+
+function formatBytes(bytes) {
+  if (bytes === undefined || bytes === null) return '';
+  let size = Number(bytes);
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let idx = 0;
+  while (size >= 1024 && idx < units.length - 1) {
+    size /= 1024;
+    idx += 1;
+  }
+  return (idx === 0 ? Math.round(size) : size.toFixed(1)) + ' ' + units[idx];
+}
+
+function formatConfirmPhase(phase) {
+  return {
+    idle: 'Idle',
+    preparing: 'Preparing',
+    stopping_seeding: 'Stopping seeding',
+    moving: 'Copying or moving',
+    deleting_source: 'Removing source',
+    triggering_jellyfin: 'Triggering Jellyfin scan',
+    completed: 'Completed',
+    failed: 'Failed',
+  }[phase] || 'Running';
+}
+
+function fileName(path) {
+  return path ? path.split('/').pop() : '';
+}
+
+function renderConfirmProgress(result) {
+  $('confirmProgressExtra').classList.remove('hidden');
+  const processed = result.processed ?? 0;
+  const total = result.total ?? 0;
+  const currentIndex = total ? Math.min(processed + (result.status === 'running' ? 1 : 0), total) : processed;
+  $('confirmHeadline').textContent = result.status === 'completed'
+    ? 'Confirm completed'
+    : result.status === 'failed'
+      ? 'Confirm failed'
+      : 'Working on item ' + currentIndex + ' of ' + total;
+  $('confirmNote').textContent = result.note || (result.cross_drive ? 'Cross-drive move detected. Large files can take a while.' : '');
+  $('confirmMeta').innerHTML = [
+    'Phase: <strong>' + escHtml(formatConfirmPhase(result.phase)) + '</strong>',
+    'Overall: <strong>' + processed + '/' + total + ' (' + (result.percent || 0) + '%)</strong>',
+    result.elapsed ? 'Elapsed: <strong>' + escHtml(result.elapsed) + '</strong>' : '',
+    result.eta ? 'Overall ETA: <strong>' + escHtml(result.eta) + '</strong>' : '',
+    result.last_update_at ? 'Last update: <strong>' + escHtml(new Date(result.last_update_at).toLocaleTimeString()) + '</strong>' : '',
+  ].filter(Boolean).map(s => `<div>${s}</div>`).join('');
+
+  const currentPercent = result.current_percent || 0;
+  $('currentFileFill').style.width = Math.min(currentPercent, 100) + '%';
+  $('currentFileMeta').innerHTML = [
+    result.current_file ? 'Source: <strong>' + escHtml(fileName(result.current_file)) + '</strong>' : '',
+    result.current_target ? 'Target: <strong>' + escHtml(result.current_target) + '</strong>' : '',
+    result.current_size_bytes != null ? 'Size: <strong>' + escHtml(formatBytes(result.current_size_bytes)) + '</strong>' : '',
+    result.current_copied_bytes != null ? 'Copied: <strong>' + escHtml(formatBytes(result.current_copied_bytes)) + '</strong>' : '',
+    result.current_speed ? 'Speed: <strong>' + escHtml(result.current_speed) + '</strong>' : '',
+    result.current_eta ? 'File ETA: <strong>' + escHtml(result.current_eta) + '</strong>' : '',
+    result.current_percent != null ? 'File progress: <strong>' + escHtml(String(result.current_percent)) + '%</strong>' : '',
+  ].filter(Boolean).map(s => `<div>${s}</div>`).join('');
+}
+
 function focusProgressPanel() {
   const panel = $('progressPanel');
   if (panel.classList.contains('hidden')) return;
@@ -337,6 +484,7 @@ function focusProgressPanel() {
 
 function hideProgress() {
   $('progressPanel').classList.add('hidden');
+  hideConfirmProgressExtra();
 }
 
 function setConfirmButtonLabel(label) {
@@ -346,30 +494,40 @@ function setConfirmButtonLabel(label) {
 }
 
 function updateSelectionSummary() {
+  const visibleRows = document.querySelectorAll('.group-body:not(.collapsed) tbody tr');
+  const visibleCheckboxes = document.querySelectorAll('.group-body:not(.collapsed) .item-check');
+  const visibleCount = visibleRows.length;
+  const selected = document.querySelectorAll('.group-body:not(.collapsed) .item-check:checked').length;
   const total = currentItems.length;
-  const selected = document.querySelectorAll('.item-check:checked').length;
-  $('selectionSummary').textContent = total
-    ? selected + ' of ' + total + ' item(s) selected for confirm'
-    : 'No report items loaded yet.';
+  $('selectionSummary').textContent = visibleCount
+    ? selected + ' of ' + visibleCount + ' item(s) selected (of ' + total + ' total)'
+    : total > 0
+      ? '0 of 0 visible (' + total + ' total, try adjusting filters)'
+      : 'No report items loaded yet.';
   const hasItems = total > 0;
   const hasSelection = selected > 0;
   $('btnConfirm').disabled = !hasSelection || confirmActive;
   const smallConfirm = $('btnConfirmSmall');
   if (smallConfirm) smallConfirm.disabled = !hasSelection || confirmActive;
-  ['btnSelectAll', 'btnSelectNone', 'btnSelectExisting'].forEach(id => {
-    $(id).disabled = !hasItems;
+  ['btnSelectAll', 'btnSelectNone', 'btnSelectExisting', 'btnSelectMove', 'btnSelectReplace'].forEach(id => {
+    if ($(id)) $(id).disabled = !hasItems;
   });
 }
 
 function setCheckedItems(mode) {
-  const checks = document.querySelectorAll('.item-check');
+  const checks = mode === 'all' || mode === 'none'
+    ? document.querySelectorAll('.item-check')
+    : document.querySelectorAll('.group-body:not(.collapsed) .item-check');
   checks.forEach(cb => {
     if (mode === 'all') cb.checked = true;
-    if (mode === 'none') cb.checked = false;
-    if (mode === 'existing') cb.checked = cb.dataset.exists === 'yes';
+    else if (mode === 'none') cb.checked = false;
+    else if (mode === 'existing') cb.checked = cb.dataset.fileexists === 'true';
+    else if (mode === 'move' || mode === 'replace') {
+      const row = cb.closest('tr');
+      const action = row ? row.dataset.action : '';
+      cb.checked = action === mode;
+    }
   });
-  const selectAll = $('selectAll');
-  if (selectAll) selectAll.checked = mode === 'all';
   updateSelectionSummary();
 }
 
@@ -392,18 +550,21 @@ async function checkConnection() {
       el.textContent = 'connected (' + tools.length + ' tools)';
       el.className = 'status connected';
       log('Connected — found ' + tools.length + ' MCP tools', 'good');
-      // populate library selects
+      // populate library selects + scan buttons
       try {
         const libs = await mcpCall('get available jellyfin libraries list');
-        const names = (libs.libraries || []).map(l => l.name);
-        ['trackerLibrary', 'lookupLibrary'].forEach(id => {
-          const sel = $(id);
-          sel.innerHTML = '<option value="">-- select library --</option>';
-          names.forEach(n => {
-            const opt = document.createElement('option');
-            opt.value = n; opt.textContent = n;
-            sel.appendChild(opt);
-          });
+        jellyfinLibraries = libs.libraries || [];
+        const names = jellyfinLibraries.map(l => l.name);
+
+        // library scan buttons
+        const btnContainer = $('libraryScanButtons');
+        btnContainer.innerHTML = '';
+        names.forEach(n => {
+          const btn = document.createElement('button');
+          btn.className = 'small';
+          btn.textContent = 'Scan ' + n;
+          btn.onclick = () => triggerLibraryScan(n);
+          btnContainer.appendChild(btn);
         });
         log('Loaded ' + names.length + ' libraries', 'good');
       } catch (e) {
@@ -421,17 +582,19 @@ checkConnection();
 // ====== START SCAN ======
 $('btnStartScan').addEventListener('click', async () => {
   try {
-    $('btnStartScan').disabled = true;
-    const replace = $('chkReplaceExisting').checked;
-    log('Starting scan (replaceExisting=' + replace + ')...', 'info');
+    const btn = $('btnStartScan');
+    btn.disabled = true;
+    btn.textContent = 'Scanning...';
+    log('Starting scan...', 'info');
     hideProgress();
     if (pollTimer) clearTimeout(pollTimer);
     showProgress(0, [
       'Starting scan...',
       'Waiting for backend to create the scan plan',
     ]);
+    hideConfirmProgressExtra();
     focusProgressPanel();
-    const result = await mcpCall('move new downloads scan', { replaceExisting: replace });
+    const result = await mcpCall('move new downloads scan');
     scanId = result.scan_id || null;
     log('Scan started! ID: ' + scanId + ' — ' + (result.message || ''), 'good');
     toast('Scan started', 'good');
@@ -449,6 +612,7 @@ $('btnStartScan').addEventListener('click', async () => {
     toast('Scan error: ' + e.message, 'err');
   } finally {
     $('btnStartScan').disabled = false;
+    $('btnStartScan').textContent = 'Start Scan';
   }
 
   // Auto-poll progress after starting
@@ -480,9 +644,7 @@ async function pollScanProgress() {
     ].filter(Boolean));
 
     if (result.status === 'completed') {
-      toast('Scan completed!', 'good');
-      // Auto-fetch report when done
-      setTimeout(fetchReport, 1000);
+      toast('Scan completed! Click Get Report to review.', 'good');
     } else if (result.status === 'running') {
       toast('Scan still running (' + result.percent + '%)', 'info');
       pollTimer = setTimeout(pollScanProgress, POLL_INTERVAL_MS);
@@ -535,40 +697,131 @@ $('btnReport').addEventListener('click', () => {
 function renderReport(report) {
   const s = report.summary || {};
   $('reportPanel').classList.remove('hidden');
-  $('reportSummary').textContent = [
+  const idHtml = s.scan_id ? 'scan_id: <span onclick="copyText(\'' + s.scan_id + '\')" style="cursor:pointer;border-bottom:1px dashed #8b949e" title="Click to copy">' + s.scan_id + '</span>' : '';
+  $('reportSummary').innerHTML = [
     (s.total ?? '?') + ' candidates',
     (s.movies ?? '?') + ' movies',
     (s.series ?? '?') + ' series',
     (s.skipped ?? '?') + ' skipped',
     (s.action_required ?? '?') + ' actions needed',
-    s.scan_id ? 'scan_id: ' + s.scan_id : '',
+    idHtml,
   ].filter(Boolean).join(' | ');
   $('reportSummaryStrip').innerHTML = [
     ['Movies', s.movies ?? 0],
     ['Series', s.series ?? 0],
-    ['Skipped', s.skipped ?? 0],
-    ['Actions Needed', s.action_required ?? 0],
-  ].map(([label, value]) => `<div class="summary-pill"><strong>${value}</strong> ${label}</div>`).join('');
+    ['Skipped', s.skipped ?? 0, '#8b949e'],
+    ['Actions Needed', s.action_required ?? 0, '#d29922'],
+  ].map(([label, value, color]) => `<div class="summary-pill" style="${color ? 'color:' + color : ''}"><strong>${value}</strong> ${label}</div>`).join('');
 
   renderItemsFromReport(report);
 }
 
 function renderItemsFromReport(report) {
   const container = $('reportItems');
+  const skippedContainer = $('skippedItems');
   const s = report.summary || {};
-  const md = report.report_md || '';
+  const allItems = report.items || [];
 
-  if (md) {
-    // Parse the markdown table to reconstruct items
-    const items = parseReportMd(md, s.scan_id);
-    currentItems = items;
-    renderItemsTable(container, items);
-    updateSelectionSummary();
+  const actionable = allItems.filter(i => i.action === 'move' || i.action === 'replace');
+  const skipped = allItems.filter(i => i.action === 'skip');
+
+  // Map backend fields to what renderItemsTable expects
+  const mapped = actionable.map(item => {
+    const isSeries = item.itemType === 'series';
+    const p = item.targetPath || '';
+    let title = item.name || '';
+    let season = '';
+    let episode = '';
+
+    if (isSeries && p) {
+      const parts = p.split('/').filter(Boolean);
+      season = parts.length >= 2 ? parts[parts.length - 2] : '';
+      const epMatch = p.match(/S\d{2}E\d{2,3}/i);
+      episode = epMatch ? epMatch[0] : '';
+      title = parts.length >= 3 ? parts[parts.length - 3] : (parts[0] || '');
+    } else if (p) {
+      const parts = p.split('/').filter(Boolean);
+      title = parts.length >= 2 ? parts[parts.length - 2] : (parts[0] || '');
+    }
+
+    return {
+      confirmId: item.confirmId,
+      title: title,
+      sourceName: (item.sourcePath || '').split('/').filter(Boolean).pop() || '',
+      targetPath: p,
+      originalTarget: p,
+      itemType: item.itemType,
+      action: item.action || 'move',
+      pathExists: item.pathExists || '',
+      fileExists: item.fileExists || false,
+      fileSize: item.fileSize,
+      season: season,
+      episode: episode,
+    };
+  });
+
+  if (mapped.length) {
+    currentItems = mapped;
+    currentItems.forEach(item => { item._liveTarget = item.targetPath; });
+    renderGroupedTable(container, mapped);
   } else {
-    container.innerHTML = '<div style="color:#8b949e">No report items found. Try fetching the report again after a scan completes.</div>';
+    container.innerHTML = '<div style="color:#8b949e">No move/replace items to review.</div>';
     currentItems = [];
-    updateSelectionSummary();
   }
+
+  // Store skipped items for toggle
+  currentSkippedItems = skipped;
+
+  // Toggle button
+  const toggleBtn = $('btnToggleSkipped');
+  if (skipped.length) {
+    toggleBtn.style.display = '';
+    toggleBtn.disabled = false;
+    toggleBtn.textContent = 'Show skipped items (' + skipped.length + ')';
+    toggleBtn.onclick = () => {
+      const showing = skippedContainer.style.display !== 'none';
+      if (showing) {
+        skippedContainer.style.display = 'none';
+        toggleBtn.textContent = 'Show skipped items (' + skipped.length + ')';
+      } else {
+        skippedContainer.style.display = '';
+        toggleBtn.textContent = 'Hide skipped items (' + skipped.length + ')';
+        renderSkippedItems(skippedContainer, skipped);
+      }
+    };
+    skippedContainer.style.display = 'none';
+  } else {
+    toggleBtn.style.display = 'none';
+    skippedContainer.style.display = 'none';
+    skippedContainer.innerHTML = '';
+  }
+
+  updateSelectionSummary();
+  // Reset filter
+  $('filterInput').value = '';
+  $('filterSelect').value = 'all';
+}
+
+function renderSkippedItems(container, items) {
+  if (!items.length) {
+    container.innerHTML = '';
+    return;
+  }
+  let html = '<div style="border-top:1px solid #30363d;padding-top:10px;margin-top:6px">';
+  html += '<div style="font-size:0.8rem;color:#8b949e;margin-bottom:8px">Skipped items — not available for confirmation</div>';
+  html += '<table style="width:100%;font-size:0.78rem"><thead><tr>';
+  html += '<th>Source Path</th><th>Reason</th>';
+  html += '</tr></thead><tbody>';
+  items.forEach(item => {
+    const reason = item.error || item.reason || 'Unknown';
+    const sourceShort = item.sourcePath || item.name || '?';
+    html += '<tr style="color:#8b949e">';
+    html += '<td style="padding:3px 6px;word-break:break-all"><span style="opacity:0.7">' + escHtml(sourceShort) + '</span></td>';
+    html += '<td style="padding:3px 6px;white-space:pre-wrap">' + escHtml(reason) + '</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
+  container.innerHTML = html;
 }
 
 function parseReportMd(md, scanId) {
@@ -581,7 +834,7 @@ function parseReportMd(md, scanId) {
 
     if (line.startsWith('## Movies')) {
       section = 'movie';
-      i += 2; // skip header + separator
+      i += 2;
       continue;
     }
     if (line.startsWith('## Series')) {
@@ -601,7 +854,7 @@ function parseReportMd(md, scanId) {
           confirmId: parts[0],
           title: parts[1],
           sourceName: parts[2],
-          folderExists: parts[3],
+          pathExists: parts[3],
           targetPath: parts[4].replace(/`/g, ''),
           itemType: 'movie',
           originalTarget: parts[4].replace(/`/g, ''),
@@ -619,7 +872,7 @@ function parseReportMd(md, scanId) {
           season: parts[2],
           episode: parts[3],
           sourceName: parts[4],
-          folderExists: parts[5],
+          pathExists: parts[5],
           targetPath: target,
           itemType: 'series',
           originalTarget: target,
@@ -631,47 +884,154 @@ function parseReportMd(md, scanId) {
   return items;
 }
 
-function renderItemsTable(container, items) {
+function renderPathExistsPill(item) {
+  if (item.itemType === 'series') {
+    const show = item.pathExists.includes('Show ✓');
+    const season = item.pathExists.includes('Season ✓');
+    const file = item.pathExists.includes('File ✓');
+    return '<span class="status-pill"><span class="dot ' + (show ? 'exists' : 'missing') + '"></span>Show</span>'
+      + ' <span class="status-pill"><span class="dot ' + (season ? 'exists' : 'missing') + '"></span>Season</span>'
+      + ' <span class="status-pill"><span class="dot ' + (file ? 'exists' : 'missing') + '"></span>File</span>';
+  }
+  const folder = item.pathExists.includes('Folder ✓');
+  const file = item.pathExists.includes('File ✓');
+  return '<span class="status-pill"><span class="dot ' + (folder ? 'exists' : 'missing') + '"></span>Folder</span>'
+    + ' <span class="status-pill"><span class="dot ' + (file ? 'exists' : 'missing') + '"></span>File</span>';
+}
+
+function groupItems(items) {
+  const groups = {};
+  items.forEach((item, idx) => {
+    const key = item.title || 'Unknown';
+    if (!groups[key]) {
+      groups[key] = { title: key, type: item.itemType, items: [], totalSize: 0 };
+    }
+    groups[key].items.push({ ...item, _idx: idx });
+    if (item.fileSize) groups[key].totalSize += Number(item.fileSize);
+  });
+  return Object.values(groups);
+}
+
+function renderGroupedTable(container, items) {
   if (!items.length) {
     container.innerHTML = '<div style="color:#8b949e">No move/replace items to review.</div>';
     updateSelectionSummary();
     return;
   }
 
-  let html = `<table><thead><tr>
-    <th style="width:32px"><input type="checkbox" id="selectAll" onchange="toggleAll(event)"></th>
-    <th>Type</th>
-    <th>Title</th>
-    <th>Original File / Target Path</th>
-    <th style="width:90px">Path Exists</th>
-  </tr></thead><tbody>`;
+  const groups = groupItems(items);
+  window._reportGroups = groups;
 
-  items.forEach((item, idx) => {
-    const existsLabel = item.folderExists === 'yes' ? '<span style="color:#3fb950">yes</span>' : '<span style="color:#8b949e">no</span>';
-    html += `<tr>
-      <td><input type="checkbox" class="item-check" data-index="${idx}" data-exists="${item.folderExists}" checked></td>
-      <td><span class="badge ${item.itemType === 'movie' ? 'move' : 'replace'}">${item.itemType === 'movie' ? 'movie' : item.season || 'series'}</span></td>
-      <td>${escHtml(item.title)}${item.episode ? ' <span style="color:#8b949e">' + escHtml(item.episode) + '</span>' : ''}</td>
-      <td>
-        <div class="source-meta">
-          <div class="source-name">${escHtml(item.sourceName || '')}</div>
-          <div class="target-inline">
-            <label>Target Path</label>
-            <input type="text" class="target-input" data-index="${idx}" value="${escHtml(item.targetPath)}" style="font-family:monospace;font-size:0.78rem">
-          </div>
-        </div>
-      </td>
-      <td>${existsLabel}</td>
-    </tr>`;
+  // Build a flat index map for checkbox lookups
+  window._flatItems = items;
+
+  let html = '';
+  groups.forEach((group, gi) => {
+    const groupId = 'group-' + gi;
+    html += '<div class="group-header" onclick="toggleGroup(\'' + groupId + '\')">';
+    html += '<span class="arrow">&#9660;</span>';
+    html += '<span class="g-title">' + escHtml(group.title) + '</span>';
+    html += '<span class="g-count">' + group.items.length + ' item(s)</span>';
+    if (group.totalSize > 0) html += '<span class="g-size">' + formatBytes(group.totalSize) + '</span>';
+    html += '</div>';
+
+    html += '<div class="group-body" id="' + groupId + '">';
+    html += '<div class="group-toolbar">';
+    html += '<label class="chk-label"><input type="checkbox" class="group-select-all" data-group="' + gi + '" checked onchange="toggleGroupSelect(' + gi + ', this.checked)"><span class="chk-text">' + escHtml(group.title) + '</span></label>';
+    html += '<button class="small" onclick="toggleGroupSelect(' + gi + ', true)">All</button>';
+    html += '<button class="small" onclick="toggleGroupSelect(' + gi + ', false)">None</button>';
+    html += '<button class="primary small" onclick="applyGroupTargetEdits(' + gi + ')" style="margin-left:8px">Update Paths</button>';
+    html += '<button class="danger small" onclick="confirmGroup(' + gi + ')">Confirm</button>';
+    html += '</div>';
+    html += '<table><thead><tr>';
+    html += '<th style="width:32px"></th>';
+    html += '<th style="width:60px">Action</th>';
+    html += '<th>Episode</th>';
+    html += '<th colspan="2">Source → Target Path</th>';
+    html += '<th style="width:60px">Size</th>';
+    html += '<th style="width:180px">Path Status</th>';
+    html += '</tr></thead><tbody>';
+
+    group.items.forEach(item => {
+      const fileExists = item.fileExists;
+      const actionLabel = item.action === 'replace' ? 'Replace' : 'Move';
+      const actionBadge = 'badge action-' + item.action;
+      html += '<tr data-title="' + escHtml(item.title).toLowerCase() + '" data-action="' + item.action + '" data-fileexists="' + fileExists + '">';
+      html += '<td><input type="checkbox" class="item-check" data-index="' + item._idx + '" data-fileexists="' + fileExists + '" checked></td>';
+      html += '<td><span class="badge ' + actionBadge + '">' + actionLabel + '</span></td>';
+      html += '<td>' + escHtml(item.episode || '') + '</td>';
+      html += '<td colspan="2"><div class="path-cell">';
+      html += '<div class="source-name">' + escHtml(item.sourceName || '') + '</div>';
+      html += '<input type="text" class="target-input" data-index="' + item._idx + '" value="' + escHtml(item.targetPath) + '">';
+      html += '</div></td>';
+      html += '<td style="white-space:nowrap;color:#8b949e;font-size:0.8rem">' + (item.fileSize ? formatBytes(item.fileSize) : '') + '</td>';
+      html += '<td style="font-size:0.78rem;white-space:nowrap">' + renderPathExistsPill(item) + '</td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    html += '</div>';
   });
 
-  html += '</tbody></table>';
-  html += `<div style="margin-top:8px">
-    <button class="primary small" onclick="applyTargetEdits()">Update Selected Paths</button>
-    <button class="danger small" onclick="confirmSelected()" id="btnConfirmSmall">Confirm Selected</button>
-  </div>`;
+  html += '<div style="margin-top:8px">';
+  html += '<button class="primary small" onclick="applyTargetEdits()">Update Selected Paths</button>';
+  html += '<button class="danger small" onclick="confirmSelected()" id="btnConfirmSmall">Confirm Selected</button>';
+  html += '</div>';
 
   container.innerHTML = html;
+}
+
+function toggleGroup(id) {
+  const body = $(id);
+  const header = body.previousElementSibling;
+  const arrow = header.querySelector('.arrow');
+  if (body.classList.contains('collapsed')) {
+    body.classList.remove('collapsed');
+    arrow.classList.remove('collapsed');
+  } else {
+    body.classList.add('collapsed');
+    arrow.classList.add('collapsed');
+  }
+}
+
+function applyFilter() {
+  const query = ($('filterInput').value || '').toLowerCase();
+  const filterVal = $('filterSelect').value;
+
+  document.querySelectorAll('.group-header').forEach(header => {
+    const body = header.nextElementSibling;
+    if (!body || !body.querySelector) return;
+    const rows = body.querySelectorAll('tbody tr');
+    let visibleCount = 0;
+
+    rows.forEach(row => {
+      const title = (row.dataset.title || '').toLowerCase();
+      const action = row.dataset.action || '';
+      const fileExists = row.dataset.fileexists === 'true';
+      const text = row.textContent.toLowerCase();
+
+      let match = true;
+      if (query && !text.includes(query)) match = false;
+      if (filterVal === 'move' && action !== 'move') match = false;
+      if (filterVal === 'replace' && action !== 'replace') match = false;
+      if (filterVal === 'existing' && !fileExists) match = false;
+      if (filterVal === 'new' && fileExists) match = false;
+
+      row.style.display = match ? '' : 'none';
+      if (match) visibleCount++;
+    });
+
+    // Show/hide the entire group
+    if (visibleCount === 0) {
+      header.style.display = 'none';
+      body.style.display = 'none';
+    } else {
+      header.style.display = '';
+      body.style.display = '';
+    }
+  });
+
+  updateSelectionSummary();
 }
 
 function toggleAll(e) {
@@ -683,6 +1043,98 @@ function escHtml(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    toast('Copied: ' + text, 'good');
+  }).catch(() => {
+    toast('Failed to copy', 'err');
+  });
+}
+
+// ====== PER-GROUP HELPERS ======
+function toggleGroupSelect(gi, checked) {
+  const group = window._reportGroups?.[gi];
+  if (!group) return;
+  group.items.forEach(item => {
+    const cb = document.querySelector(`.item-check[data-index="${item._idx}"]`);
+    if (cb) cb.checked = checked;
+  });
+  // Sync group header checkbox
+  const headerCb = document.querySelector(`.group-select-all[data-group="${gi}"]`);
+  if (headerCb) headerCb.checked = checked;
+  updateSelectionSummary();
+}
+
+async function applyGroupTargetEdits(gi) {
+  const group = window._reportGroups?.[gi];
+  if (!group) return;
+  const updates = [];
+  group.items.forEach(item => {
+    const input = document.querySelector(`.target-input[data-index="${item._idx}"]`);
+    if (!input) return;
+    const newPath = input.value.trim();
+    if (newPath !== item.originalTarget) {
+      updates.push({ confirmId: item.confirmId, targetPath: newPath });
+    }
+  });
+  if (!updates.length) { toast('No paths changed in this group', 'info'); return; }
+  try {
+    await mcpCall('update move new downloads scan', { scanId, items: updates });
+    log('Updated ' + updates.length + ' paths in "' + group.title + '"', 'good');
+    toast('Paths updated in "' + group.title + '"', 'good');
+    updates.forEach(u => {
+      const item = currentItems.find(i => i.confirmId === u.confirmId);
+      if (item) item.originalTarget = u.targetPath;
+    });
+  } catch (e) {
+    log('Update error: ' + e.message, 'err');
+    toast('Update error: ' + e.message, 'err');
+  }
+}
+
+async function confirmGroup(gi) {
+  const group = window._reportGroups?.[gi];
+  if (!group) return;
+  const itemIds = [];
+  group.items.forEach(item => {
+    const cb = document.querySelector(`.item-check[data-index="${item._idx}"]`);
+    if (cb && cb.checked) itemIds.push(item.confirmId);
+  });
+  if (!itemIds.length) { toast('Select at least one item in this group', 'info'); return; }
+  if (!confirm('Move ' + itemIds.length + ' item(s) from "' + group.title + '"? This can take a while for large or cross-drive files and is not easy to undo.')) return;
+  try {
+    $('btnConfirm').disabled = true;
+    const smallConfirm = $('btnConfirmSmall');
+    if (smallConfirm) smallConfirm.disabled = true;
+    if (pollTimer) clearTimeout(pollTimer);
+    setConfirmButtonLabel('Starting confirm...');
+    showProgress(0, ['Preparing confirm...', 'Waiting for backend to start moving files']);
+    hideConfirmProgressExtra();
+    $('progressFill').style.background = '#d29922';
+    focusProgressPanel();
+    log('Confirming ' + itemIds.length + ' items from "' + group.title + '"...', 'info');
+    const result = await mcpCall('confirm move new downloads scan', { scanId, itemIds });
+    confirmActive = true;
+    log('Confirm started! ID: ' + scanId, 'good');
+    toast('Confirm started in background', 'good');
+    const p0 = result.processed ?? 0;
+    const t0 = result.total ?? 0;
+    showProgress(result.percent || 0, ['Confirm: ' + p0 + '/' + t0, result.phase ? 'Phase: ' + formatConfirmPhase(result.phase) : '', result.current_file ? fileName(result.current_file) : ''].filter(Boolean));
+    renderConfirmProgress(result);
+    $('progressFill').style.background = '#d29922';
+    log('Confirm progress: ' + p0 + '/' + t0 + ' (' + (result.status || 'running') + ')', 'info');
+    toast('Confirm running: ' + p0 + '/' + t0, 'info');
+    focusProgressPanel();
+    setConfirmButtonLabel('Confirm running...');
+    pollConfirmProgress();
+  } catch (e) {
+    log('Confirm error: ' + e.message, 'err');
+    toast('Confirm error: ' + e.message, 'err');
+    setConfirmButtonLabel('Confirm Selected');
+    updateSelectionSummary();
+  }
 }
 
 // ====== UPDATE PATHS ======
@@ -718,6 +1170,78 @@ async function applyTargetEdits() {
   }
 }
 
+// ====== SMART PATH SYNC ======
+let _syncingPaths = false;
+
+function syncPathChanges(changedIdx, oldPath, newPath) {
+  if (_syncingPaths || oldPath === newPath) return;
+  _syncingPaths = true;
+
+  const changedItem = currentItems[changedIdx];
+  if (!changedItem) { _syncingPaths = false; return; }
+  const groupTitle = changedItem.title;
+
+  const oldParts = oldPath.split('/');
+  const newParts = newPath.split('/');
+
+  // Find first differing segment
+  let diffIdx = -1;
+  const minLen = Math.min(oldParts.length, newParts.length);
+  for (let i = 0; i < minLen; i++) {
+    if (oldParts[i] !== newParts[i]) { diffIdx = i; break; }
+  }
+  if (diffIdx === -1 && oldParts.length !== newParts.length) {
+    diffIdx = minLen;
+  }
+  if (diffIdx === -1) { _syncingPaths = false; return; }
+
+  const prefix = oldParts.slice(0, diffIdx).join('/');
+  const oldSegment = oldParts[diffIdx];
+
+  currentItems.forEach((item, idx) => {
+    if (idx === changedIdx) return;
+    // Stay within the same group
+    if (item.title !== groupTitle) return;
+    const livePath = item._liveTarget || item.targetPath;
+    const itemParts = livePath.split('/');
+    const itemPrefix = itemParts.slice(0, diffIdx).join('/');
+
+    if (itemPrefix !== prefix) return;
+    if (itemParts.length <= diffIdx || itemParts[diffIdx] !== oldSegment) return;
+
+    const newItemParts = oldParts.length === newParts.length
+      ? [...itemParts.slice(0, diffIdx), newParts[diffIdx], ...itemParts.slice(diffIdx + 1)]
+      : [...itemParts.slice(0, diffIdx), ...newParts.slice(diffIdx)];
+
+    const newItemPath = newItemParts.join('/');
+    item._liveTarget = newItemPath;
+    const input = document.querySelector(`.target-input[data-index="${idx}"]`);
+    if (input) input.value = newItemPath;
+  });
+
+  _syncingPaths = false;
+}
+
+// Delegated input handler for path sync
+$('reportItems').addEventListener('input', (e) => {
+  if (e.target.classList.contains('target-input')) {
+    const idx = parseInt(e.target.dataset.index);
+    const item = currentItems[idx];
+    if (!item) return;
+    const oldPath = item._liveTarget || item.targetPath;
+    const newPath = e.target.value;
+    item._liveTarget = newPath;
+    syncPathChanges(idx, oldPath, newPath);
+  }
+});
+
+// Also support keydown on Enter to trigger update button focus
+$('reportItems').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.classList.contains('target-input')) {
+    document.querySelector('.btn-row .primary.small, #reportItems .primary.small')?.focus();
+  }
+});
+
 // ====== CONFIRM ======
 async function confirmSelected() {
   const checked = document.querySelectorAll('.item-check:checked');
@@ -726,18 +1250,19 @@ async function confirmSelected() {
     return;
   }
 
-  if (!confirm('Move ' + checked.length + ' item(s)? This cannot be undone easily.')) return;
+  if (!confirm('Move ' + checked.length + ' item(s)? This can take a while for large or cross-drive files and is not easy to undo.')) return;
 
   try {
     $('btnConfirm').disabled = true;
     const smallConfirm = $('btnConfirmSmall');
     if (smallConfirm) smallConfirm.disabled = true;
     if (pollTimer) clearTimeout(pollTimer);
-    setConfirmButtonLabel('Confirming...');
+    setConfirmButtonLabel('Starting confirm...');
     showProgress(0, [
       'Preparing confirm...',
       'Waiting for backend to start moving files',
     ]);
+    hideConfirmProgressExtra();
     $('progressFill').style.background = '#d29922';
     focusProgressPanel();
     // Support both itemIds and sourcePaths mechanisms
@@ -757,14 +1282,16 @@ async function confirmSelected() {
     const p0 = result.processed ?? 0;
     const t0 = result.total ?? 0;
     showProgress(result.percent || 0, [
-      '🔄 Confirm: ' + p0 + '/' + t0,
-      result.current_file ? result.current_file : '',
+      'Confirm: ' + p0 + '/' + t0,
+      result.phase ? 'Phase: ' + formatConfirmPhase(result.phase) : '',
+      result.current_file ? fileName(result.current_file) : '',
     ].filter(Boolean));
+    renderConfirmProgress(result);
     $('progressFill').style.background = '#d29922';
     log('Confirm progress: ' + p0 + '/' + t0 + ' (' + (result.status || 'running') + ')', 'info');
     toast('Confirm running: ' + p0 + '/' + t0, 'info');
     focusProgressPanel();
-    setConfirmButtonLabel('Confirm Running...');
+    setConfirmButtonLabel('Confirm running...');
 
     // Poll confirm progress
     pollConfirmProgress();
@@ -784,12 +1311,14 @@ async function pollConfirmProgress() {
     const t = result.total ?? 0;
     log('Confirm progress: ' + p + '/' + t + ' (' + (result.status || 'unknown') + ')' + (result.current_file ? ' — ' + result.current_file : ''), 'info');
     showProgress(result.percent || 0, [
-      '🔄 Confirm: ' + p + '/' + t,
+      'Confirm: ' + p + '/' + t,
+      result.phase ? 'Phase: ' + formatConfirmPhase(result.phase) : '',
       'Moved: ' + (result.counts?.moved || 0) + '  Replaced: ' + (result.counts?.replaced || 0) + '  Failed: ' + (result.counts?.failed || 0),
-      result.current_file ? result.current_file : '',
+      result.current_file ? fileName(result.current_file) : '',
       result.elapsed ? result.elapsed : '',
       result.eta ? 'ETA: ' + result.eta : '',
     ].filter(Boolean));
+    renderConfirmProgress(result);
     $('progressFill').style.background = '#d29922';
 
     if (result.status === 'completed' || result.status === 'idle') {
@@ -799,15 +1328,16 @@ async function pollConfirmProgress() {
       toast('Confirm completed! Moved: ' + (result.counts?.moved || 0) + ', Replaced: ' + (result.counts?.replaced || 0) + ', Failed: ' + (result.counts?.failed || 0), 'good');
       log('Confirm completed. Moved: ' + (result.counts?.moved || 0) + ', Replaced: ' + (result.counts?.replaced || 0) + ', Failed: ' + (result.counts?.failed || 0), 'good');
       $('progressFill').style.background = '';
-      setTimeout(fetchReport, 1000);
       return;
     }
     if (result.status === 'running') {
+      setConfirmButtonLabel('Copying ' + p + '/' + t + '...');
       toast('Confirm progress: ' + p + '/' + t + (result.current_file ? ' — ' + result.current_file.split('/').pop() : ''), 'info');
       if (pollTimer) clearTimeout(pollTimer);
       pollTimer = setTimeout(pollConfirmProgress, POLL_INTERVAL_MS);
     } else {
       confirmActive = false;
+      hideConfirmProgressExtra();
       setConfirmButtonLabel('Confirm Selected');
       updateSelectionSummary();
     }
@@ -815,6 +1345,7 @@ async function pollConfirmProgress() {
     log('Confirm progress error: ' + e.message, 'err');
     toast('Confirm progress error: ' + e.message, 'err');
     confirmActive = false;
+    hideConfirmProgressExtra();
     setConfirmButtonLabel('Confirm Selected');
     updateSelectionSummary();
   }
@@ -823,6 +1354,8 @@ async function pollConfirmProgress() {
 $('btnSelectAll').addEventListener('click', () => setCheckedItems('all'));
 $('btnSelectNone').addEventListener('click', () => setCheckedItems('none'));
 $('btnSelectExisting').addEventListener('click', () => setCheckedItems('existing'));
+$('btnSelectMove').addEventListener('click', () => setCheckedItems('move'));
+$('btnSelectReplace').addEventListener('click', () => setCheckedItems('replace'));
 document.addEventListener('change', e => {
   if (e.target.classList && e.target.classList.contains('item-check')) {
     updateSelectionSummary();
@@ -830,106 +1363,26 @@ document.addEventListener('change', e => {
 });
 updateSelectionSummary();
 
-// ====== RELEASE TRACKER ======
-$('btnListReleases').addEventListener('click', async () => {
-  try {
-    const result = await mcpCall('get ongoing series next releases', { limit: 50 });
-    const markers = result.markers || [];
-    const el = $('trackerResults');
-    if (markers.length) {
-      let html = '<table><thead><tr><th>Series</th><th>Next Release</th><th>S/E</th><th>Source</th></tr></thead><tbody>';
-      markers.forEach(m => {
-        html += `<tr>
-          <td>${escHtml(m.seriesName || '')}</td>
-          <td>${m.nextReleaseDate || ''}</td>
-          <td>${m.nextSeason != null ? 'S' + m.nextSeason : ''}${m.nextEpisode != null ? 'E' + m.nextEpisode : ''}</td>
-          <td style="color:#8b949e">${m.source || ''}</td>
-        </tr>`;
-      });
-      html += '</tbody></table>';
-      el.innerHTML = html;
-    } else {
-      el.innerHTML = '<div style="color:#8b949e">No tracked releases</div>';
-    }
-    log('Listed ' + markers.length + ' tracked releases', 'good');
-  } catch (e) {
-    log('List releases error: ' + e.message, 'err');
-  }
-});
 
-$('btnDueReleases').addEventListener('click', async () => {
-  try {
-    const result = await mcpCall('get due ongoing series releases', { before: 'now', limit: 50 });
-    const markers = result.markers || [];
-    const el = $('trackerResults');
-    if (markers.length) {
-      let html = '<table><thead><tr><th>Series</th><th>Due</th><th>S/E</th></tr></thead><tbody>';
-      markers.forEach(m => {
-        html += `<tr>
-          <td>${escHtml(m.seriesName || '')}</td>
-          <td style="color:#d29922">${m.nextReleaseDate || ''}</td>
-          <td>${m.nextSeason != null ? 'S' + m.nextSeason : ''}${m.nextEpisode != null ? 'E' + m.nextEpisode : ''}</td>
-        </tr>`;
-      });
-      html += '</tbody></table>';
-      el.innerHTML = html;
-    } else {
-      el.innerHTML = '<div style="color:#8b949e">No due releases</div>';
-    }
-    log('Checked due releases: ' + markers.length + ' due', markers.length ? 'warn' : 'good');
-  } catch (e) {
-    log('Due releases error: ' + e.message, 'err');
-  }
-});
 
-$('btnStoreRelease').addEventListener('click', async () => {
-  const libraryName = $('trackerLibrary').value;
-  const seriesName = $('trackerSeriesName').value.trim();
-  const nextReleaseDate = $('trackerDate').value.trim();
-  if (!libraryName || !seriesName || !nextReleaseDate) {
-    toast('Library, Series Name, and Date are required', 'info');
-    return;
-  }
-  const args = {
-    libraryName,
-    seriesName,
-    nextReleaseDate,
-    ...($('trackerSeason').value ? { nextSeason: parseInt($('trackerSeason').value) } : {}),
-    ...($('trackerEpisode').value ? { nextEpisode: parseInt($('trackerEpisode').value) } : {}),
-  };
+// ====== LIBRARY SCAN ======
+async function triggerLibraryScan(libraryName) {
+  const btnContainer = $('libraryScanButtons');
+  const btns = btnContainer.querySelectorAll('button');
+  btns.forEach(b => b.disabled = true);
+  log('Triggering Jellyfin library scan for: ' + libraryName, 'info');
+  toast('Scanning ' + libraryName + '...', 'info');
   try {
-    await mcpCall('store ongoing series next release', args);
-    log('Stored release marker for ' + seriesName, 'good');
-    toast('Release stored!', 'good');
+    const result = await mcpCall('trigger jellyfin library scan', { libraryName });
+    log('Library scan triggered: ' + (result.message || ''), 'good');
+    toast('Scan triggered for ' + libraryName, 'good');
   } catch (e) {
-    log('Store release error: ' + e.message, 'err');
+    log('Library scan error: ' + e.message, 'err');
+    toast('Scan error: ' + e.message, 'err');
+  } finally {
+    btns.forEach(b => b.disabled = false);
   }
-});
-
-$('btnLookupRelease').addEventListener('click', async () => {
-  const libraryName = $('lookupLibrary').value;
-  const seriesName = $('lookupSeriesName').value.trim();
-  if (!libraryName || !seriesName) { toast('Library and Series Name required', 'info'); return; }
-  try {
-    const result = await mcpCall('get ongoing series next release', { libraryName, seriesName });
-    const el = $('lookupResult');
-    if (result && result.seriesName) {
-      el.innerHTML = `<div style="background:#1b3827;padding:10px;border-radius:6px;font-size:0.85rem">
-        <strong>${escHtml(result.seriesName)}</strong><br>
-        Next: <strong>${result.nextReleaseDate || '?'}</strong>
-        ${result.nextSeason != null ? ' Season ' + result.nextSeason : ''}
-        ${result.nextEpisode != null ? ' Episode ' + result.nextEpisode : ''}
-        ${result.source ? '<br>Source: ' + result.source : ''}
-        ${result.notes ? '<br>Notes: ' + result.notes : ''}
-      </div>`;
-    } else {
-      el.innerHTML = '<div style="color:#8b949e">No marker found for this series</div>';
-    }
-    log('Looked up release for ' + seriesName, 'good');
-  } catch (e) {
-    log('Lookup error: ' + e.message, 'err');
-  }
-});
+}
 </script>
 </body>
 </html>

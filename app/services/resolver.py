@@ -145,7 +145,8 @@ class PathResolver:
             target_path=target_path,
             created_movie_folder=best_match is None,
             existing_match=best_match,
-            folder_exists=best_match is not None,
+            show_folder_exists=best_match is not None,
+            season_folder_exists=target_dir.exists(),
         )
 
     @staticmethod
@@ -233,14 +234,14 @@ class PathResolver:
         self._remember_series_alias_season(series_key, classification.series_alias, season_number)
         if classification.series_alias and season_number:
             logger.info("  [resolver] remembered alias \"%s\" → season %d", classification.series_alias, season_number)
-        folder_exists = show_dir.exists()
         return ResolvedTarget(
             root_key=candidate.source_root_key,
             target_dir=str(season_dir),
             target_path=target_path,
             created_show_folder=created_show_folder,
             existing_match=best_match,
-            folder_exists=folder_exists,
+            show_folder_exists=show_dir.exists(),
+            season_folder_exists=season_dir.exists(),
         )
 
     def _lookup_series_path(self, series_key: str) -> str | None:

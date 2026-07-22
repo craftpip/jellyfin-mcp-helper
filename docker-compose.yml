@@ -1,6 +1,6 @@
 services:
   organizer:
-    build: .
+    build: /home/boniface/www/jellyfin-mcp-helper
     image: jellyfin-mcp-helper:dev
     container_name: jellyfin-mcp-helper
     restart: unless-stopped
@@ -15,7 +15,7 @@ services:
       - /mnt/media1t/downloads:/media1
       - /mnt/media2t/downloads:/media2
       - /mnt/media3t/downloads:/media3
-      - ./app:/app/app
-      - ./config:/app/config
-      - ./logs:/app/logs
-      - ./reports:/app/reports
+      - /home/boniface/www/jellyfin-mcp-helper/app:/app/app
+      - /home/boniface/www/jellyfin-mcp-helper/config:/app/config
+      - /home/boniface/www/jellyfin-mcp-helper/logs:/app/logs
+      - /home/boniface/www/jellyfin-mcp-helper/reports:/app/reports

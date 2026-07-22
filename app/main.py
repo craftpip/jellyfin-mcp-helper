@@ -206,6 +206,7 @@ def _format_scan_report(scan: ScanPlan) -> dict:
     report = {
         "summary": summary,
         "report_md": _format_report_md(items_by_action, movie_roots_info, series_roots_info),
+        "items": _format_report_items(scan, items_by_action),
     }
 
     if scan.service_errors:
@@ -219,6 +220,20 @@ def _format_scan_report(scan: ScanPlan) -> dict:
 EPISODE_TAG_RE = re.compile(r"S\d{2}E\d{2,3}", re.IGNORECASE)
 
 
+def _format_path_exists(item: ScannedItem) -> str:
+    if item.item_type == "series":
+        return "Show %s, Season %s, File %s" % (
+            "\u2713" if item.show_folder_exists else "\u2717",
+            "\u2713" if item.season_folder_exists else "\u2717",
+            "\u2713" if item.file_exists else "\u2717",
+        )
+    else:
+        return "Folder %s, File %s" % (
+            "\u2713" if item.show_folder_exists else "\u2717",
+            "\u2713" if item.file_exists else "\u2717",
+        )
+
+
 def _format_report_md(
     items_by_action: dict[str, list[ScannedItem]],
     movie_roots_info: list[dict],
@@ -230,19 +245,18 @@ def _format_report_md(
 
     if movies:
         lines.append("## Movies (%d)" % len(movies))
-        lines.append("| cid | Title | Source | Exists | Target |")
-        lines.append("|-----|-------|--------|--------|--------|")
+        lines.append("| cid | Title | Source | Path Exists | Target |")
+        lines.append("|-----|-------|--------|-------------|--------|")
         for item in movies:
             title = Path(item.target_path).parent.name
             source = Path(item.source_path).name
-            exists = "yes" if item.folder_exists else "no"
-            lines.append("| %s | %s | %s | %s | `%s` |" % (item.confirm_id, title, source, exists, item.target_path))
+            lines.append("| %s | %s | %s | %s | `%s` |" % (item.confirm_id, title, source, _format_path_exists(item), item.target_path))
         lines.append("")
 
     if series:
         lines.append("## Series (%d)" % len(series))
-        lines.append("| cid | Show | Season | Ep | Source | Exists | Target |")
-        lines.append("|-----|------|--------|----|--------|--------|--------|")
+        lines.append("| cid | Show | Season | Ep | Source | Path Exists | Target |")
+        lines.append("|-----|------|--------|----|--------|-------------|--------|")
         for item in series:
             p = Path(item.target_path)
             show = p.parent.parent.name if p.parent.parent else p.parent.name
@@ -250,8 +264,7 @@ def _format_report_md(
             tag_match = EPISODE_TAG_RE.search(p.name)
             ep = tag_match.group(0) if tag_match else p.stem
             source = Path(item.source_path).name
-            exists = "yes" if item.folder_exists else "no"
-            lines.append("| %s | %s | %s | %s | %s | %s | `%s` |" % (item.confirm_id, show, season, ep, source, exists, item.target_path))
+            lines.append("| %s | %s | %s | %s | %s | %s | `%s` |" % (item.confirm_id, show, season, ep, source, _format_path_exists(item), item.target_path))
         lines.append("")
 
     if items_by_action["skip"]:
@@ -272,6 +285,38 @@ def _format_report_md(
     return "\n".join(lines).strip()
 
 
+def _format_report_items(scan: ScanPlan, items_by_action: dict[str, list[ScannedItem]]) -> list[dict]:
+    """Return structured items (actionable + skipped) for the Web UI."""
+    result = []
+    for item in items_by_action.get("move", []) + items_by_action.get("replace", []):
+        result.append({
+            "confirmId": item.confirm_id,
+            "sourcePath": item.source_path,
+            "name": item.name,
+            "targetPath": item.target_path,
+            "itemType": item.item_type,
+            "action": item.action,
+            "pathExists": _format_path_exists(item),
+            "showFolderExists": item.show_folder_exists,
+            "seasonFolderExists": item.season_folder_exists,
+            "fileExists": item.file_exists,
+            "fileSize": item.file_size,
+            "reason": item.reason,
+            "error": item.error,
+        })
+    for item in items_by_action.get("skip", []):
+        result.append({
+            "confirmId": item.confirm_id,
+            "sourcePath": item.source_path,
+            "name": item.name,
+            "itemType": item.item_type,
+            "action": "skip",
+            "reason": item.reason,
+            "error": item.error,
+        })
+    return result
+
+
 def _report_llm_instructions(scan: ScanPlan, movie_roots_info: list[dict], series_roots_info: list[dict]) -> list[str]:
     unconfirmed = scan.counts.movies + scan.counts.series
     if unconfirmed == 0 or scan.status == "confirmed":
@@ -284,8 +329,8 @@ def _report_llm_instructions(scan: ScanPlan, movie_roots_info: list[dict], serie
 
     instructions = [
         "You are curating the library, not just moving files.",
-        "folderExists=true  → already on disk, keep it there",
-        "folderExists=false → new item, can redirect",
+        "pathExists shows granular path status: Show/Movie ✓/✗, Season ✓/✗, File ✓/✗",
+        "showFolderExists/seasonFolderExists/fileExists give individual booleans",
     ]
 
     if roots:
@@ -339,6 +384,17 @@ def _format_duration(seconds: float | None) -> str | None:
     return f"{secs}s"
 
 
+def _format_transfer_speed(bytes_per_second: float | None) -> str | None:
+    if bytes_per_second is None or bytes_per_second <= 0:
+        return None
+    size = float(bytes_per_second)
+    for unit in ("B/s", "KB/s", "MB/s", "GB/s", "TB/s"):
+        if size < 1024 or unit == "TB/s":
+            return f"{size:.1f} {unit}" if unit != "B/s" else f"{int(size)} B/s"
+        size /= 1024
+    return None
+
+
 def _format_confirm_progress(scan: ScanPlan) -> dict:
     now = datetime.now(UTC)
     started_at = scan.confirm_started_at or now
@@ -347,6 +403,18 @@ def _format_confirm_progress(scan: ScanPlan) -> dict:
     total = scan.confirm_total
     percent = round((processed / total) * 100, 1) if total else 0.0
     eta_seconds = None
+    current_speed = scan.confirm_current_speed_bytes
+    file_eta_seconds = None
+    if (
+        scan.confirm_status == "running"
+        and scan.confirm_current_size_bytes
+        and scan.confirm_current_copied_bytes is not None
+        and current_speed
+        and current_speed > 0
+        and scan.confirm_current_copied_bytes < scan.confirm_current_size_bytes
+    ):
+        remaining = scan.confirm_current_size_bytes - scan.confirm_current_copied_bytes
+        file_eta_seconds = remaining / current_speed
     if scan.confirm_status == "running" and processed > 0 and total > processed:
         seconds_per_item = elapsed_seconds / processed
         eta_seconds = seconds_per_item * (total - processed)
@@ -361,14 +429,26 @@ def _format_confirm_progress(scan: ScanPlan) -> dict:
         "tool_purpose": "Reports progress for a running confirm operation. This tool is read-only and does not move files.",
         "scan_id": scan.scan_id,
         "status": scan.confirm_status,
+        "phase": scan.confirm_phase,
         "processed": processed,
         "total": total,
         "percent": percent,
         "current_file": scan.confirm_current_item,
+        "current_target": scan.confirm_current_target,
         "elapsed_seconds": round(elapsed_seconds, 1),
         "elapsed": _format_duration(elapsed_seconds),
         "eta_seconds": round(eta_seconds, 1) if eta_seconds is not None else None,
         "eta": _format_duration(eta_seconds),
+        "current_size_bytes": scan.confirm_current_size_bytes,
+        "current_copied_bytes": scan.confirm_current_copied_bytes,
+        "current_speed_bytes": round(current_speed, 1) if current_speed is not None else None,
+        "current_speed": _format_transfer_speed(current_speed),
+        "current_percent": scan.confirm_current_percent,
+        "current_eta_seconds": round(file_eta_seconds, 1) if file_eta_seconds is not None else None,
+        "current_eta": _format_duration(file_eta_seconds),
+        "cross_drive": scan.confirm_cross_drive,
+        "note": scan.confirm_note,
+        "last_update_at": scan.confirm_last_update_at.isoformat() if scan.confirm_last_update_at else None,
         "counts": {
             "moved": scan.counts.moved,
             "replaced": scan.counts.replaced,

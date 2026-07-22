@@ -202,7 +202,7 @@ class JellyfinClient:
         library = await self._resolve_library(library_name)
         user_id = await self._get_user_id()
 
-        fetch_limit = 200 if search else limit
+        fetch_limit = 5000 if search else limit
 
         params: dict[str, str] = {
             "ParentId": library["id"],

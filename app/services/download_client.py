@@ -88,7 +88,15 @@ def _extract_paths(items: list[dict[str, Any]], paths_config: PathsConfig | None
     paths: list[str] = []
     for item in items:
         paths.extend(_item_paths(item, paths_config))
-    return paths
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        normalized = str(Path(path)).rstrip("/")
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(normalized)
+    return deduped
 
 
 def _item_matches_paths(item: dict[str, Any], candidate_paths: set[str], paths_config: PathsConfig | None) -> bool:
@@ -128,7 +136,14 @@ def _item_paths(item: dict[str, Any], paths_config: PathsConfig | None) -> list[
         normalized = _normalize_qbt_path(combined, paths_config)
         if normalized:
             paths.append(normalized)
-    
+
+    if isinstance(name, str) and name.strip() and paths_config:
+        torrent_name = name.strip().rstrip("/")
+        # Fallback for setups where qBittorrent reports host paths that do not map
+        # cleanly into the container. Match candidates by top-level folder/file name.
+        for root in paths_config.download_roots:
+            paths.append(str(Path(root) / torrent_name))
+
     return paths
 
 

@@ -30,6 +30,7 @@ from app.services.scanner import ScanPathError, scan_candidates, _to_absolute_pa
 
 logger = logging.getLogger(__name__)
 REVISION_RE = re.compile(r"\bv(\d+)\b", re.IGNORECASE)
+IN_PROGRESS_LABEL_RE = re.compile(r"[^a-z0-9]+")
 
 
 def _format_size(size_bytes: int) -> str:
@@ -46,6 +47,20 @@ def _path_mount_label(path: Path) -> str:
     if len(parts) >= 2:
         return f"/{parts[1]}"
     return str(path)
+
+
+def _normalize_in_progress_label(value: str) -> str:
+    lowered = value.casefold()
+    return IN_PROGRESS_LABEL_RE.sub(" ", lowered).strip()
+
+
+def _path_name_labels(path_value: str) -> set[str]:
+    path = Path(path_value)
+    labels = {
+        _normalize_in_progress_label(path.name),
+        _normalize_in_progress_label(path.stem),
+    }
+    return {label for label in labels if label}
 
 
 class ScanManager:
@@ -280,7 +295,10 @@ class ScanManager:
                         reason=classification.reason,
                         target_path=resolved.target_path,
                         action=planned_action,
-                        folder_exists=resolved.folder_exists,
+                        show_folder_exists=resolved.show_folder_exists,
+                        season_folder_exists=resolved.season_folder_exists,
+                        file_exists=target_exists,
+                        file_size=candidate.file_size,
                     )
                 )
                 if planned_action == "skip":
@@ -397,9 +415,16 @@ class ScanManager:
                 )
 
             item.target_path = new_target
-            target_exists = Path(new_target).exists()
+            target_path_obj = Path(new_target)
+            target_exists = target_path_obj.exists()
             item.action = "replace" if target_exists else "move"
-            item.folder_exists = Path(new_target).parent.exists()
+            parent = target_path_obj.parent
+            item.season_folder_exists = parent.exists()
+            if item.item_type == "series":
+                item.show_folder_exists = parent.parent.exists() if parent.parent else False
+            else:
+                item.show_folder_exists = parent.exists()
+            item.file_exists = target_exists
             updated_count += 1
 
         if not updated_count:
@@ -434,6 +459,11 @@ class ScanManager:
             total += 1
         return total
 
+    def _update_confirm_state(self, scan: ScanPlan, **fields) -> None:
+        for key, value in fields.items():
+            setattr(scan, key, value)
+        scan.confirm_last_update_at = datetime.now(UTC)
+
     async def confirm_scan(
         self,
         scan_id: str,
@@ -466,9 +496,20 @@ class ScanManager:
             )
 
         scan.confirm_status = "running"
-        scan.confirm_current_item = None
-        scan.confirm_started_at = datetime.now(UTC)
-        scan.confirm_total = confirm_total
+        self._update_confirm_state(
+            scan,
+            confirm_phase="preparing",
+            confirm_current_item=None,
+            confirm_current_target=None,
+            confirm_started_at=datetime.now(UTC),
+            confirm_total=confirm_total,
+            confirm_current_size_bytes=None,
+            confirm_current_copied_bytes=None,
+            confirm_current_speed_bytes=None,
+            confirm_current_percent=None,
+            confirm_cross_drive=None,
+            confirm_note="Preparing confirm queue.",
+        )
 
         create_task(self._run_confirm_task(scan_id, item_ids, source_paths, source_prefixes))
         return scan
@@ -483,81 +524,153 @@ class ScanManager:
         scan = self.get_scan(scan_id)
         updated_paths: set[str] = set()
         now = datetime.now(UTC)
-        applied = 0
+        try:
+            selected_items = [
+                item
+                for item in scan.items
+                if item.action != "skip"
+                and not item.confirmed
+                and (item_ids is None or item.confirm_id in item_ids)
+                and (source_paths is None or item.source_path in source_paths)
+                and (
+                    source_prefixes is None
+                    or any(item.source_path.startswith(prefix) for prefix in source_prefixes)
+                )
+            ]
 
-        for item in scan.items:
-            if item.action == "skip":
-                continue
-            if item.confirmed:
-                continue
-            if item_ids is not None and item.confirm_id not in item_ids:
-                continue
-            if source_paths is not None and item.source_path not in source_paths:
-                continue
-            if source_prefixes is not None and not any(
-                item.source_path.startswith(prefix) for prefix in source_prefixes
-            ):
-                continue
+            if selected_items:
+                self._update_confirm_state(
+                    scan,
+                    confirm_phase="stopping_seeding",
+                    confirm_current_item=None,
+                    confirm_current_target=None,
+                    confirm_current_size_bytes=None,
+                    confirm_current_copied_bytes=None,
+                    confirm_current_speed_bytes=None,
+                    confirm_current_percent=None,
+                    confirm_note="Stopping seeding before move.",
+                )
+                await self._stop_seeding_for_items(selected_items)
 
-            scan.confirm_current_item = item.source_path
-            try:
-                logger.info("Applying %s: %s -> %s", item.action, item.source_path, item.target_path)
-                await self._apply_item(item)
-                item.confirmed = True
-                applied += 1
-                if item.item_type in ("movie", "series"):
-                    updated_paths.add(item.target_path)
+            for item in selected_items:
 
-                if item.action == "move":
-                    scan.counts.moved += 1
-                elif item.action == "replace":
-                    scan.counts.replaced += 1
-                logger.info("Finished %s: %s", item.action, item.target_path)
-            except Exception as exc:
-                scan.counts.failed += 1
-                item.error = str(exc)
-                logger.error("Failed %s for %s: %s", item.action, item.source_path, str(exc), exc_info=True)
+                self._update_confirm_state(
+                    scan,
+                    confirm_phase="preparing",
+                    confirm_current_item=item.source_path,
+                    confirm_current_target=item.target_path,
+                    confirm_current_size_bytes=None,
+                    confirm_current_copied_bytes=None,
+                    confirm_current_speed_bytes=None,
+                    confirm_current_percent=None,
+                    confirm_note="Preparing next item.",
+                )
+                try:
+                    logger.info("Applying %s: %s -> %s", item.action, item.source_path, item.target_path)
+                    await self._apply_item(scan, item)
+                    item.confirmed = True
+                    if item.item_type in ("movie", "series"):
+                        updated_paths.add(item.target_path)
 
-        scan.confirm_current_item = None
+                    if item.action == "move":
+                        scan.counts.moved += 1
+                    elif item.action == "replace":
+                        scan.counts.replaced += 1
+                    logger.info("Finished %s: %s", item.action, item.target_path)
+                except Exception as exc:
+                    scan.counts.failed += 1
+                    item.error = str(exc)
+                    self._update_confirm_state(
+                        scan,
+                        confirm_note=f"Failed to move item: {exc}",
+                    )
+                    logger.error("Failed %s for %s: %s", item.action, item.source_path, str(exc), exc_info=True)
 
-        await self._trigger_jellyfin_scans(updated_paths)
+            self._update_confirm_state(
+                scan,
+                confirm_phase="triggering_jellyfin",
+                confirm_current_item=None,
+                confirm_current_target=None,
+                confirm_current_size_bytes=None,
+                confirm_current_copied_bytes=None,
+                confirm_current_speed_bytes=None,
+                confirm_current_percent=None,
+                confirm_note="Triggering Jellyfin library refresh.",
+            )
+            await self._trigger_jellyfin_scans(updated_paths)
 
-        all_confirmed = all(
-            item.action == "skip" or item.confirmed
-            for item in scan.items
-        )
+            all_confirmed = all(
+                item.action == "skip" or item.confirmed
+                for item in scan.items
+            )
 
-        selective = item_ids is not None or source_paths is not None or source_prefixes is not None
+            selective = item_ids is not None or source_paths is not None or source_prefixes is not None
 
-        if not selective or all_confirmed:
-            scan.status = "confirmed"
-            scan.confirmed_at = now
+            if not selective or all_confirmed:
+                scan.status = "confirmed"
+                scan.confirmed_at = now
 
-        scan.confirm_status = "completed"
+            scan.confirm_status = "completed"
+            self._update_confirm_state(
+                scan,
+                confirm_phase="completed",
+                confirm_current_item=None,
+                confirm_current_target=None,
+                confirm_current_size_bytes=None,
+                confirm_current_copied_bytes=None,
+                confirm_current_speed_bytes=None,
+                confirm_current_percent=100.0 if scan.confirm_total else 0.0,
+                confirm_note="Confirm finished.",
+            )
 
-        logger.info(
-            "Confirm finished for scan %s: moved=%s replaced=%s failed=%s",
-            scan_id,
-            scan.counts.moved,
-            scan.counts.replaced,
-            scan.counts.failed,
-        )
+            logger.info(
+                "Confirm finished for scan %s: moved=%s replaced=%s failed=%s",
+                scan_id,
+                scan.counts.moved,
+                scan.counts.replaced,
+                scan.counts.failed,
+            )
+        except Exception as exc:
+            scan.confirm_status = "failed"
+            self._update_confirm_state(
+                scan,
+                confirm_phase="failed",
+                confirm_note=f"Confirm failed: {exc}",
+            )
+            logger.error("Confirm task failed for scan %s: %s", scan_id, str(exc), exc_info=True)
 
-    async def _apply_item(self, item: ScannedItem) -> None:
+    def _copy_file_with_progress(self, scan: ScanPlan, source_path: Path, target_path: Path, source_size: int) -> None:
+        copied_bytes = 0
+        chunk_size = 8 * 1024 * 1024
+        started_at = time.perf_counter()
+
+        with source_path.open("rb") as src, target_path.open("wb") as dst:
+            while True:
+                chunk = src.read(chunk_size)
+                if not chunk:
+                    break
+                dst.write(chunk)
+                copied_bytes += len(chunk)
+                elapsed = max(time.perf_counter() - started_at, 0.001)
+                speed = copied_bytes / elapsed
+                percent = round((copied_bytes / source_size) * 100, 1) if source_size else None
+                self._update_confirm_state(
+                    scan,
+                    confirm_phase="moving",
+                    confirm_current_copied_bytes=copied_bytes,
+                    confirm_current_speed_bytes=speed,
+                    confirm_current_percent=percent,
+                    confirm_note="Copying file to target drive.",
+                )
+            dst.flush()
+        shutil.copystat(source_path, target_path, follow_symlinks=True)
+
+    async def _apply_item(self, scan: ScanPlan, item: ScannedItem) -> None:
         source_path = Path(item.source_path)
         target_path = Path(item.target_path)
 
         if item.action == "skip":
             return
-
-        candidate = CandidateItem(
-            source_root_key="",
-            source_root=str(source_path.parent),
-            source_path=str(source_path),
-            name=item.name,
-        )
-
-        await self._stop_seeding(candidate)
 
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -584,13 +697,48 @@ class ScanManager:
                 "MOVE NOTE cross-drive move detected: this can take longer because the file is copied to the target drive and then removed from the source drive."
             )
 
+        self._update_confirm_state(
+            scan,
+            confirm_phase="moving",
+            confirm_current_item=str(source_path),
+            confirm_current_target=str(target_path),
+            confirm_current_size_bytes=source_size,
+            confirm_current_copied_bytes=0,
+            confirm_current_speed_bytes=None,
+            confirm_current_percent=0.0,
+            confirm_cross_drive=cross_drive,
+            confirm_note=(
+                "Cross-drive move detected. Copying to target drive first."
+                if cross_drive
+                else "Moving file on the same drive."
+            ),
+        )
+
         if item.action == "replace" and target_path.exists():
             logger.info("MOVE REPLACE removing existing target before copy: %s", target_path)
             target_path.unlink()
 
         started_at = time.perf_counter()
         try:
-            shutil.move(str(source_path), str(target_path))
+            if cross_drive and source_path.is_file():
+                self._copy_file_with_progress(scan, source_path, target_path, source_size)
+                self._update_confirm_state(
+                    scan,
+                    confirm_phase="deleting_source",
+                    confirm_current_copied_bytes=source_size,
+                    confirm_current_speed_bytes=scan.confirm_current_speed_bytes,
+                    confirm_current_percent=100.0,
+                    confirm_note="Copy completed. Removing source file.",
+                )
+                source_path.unlink()
+            else:
+                shutil.move(str(source_path), str(target_path))
+                self._update_confirm_state(
+                    scan,
+                    confirm_current_copied_bytes=source_size,
+                    confirm_current_percent=100.0,
+                    confirm_note="Move completed.",
+                )
         except Exception:
             elapsed = time.perf_counter() - started_at
             logger.exception(
@@ -613,18 +761,15 @@ class ScanManager:
 
         self._cleanup_empty_parents(source_path)
 
-    async def _stop_seeding(self, candidate: CandidateItem) -> None:
+    async def _stop_seeding_for_items(self, items: list[ScannedItem]) -> None:
         client = QbittorrentClient.from_env(self._config.paths)
         if not client:
             return
 
-        candidate_paths = [candidate.source_path]
-        if candidate.container_path:
-            candidate_paths.append(candidate.container_path)
-
         try:
+            candidate_paths = [item.source_path for item in items if item.source_path]
             await client.stop_seeding_for_paths(candidate_paths)
-            logger.info("Stopped seeding check completed for %s", candidate.source_path)
+            logger.info("Stopped seeding check completed for %d item(s)", len(candidate_paths))
         except Exception as exc:
             error_msg = f"Error stopping seeding in qBittorrent: {str(exc)}"
             logger.error(error_msg, exc_info=True)
@@ -670,14 +815,38 @@ class ScanManager:
     def _load_in_progress_paths_sync(self) -> list[str]:
         return asyncio_run_in_thread(self._load_in_progress_paths())
 
-    @staticmethod
-    def _is_in_progress(candidate_path: str, in_progress_paths: list[str]) -> bool:
+    def _candidate_release_labels(self, candidate_path: str) -> set[str]:
+        candidate = Path(_to_absolute_path(candidate_path))
+        for root in self._config.paths.download_roots:
+            root_path = Path(root)
+            try:
+                relative = candidate.relative_to(root_path)
+            except ValueError:
+                continue
+
+            if not relative.parts:
+                break
+
+            first_part = relative.parts[0]
+            return {
+                label for label in {
+                    _normalize_in_progress_label(first_part),
+                    _normalize_in_progress_label(Path(first_part).stem),
+                } if label
+            }
+
+        return _path_name_labels(str(candidate))
+
+    def _is_in_progress(self, candidate_path: str, in_progress_paths: list[str]) -> bool:
         candidate_norm = str(Path(_to_absolute_path(candidate_path))).rstrip("/")
+        candidate_labels = self._candidate_release_labels(candidate_norm)
         for path in in_progress_paths:
             active_norm = str(Path(path)).rstrip("/")
             if candidate_norm == active_norm:
                 return True
             if candidate_norm.startswith(active_norm + "/"):
+                return True
+            if candidate_labels and candidate_labels & _path_name_labels(active_norm):
                 return True
         return False
 
@@ -690,11 +859,24 @@ class ScanManager:
             return
 
         try:
-            logger.info("Triggering Jellyfin media update for %d path(s)", len(updated_paths))
-            await client.notify_media_updated(sorted(updated_paths))
-            logger.info("Finished Jellyfin media update for %d path(s)", len(updated_paths))
+            library_names = set()
+            for item in (self._current_scan.items if self._current_scan else []):
+                if item.confirmed and item.item_type in ("movie", "series"):
+                    lib_name = client.library_name_for_kind(item.item_type)
+                    if lib_name:
+                        library_names.add(lib_name)
+
+            if library_names:
+                for lib_name in sorted(library_names):
+                    logger.info("Triggering Jellyfin library scan for '%s'", lib_name)
+                    await client.scan_library(library_name=lib_name)
+                logger.info("Finished Jellyfin library scan(s) for %d library(s)", len(library_names))
+            else:
+                logger.info("Triggering Jellyfin media update for %d path(s)", len(updated_paths))
+                await client.notify_media_updated(sorted(updated_paths))
+                logger.info("Finished Jellyfin media update for %d path(s)", len(updated_paths))
         except Exception as exc:
-            error_msg = f"Error triggering Jellyfin media update: {str(exc)}"
+            error_msg = f"Error triggering Jellyfin library scan: {str(exc)}"
             logger.error(error_msg, exc_info=True)
             if self._current_scan:
                 if "Jellyfin" not in self._current_scan.service_errors:
