@@ -644,7 +644,8 @@ async function pollScanProgress() {
     ].filter(Boolean));
 
     if (result.status === 'completed') {
-      toast('Scan completed! Click Get Report to review.', 'good');
+      toast('Scan completed — loading report...', 'good');
+      setTimeout(fetchReport, 500);
     } else if (result.status === 'running') {
       toast('Scan still running (' + result.percent + '%)', 'info');
       pollTimer = setTimeout(pollScanProgress, POLL_INTERVAL_MS);
