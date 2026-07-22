@@ -271,6 +271,61 @@ alias_values = series_aliases(path)
 
 **Note:** If a full restart doesn't help, check the host mount (`mount | grep media3`), disk health (`smartctl -H /dev/sdX`), and kernel messages (`sudo dmesg | grep -iE "sdX|EXT4-fs error"`) for hardware or filesystem issues.
 
+### Apostrophe normalization in path matching
+
+**Problem:** Series with apostrophes in the name (e.g., `Hell's Paradise`) would not match the same show classified without apostrophes (e.g., `Hells Paradise` from dot-separated filenames). `normalize_series_text("Hell's Paradise")` produced `"hell s paradise"` (3 tokens) while `normalize_series_text("Hells Paradise")` produced `"hells paradise"` (2 tokens). This caused folder matching to fail.
+
+**Affected file:** `app/services/resolver.py` (`normalize_text`)
+
+**Fix:** Strip apostrophes in `normalize_text()` so punctuation is ignored during normalization:
+```python
+def normalize_text(value: str) -> str:
+    value = value.replace("'", "")
+    return " ".join(WORD_RE.findall(value.lower()))
+```
+
+This is global — `normalize_series_text` calls `normalize_text`, so both series and movie matching benefit.
+
+**Verification:** `normalize_series_text("Hell's Paradise")` now returns `"hells paradise"` matching `normalize_series_text("Hells Paradise")`.
+
+### File existence by episode number in resolver
+
+**Problem:** The resolver constructed target filenames from scratch using a template (`{episode_title} - S{ss}E{ee}{ext}`) but never checked if a file for that episode already existed in the season directory under a different name. Existing files like `[Judas] Jigokuraku - S01E04v2.mkv` were missed because the constructed path `Hell's Paradise - S01E04.mkv` didn't match, causing `file_exists=False` and action `"move"` instead of `"replace"`.
+
+**Affected file:** `app/services/resolver.py` (`_resolve_series`)
+
+**Fix:** After constructing the target path, scan `season_dir` for existing video files containing the same `S{ss}E{ee}` pattern with optional `v\d+` suffix. If found, use that file's path as `target_path`:
+```python
+episode_tag = f"s{season_number:02d}e{episode_number:02d}"
+if season_dir.exists():
+    for f in season_dir.iterdir():
+        if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS:
+            if re.search(rf"{re.escape(episode_tag)}(?:v\d+)?(?=[^a-z0-9]|$)", f.stem.lower()):
+                target_path = str(f)
+                break
+```
+
+This ensures `Path(target_path).exists()` returns `True` in `scan_manager.py`, correctly setting `file_exists=True` and action to `"replace"`.
+
+**Edge cases handled:**
+- `S01E04v2` → matches (v2 suffix captured)
+- `S01E04 - Title` → matches (space after is non-alphanumeric)
+- `S01E0423` → no match (digit after would need to be non-alphanumeric)
+
+### Group-scoped path sync in Web UI
+
+**Problem:** Smart path sync changed root-level segments (e.g., `/media1/` → `/media2/`) across ALL groups, not just the current show.
+
+**Fix:** `syncPathChanges` in `app/ui/index.html` filters by `item.title !== groupTitle` so changes only propagate within the same show group.
+
+### Auto-load report on scan complete and page load
+
+**Pattern:** The report should load automatically without requiring the user to click "Get Report". Two triggers:
+1. `pollScanProgress` calls `setTimeout(fetchReport, 500)` when `result.status === 'completed'`
+2. `checkConnection` calls `fetchReport()` after loading libraries on page load
+
+`fetchReport` uses a `finally` block to re-enable the "Get Report" button so it never stays disabled on error.
+
 ## Plans
 
 The `plan/` directory is the central location for all project plans and roadmap documents. Each plan is a markdown file. When working on a plan, reference the plan file path in conversations and use it as a checklist. Plans can be created, implemented incrementally, and marked complete within the same file.
