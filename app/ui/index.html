@@ -1359,6 +1359,7 @@ async function pollConfirmProgress() {
       toast('Confirm completed! Moved: ' + (result.counts?.moved || 0) + ', Replaced: ' + (result.counts?.replaced || 0) + ', Failed: ' + (result.counts?.failed || 0), 'good');
       log('Confirm completed. Moved: ' + (result.counts?.moved || 0) + ', Replaced: ' + (result.counts?.replaced || 0) + ', Failed: ' + (result.counts?.failed || 0), 'good');
       $('progressFill').style.background = '';
+      setTimeout(fetchReport, 800);
       return;
     }
     if (result.status === 'running') {
