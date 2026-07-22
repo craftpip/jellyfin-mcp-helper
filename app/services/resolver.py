@@ -30,6 +30,7 @@ def sanitize_name(value: str) -> str:
 
 
 def normalize_text(value: str) -> str:
+    value = value.replace("'", "")
     return " ".join(WORD_RE.findall(value.lower()))
 
 
@@ -230,6 +231,15 @@ class PathResolver:
         episode_title = sanitize_name(classification.episode_title or classification.title or show_dir.name)
         episode_base = f"{episode_title} - S{season_number:02d}E{episode_number:02d}"
         target_path = str(season_dir / f"{episode_base}{ext}")
+        # Check if an existing file for this episode already exists in the season dir
+        episode_tag = f"s{season_number:02d}e{episode_number:02d}"
+        if season_dir.exists():
+            for f in season_dir.iterdir():
+                if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS:
+                    if re.search(rf"{re.escape(episode_tag)}(?:v\d+)?(?=[^a-z0-9]|$)", f.stem.lower()):
+                        target_path = str(f)
+                        logger.info("  [resolver] matched existing episode file: %s", target_path)
+                        break
         logger.info("  [resolver] target: %s", target_path)
         self._remember_series_alias_season(series_key, classification.series_alias, season_number)
         if classification.series_alias and season_number:

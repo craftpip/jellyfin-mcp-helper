@@ -567,6 +567,8 @@ async function checkConnection() {
           btnContainer.appendChild(btn);
         });
         log('Loaded ' + names.length + ' libraries', 'good');
+        // Auto-load report if one is available
+        fetchReport();
       } catch (e) {
         log('Could not load libraries: ' + e.message, 'warn');
       }
