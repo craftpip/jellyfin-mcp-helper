@@ -1035,7 +1035,9 @@ function applyFilter() {
 }
 
 function toggleAll(e) {
-  document.querySelectorAll('.item-check').forEach(cb => cb.checked = e.target.checked);
+  const checked = e.target.checked;
+  document.querySelectorAll('.item-check').forEach(cb => cb.checked = checked);
+  document.querySelectorAll('.group-select-all').forEach(cb => cb.checked = checked);
   updateSelectionSummary();
 }
 
