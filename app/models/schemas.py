@@ -37,6 +37,7 @@ class ScannedItem(BaseModel):
     season_folder_exists: bool = Field(default=False, alias="seasonFolderExists")
     file_exists: bool = Field(default=False, alias="fileExists")
     file_size: int | None = Field(default=None, alias="fileSize")
+    cross_drive: bool = Field(default=False, alias="crossDrive")
 
     model_config = {"populate_by_name": True}
 

@@ -301,6 +301,7 @@ def _format_report_items(scan: ScanPlan, items_by_action: dict[str, list[Scanned
             "seasonFolderExists": item.season_folder_exists,
             "fileExists": item.file_exists,
             "fileSize": item.file_size,
+            "crossDrive": item.cross_drive,
             "reason": item.reason,
             "error": item.error,
         })

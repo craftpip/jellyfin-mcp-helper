@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import time
@@ -40,6 +41,16 @@ def _format_size(size_bytes: int) -> str:
             return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
         size /= 1024
     return f"{size_bytes} B"
+
+
+def _is_cross_drive(source_path: str, target_path: str) -> bool:
+    try:
+        source_dev = os.stat(source_path).st_dev
+        target_parent = Path(target_path).parent
+        target_dev = os.stat(target_parent).st_dev
+        return source_dev != target_dev
+    except OSError:
+        return False
 
 
 def _path_mount_label(path: Path) -> str:
@@ -279,6 +290,7 @@ class ScanManager:
                 target_exists = target_path.exists()
                 action = "replace" if target_exists else "move"
                 planned_action = action if request.replace_existing or not target_exists else "skip"
+                cross_drive = _is_cross_drive(candidate.source_path, resolved.target_path)
 
                 if classification.kind == "movie":
                     scan.counts.movies += 1
@@ -299,6 +311,7 @@ class ScanManager:
                         season_folder_exists=resolved.season_folder_exists,
                         file_exists=target_exists,
                         file_size=candidate.file_size,
+                        cross_drive=cross_drive,
                     )
                 )
                 if planned_action == "skip":
