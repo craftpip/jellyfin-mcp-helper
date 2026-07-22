@@ -217,6 +217,12 @@
   .chk-label .chk-text {
     flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
+  a.search-btn {
+    font-size: 0.72rem; color: #58a6ff; text-decoration: none; cursor: pointer;
+    padding: 2px 6px; border: 1px solid #30363d; border-radius: 4px;
+    white-space: nowrap; line-height: 1.4; flex-shrink: 0;
+  }
+  a.search-btn:hover { background: #1f2937; color: #79c0ff; }
   .chk-label input { margin: 0; }
 
   .status-pill {
@@ -946,6 +952,7 @@ function renderGroupedTable(container, items) {
     html += '<div class="group-body" id="' + groupId + '">';
     html += '<div class="group-toolbar">';
     html += '<label class="chk-label"><input type="checkbox" class="group-select-all" data-group="' + gi + '" checked onchange="toggleGroupSelect(' + gi + ', this.checked)"><span class="chk-text">' + escHtml(group.title) + '</span></label>';
+    html += '<a class="search-btn" href="https://duckduckgo.com/?q=' + encodeURIComponent(group.title) + '" target="_blank" title="Search DuckDuckGo for this show">Search</a>';
     html += '<button class="small" onclick="toggleGroupSelect(' + gi + ', true)">All</button>';
     html += '<button class="small" onclick="toggleGroupSelect(' + gi + ', false)">None</button>';
     html += '<button class="primary small" onclick="applyGroupTargetEdits(' + gi + ')" style="margin-left:8px">Update Paths</button>';
@@ -981,7 +988,7 @@ function renderGroupedTable(container, items) {
     html += '</div>';
   });
 
-  html += '<div style="margin-top:8px">';
+  html += '<div style="margin-top:8px;display:flex;gap:10px">';
   html += '<button class="primary small" onclick="applyTargetEdits()">Update Selected Paths</button>';
   html += '<button class="danger small" onclick="confirmSelected()" id="btnConfirmSmall">Confirm Selected</button>';
   html += '</div>';
