@@ -685,8 +685,9 @@ async function fetchReport() {
   } catch (e) {
     log('Report error: ' + e.message, 'err');
     toast('Report error: ' + e.message, 'err');
+  } finally {
+    $('btnReport').disabled = false;
   }
-  $('btnReport').disabled = false;
 }
 
 $('btnReport').addEventListener('click', () => {
@@ -711,7 +712,11 @@ function renderReport(report) {
     ['Series', s.series ?? 0],
     ['Skipped', s.skipped ?? 0, '#8b949e'],
     ['Actions Needed', s.action_required ?? 0, '#d29922'],
-  ].map(([label, value, color]) => `<div class="summary-pill" style="${color ? 'color:' + color : ''}"><strong>${value}</strong> ${label}</div>`).join('');
+  ].map(([label, value, color]) => `<div class="summary-pill" style="${color ? 'color:' + color : ''}"><strong>${value}</strong> ${label}</div>`).join('') +
+  '<div style="margin-left:auto;display:flex;gap:4px">' +
+  '<button class="small" onclick="toggleAllGroups(false)">Collapse all</button>' +
+  '<button class="small" onclick="toggleAllGroups(true)">Expand all</button>' +
+  '</div>';
 
   renderItemsFromReport(report);
 }
@@ -992,6 +997,20 @@ function toggleGroup(id) {
     body.classList.add('collapsed');
     arrow.classList.add('collapsed');
   }
+}
+
+function toggleAllGroups(expand) {
+  document.querySelectorAll('.group-body').forEach(body => {
+    const header = body.previousElementSibling;
+    const arrow = header?.querySelector('.arrow');
+    if (expand) {
+      body.classList.remove('collapsed');
+      arrow?.classList.remove('collapsed');
+    } else {
+      body.classList.add('collapsed');
+      arrow?.classList.add('collapsed');
+    }
+  });
 }
 
 function applyFilter() {
