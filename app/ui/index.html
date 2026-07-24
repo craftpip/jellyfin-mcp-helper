@@ -1213,42 +1213,33 @@ function syncPathChanges(changedIdx, oldPath, newPath) {
   if (!changedItem) { _syncingPaths = false; return; }
   const groupTitle = changedItem.title;
 
-  const oldParts = oldPath.split('/');
-  const newParts = newPath.split('/');
-
-  // Find first differing segment
-  let diffIdx = -1;
-  const minLen = Math.min(oldParts.length, newParts.length);
-  for (let i = 0; i < minLen; i++) {
-    if (oldParts[i] !== newParts[i]) { diffIdx = i; break; }
+  // Find the common prefix and suffix to isolate what changed
+  let prefixLen = 0;
+  while (prefixLen < oldPath.length && prefixLen < newPath.length && oldPath[prefixLen] === newPath[prefixLen]) {
+    prefixLen++;
   }
-  if (diffIdx === -1 && oldParts.length !== newParts.length) {
-    diffIdx = minLen;
+  let suffixLen = 0;
+  while (
+    suffixLen < oldPath.length - prefixLen &&
+    suffixLen < newPath.length - prefixLen &&
+    oldPath[oldPath.length - 1 - suffixLen] === newPath[newPath.length - 1 - suffixLen]
+  ) {
+    suffixLen++;
   }
-  if (diffIdx === -1) { _syncingPaths = false; return; }
 
-  const prefix = oldParts.slice(0, diffIdx).join('/');
-  const oldSegment = oldParts[diffIdx];
+  const oldMid = oldPath.slice(prefixLen, oldPath.length - suffixLen);
+  const newMid = newPath.slice(prefixLen, newPath.length - suffixLen);
+  if (!oldMid || oldMid === newMid) { _syncingPaths = false; return; }
 
   currentItems.forEach((item, idx) => {
     if (idx === changedIdx) return;
-    // Stay within the same group
     if (item.title !== groupTitle) return;
     const livePath = item._liveTarget || item.targetPath;
-    const itemParts = livePath.split('/');
-    const itemPrefix = itemParts.slice(0, diffIdx).join('/');
-
-    if (itemPrefix !== prefix) return;
-    if (itemParts.length <= diffIdx || itemParts[diffIdx] !== oldSegment) return;
-
-    if (oldParts.length !== newParts.length) return;
-
-    const newItemParts = [...itemParts.slice(0, diffIdx), newParts[diffIdx], ...itemParts.slice(diffIdx + 1)];
-
-    const newItemPath = newItemParts.join('/');
-    item._liveTarget = newItemPath;
+    if (!livePath.includes(oldMid)) return;
+    const updated = livePath.replace(oldMid, newMid);
+    item._liveTarget = updated;
     const input = document.querySelector(`.target-input[data-index="${idx}"]`);
-    if (input) input.value = newItemPath;
+    if (input) input.value = updated;
   });
 
   _syncingPaths = false;
