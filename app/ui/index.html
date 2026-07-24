@@ -1203,6 +1203,7 @@ async function applyTargetEdits() {
 
 // ====== SMART PATH SYNC ======
 let _syncingPaths = false;
+let _pasteActive = false;
 
 function syncPathChanges(changedIdx, oldPath, newPath) {
   if (_syncingPaths || oldPath === newPath) return;
@@ -1240,9 +1241,9 @@ function syncPathChanges(changedIdx, oldPath, newPath) {
     if (itemPrefix !== prefix) return;
     if (itemParts.length <= diffIdx || itemParts[diffIdx] !== oldSegment) return;
 
-    const newItemParts = oldParts.length === newParts.length
-      ? [...itemParts.slice(0, diffIdx), newParts[diffIdx], ...itemParts.slice(diffIdx + 1)]
-      : [...itemParts.slice(0, diffIdx), ...newParts.slice(diffIdx)];
+    if (oldParts.length !== newParts.length) return;
+
+    const newItemParts = [...itemParts.slice(0, diffIdx), newParts[diffIdx], ...itemParts.slice(diffIdx + 1)];
 
     const newItemPath = newItemParts.join('/');
     item._liveTarget = newItemPath;
@@ -1255,6 +1256,7 @@ function syncPathChanges(changedIdx, oldPath, newPath) {
 
 // Delegated input handler for path sync
 $('reportItems').addEventListener('input', (e) => {
+  if (_pasteActive) return;
   if (e.target.classList.contains('target-input')) {
     const idx = parseInt(e.target.dataset.index);
     const item = currentItems[idx];
@@ -1264,6 +1266,26 @@ $('reportItems').addEventListener('input', (e) => {
     item._liveTarget = newPath;
     syncPathChanges(idx, oldPath, newPath);
   }
+});
+
+// Handle paste: debounce the sync so paste (which can fire multiple input events)
+// only triggers one sync with the final value
+$('reportItems').addEventListener("paste", (e) => {
+  if (!e.target.classList.contains("target-input")) return;
+  const idx = parseInt(e.target.dataset.index);
+  const item = currentItems[idx];
+  if (!item) return;
+  const oldPath = item._liveTarget || item.targetPath;
+  const pastedText = e.clipboardData?.getData("text") || "";
+  _pasteActive = true;
+  item._liveTarget = pastedText || e.target.value;
+  setTimeout(() => {
+    _pasteActive = false;
+    const newPath = e.target.value;
+    if (newPath === oldPath) return;
+    item._liveTarget = newPath;
+    syncPathChanges(idx, oldPath, newPath);
+  }, 0);
 });
 
 // Also support keydown on Enter to trigger update button focus
