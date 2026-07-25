@@ -1213,34 +1213,42 @@ function syncPathChanges(changedIdx, oldPath, newPath) {
   if (!changedItem) { _syncingPaths = false; return; }
   const groupTitle = changedItem.title;
 
-  // Find the common prefix and suffix to isolate what changed
-  let prefixLen = 0;
-  while (prefixLen < oldPath.length && prefixLen < newPath.length && oldPath[prefixLen] === newPath[prefixLen]) {
-    prefixLen++;
-  }
-  let suffixLen = 0;
+  let i1 = 0;
+  while (i1 < oldPath.length && i1 < newPath.length && oldPath[i1] === newPath[i1]) i1++;
+
+  let i2 = 0;
   while (
-    suffixLen < oldPath.length - prefixLen &&
-    suffixLen < newPath.length - prefixLen &&
-    oldPath[oldPath.length - 1 - suffixLen] === newPath[newPath.length - 1 - suffixLen]
-  ) {
-    suffixLen++;
-  }
+    i2 + i1 < oldPath.length &&
+    i2 + i1 < newPath.length &&
+    oldPath[oldPath.length - 1 - i2] === newPath[newPath.length - 1 - i2]
+  ) i2++;
 
-  const oldMid = oldPath.slice(prefixLen, oldPath.length - suffixLen);
-  const newMid = newPath.slice(prefixLen, newPath.length - suffixLen);
-  if (!oldMid || oldMid === newMid) { _syncingPaths = false; return; }
+  const prefix = oldPath.slice(0, i1);
+  const oldChunk = oldPath.slice(i1, oldPath.length - i2);
+  const newChunk = newPath.slice(i1, newPath.length - i2);
+  if (oldChunk === newChunk) { _syncingPaths = false; return; }
 
+  let anySynced = false;
   currentItems.forEach((item, idx) => {
     if (idx === changedIdx) return;
     if (item.title !== groupTitle) return;
     const livePath = item._liveTarget || item.targetPath;
-    if (!livePath.includes(oldMid)) return;
-    const updated = livePath.replace(oldMid, newMid);
+    if (!livePath.startsWith(prefix)) return;
+    const after = livePath.slice(i1);
+    const replaced = after.replace(oldChunk, newChunk);
+    if (replaced === after) return;
+    const updated = prefix + replaced;
     item._liveTarget = updated;
     const input = document.querySelector(`.target-input[data-index="${idx}"]`);
     if (input) input.value = updated;
+    anySynced = true;
   });
+
+  if (!anySynced) {
+    const input = document.querySelector(`.target-input[data-index="${changedIdx}"]`);
+    if (input) input.value = oldPath;
+    currentItems[changedIdx]._liveTarget = oldPath;
+  }
 
   _syncingPaths = false;
 }

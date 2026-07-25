@@ -1,6 +1,8 @@
+name: jellyfin-mcp-helper
+
 services:
   organizer:
-    build: /home/boniface/www/jellyfin-mcp-helper
+    build: .
     image: jellyfin-mcp-helper:dev
     container_name: jellyfin-mcp-helper
     restart: unless-stopped
@@ -12,10 +14,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
+      - /home/boniface/www/jellyfin-mcp-helper:/app
       - /mnt/media1t/downloads:/media1
       - /mnt/media2t/downloads:/media2
       - /mnt/media3t/downloads:/media3
-      - /home/boniface/www/jellyfin-mcp-helper/app:/app/app
-      - /home/boniface/www/jellyfin-mcp-helper/config:/app/config
-      - /home/boniface/www/jellyfin-mcp-helper/logs:/app/logs
-      - /home/boniface/www/jellyfin-mcp-helper/reports:/app/reports

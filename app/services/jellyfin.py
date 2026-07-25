@@ -208,11 +208,11 @@ class JellyfinClient:
             "ParentId": library["id"],
             "Recursive": "true",
             "IncludeItemTypes": "Series,Movie",
-            "Fields": "ProductionYear,EndDate,Status",
+            "Fields": "ProductionYear,EndDate,Status,MediaStreams,Path",
             "Limit": str(fetch_limit),
             "UserId": user_id,
-            "SortBy": "SortName",
-            "SortOrder": "Ascending",
+            "SortBy": "DateCreated",
+            "SortOrder": "Descending",
         }
 
         data = await self._api_get("/Items", params)
@@ -228,11 +228,16 @@ class JellyfinClient:
                 if score < 0.3:
                     continue
 
+            streams = item.get("MediaStreams") or []
+
             if item_type == "movie":
                 entry: dict = {
                     "name": item_name,
                     "type": "movie",
                     "year": item.get("ProductionYear"),
+                    "path": item.get("Path") or "",
+                    "audio_languages": sorted(set(s.get("Language") or "und" for s in streams if s.get("Type") == "Audio")),
+                    "subtitle_languages": sorted(set(s.get("Language") or "und" for s in streams if s.get("Type") == "Subtitle")),
                 }
                 if search:
                     entry["_score"] = score
@@ -254,9 +259,9 @@ class JellyfinClient:
                     "name": item_name,
                     "type": "series",
                     "ongoing": ongoing,
+                    "path": item.get("Path") or "",
                     "season_count": seasons_info["total_seasons"],
                     "episode_count": seasons_info["total_episodes"],
-                    "seasons": seasons_info["seasons"],
                 }
                 if search:
                     entry["_score"] = score

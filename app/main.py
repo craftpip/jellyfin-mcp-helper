@@ -797,7 +797,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get jellyfin library items",
-                        "description": "List compact Jellyfin library items for movies and series. This tool is for existence checks, lightweight library browsing, and LLM-friendly summaries. It supports optional fuzzy search (client-side token overlap and similarity scoring handles typos and partial name matches) and optional ongoing-series filtering. For series, it returns total season count, total episode count, and per-season episode counts instead of full episode listings.",
+                        "description": "List compact Jellyfin library items for movies and series, sorted by most recently added first (descending DateCreated). This tool is for existence checks, lightweight library browsing, and LLM-friendly summaries. It supports optional fuzzy search (client-side token overlap and similarity scoring handles typos and partial name matches) and optional ongoing-series filtering. For each item, it returns the absolute directory path on disk. For movies, it also returns audio_languages and subtitle_languages arrays listing available language codes from the media streams. For series, it returns total season count, total episode count, and per-season episode counts.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -818,7 +818,7 @@ def _mcp_tools() -> list[dict[str, object]]:
                         "type": "integer",
                         "default": 10,
                         "description": "Maximum number of items to return. Results are ordered by newest release year first, then by name."
-                    }
+                    },
                 },
                 "required": ["libraryName"]
             },
@@ -1407,7 +1407,7 @@ async def mcp(request: dict) -> JSONResponse:
                     limit=arguments.get("limit", 10),
                     ongoing_only=arguments.get("ongoingOnly", False),
                 )
-                result["next"] = "Search uses client-side fuzzy matching (token overlap + similarity scoring) so it handles typos and partial names. Use ongoingOnly to focus on currently ongoing series."
+                result["next"] = "Items are sorted by most recently added first. Search uses client-side fuzzy matching (token overlap + similarity scoring) so it handles typos and partial names. Use ongoingOnly to focus on currently ongoing series."
                 logger.info("TOOL <<< %s (library=%s)", name, library_name)
                 return JSONResponse(
                     {

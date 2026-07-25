@@ -3,15 +3,9 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
+RUN pip install --no-cache-dir uvicorn[standard]==0.35.0 fastapi==0.116.1 httpx==0.28.1 pydantic==2.11.7 pydantic-settings==2.10.1 guessit==3.8.0
+
 WORKDIR /app
-
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY app ./app
-COPY .env.example ./
-
-RUN mkdir -p /app/logs /app/reports
 
 EXPOSE 18327
 EXPOSE 18329
