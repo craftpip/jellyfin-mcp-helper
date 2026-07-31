@@ -916,14 +916,14 @@ class ScanManager:
             item
             for item in scan.items
             if item.confirm_id in item_ids
-            and item.action in ("move", "replace")
+            and item.action in ("move", "replace", "skip")
             and not item.confirmed
         ]
 
         if not selected:
             raise HTTPException(
                 status_code=400,
-                detail="No matching unconfirmed move/replace items found for the given itemIds.",
+                detail="No matching unconfirmed move/replace/skip items found for the given itemIds.",
             )
 
         await self._stop_seeding_for_items(selected)
@@ -937,15 +937,17 @@ class ScanManager:
                 except OSError as exc:
                     raise HTTPException(status_code=500, detail=f"Failed to delete source file: {exc}") from exc
 
+            was_actionable = item.action in ("move", "replace")
             item.action = "skip"
             item.reason = "Source file deleted by user"
             item.target_path = ""
             item.confirmed = True
-            if item.item_type == "movie":
-                scan.counts.movies = max(scan.counts.movies - 1, 0)
-            elif item.item_type == "series":
-                scan.counts.series = max(scan.counts.series - 1, 0)
-            scan.counts.skipped += 1
+            if was_actionable:
+                if item.item_type == "movie":
+                    scan.counts.movies = max(scan.counts.movies - 1, 0)
+                elif item.item_type == "series":
+                    scan.counts.series = max(scan.counts.series - 1, 0)
+                scan.counts.skipped += 1
             deleted.append(item.source_path)
             self._cleanup_empty_parents(source_path)
 

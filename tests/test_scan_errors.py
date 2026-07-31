@@ -567,6 +567,66 @@ def test_delete_items_rejects_running_scan_and_unknown_ids(tmp_path, monkeypatch
     asyncio.run(run_test())
 
 
+def test_delete_items_allows_already_skipped_items(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "downloads" / "In.Progress.Download.mkv"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"partial-bytes")
+
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(
+                downloadRoots=[str(tmp_path / "downloads")],
+                movieRoots={"default": str(tmp_path / "movies")},
+            ),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+
+    async def run_test() -> None:
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        scan.items = [
+            ScannedItem(
+                confirmId="s1",
+                sourcePath=str(source),
+                name=source.name,
+                item_type="skip",
+                confidence=1.0,
+                reason="In-progress download",
+                target_path="",
+                action="skip",
+            )
+        ]
+        scan.counts.skipped = 1
+
+        async def fake_stop_seeding(items) -> None:
+            return None
+
+        monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
+
+        report_before = _format_scan_report(scan)
+        assert any(i["confirmId"] == "s1" and i["action"] == "skip" for i in report_before["items"])
+
+        updated = await manager.delete_items(scan.scan_id, ["s1"])
+
+        assert source.exists() is False
+        item = updated.items[0]
+        assert item.action == "skip"
+        assert item.confirmed is True
+        assert item.reason == "Source file deleted by user"
+        assert updated.counts.movies == 0
+        assert updated.counts.series == 0
+        assert updated.counts.skipped == 1
+
+        report = _format_scan_report(updated)
+        assert all(i["confirmId"] != "s1" for i in report["items"])
+
+    asyncio.run(run_test())
+
+
 def test_extract_paths_adds_download_root_torrent_name_fallback(tmp_path) -> None:
     paths_config = PathsConfig(downloadRoots=[str(tmp_path / "torrents1"), str(tmp_path / "torrents2")])
 

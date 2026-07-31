@@ -312,6 +312,7 @@ def _format_report_items(scan: ScanPlan, items_by_action: dict[str, list[Scanned
             "name": item.name,
             "itemType": item.item_type,
             "action": "skip",
+            "fileSize": item.file_size,
             "reason": item.reason,
             "error": item.error,
         })

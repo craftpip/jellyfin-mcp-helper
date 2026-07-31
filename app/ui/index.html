@@ -230,10 +230,11 @@
     font-size: 0.72rem; white-space: nowrap;
   }
   .status-pill .mark {
-    font-size: 0.8rem; line-height: 1; transform: translateY(1px);
+    font-size: 0.8rem; line-height: 1;
   }
-  .status-pill .mark.exists { color: #3fb950; }
-  .status-pill .mark.missing { color: #f85149; }
+  .status-pill svg { flex: none; }
+  .status-pill.exists .mark, .status-pill.exists svg { color: #3fb950; }
+  .status-pill.missing .mark, .status-pill.missing svg { color: #f85149; }
 
   .search-bar {
     display: flex; gap: 8px; margin-bottom: 8px; align-items: center;
@@ -243,6 +244,14 @@
 
   .badge.action-move { background: #1b3827; color: #3fb950; }
   .badge.action-replace { background: #3d2715; color: #d29922; }
+  .badge.action-skip { background: #21262d; color: #8b949e; }
+
+  .row-skipped .skip-reason {
+    font-size: 0.68rem; color: #d29922; background: rgba(210, 153, 34, 0.08);
+    border: 1px solid rgba(210, 153, 34, 0.35); border-radius: 4px;
+    padding: 2px 6px; line-height: 1.35; word-wrap: break-word;
+    user-select: text; display: inline-block;
+  }
 
   #reportItems table { table-layout: fixed; }
   #reportItems th, #reportItems td {
@@ -252,9 +261,8 @@
     display: flex; flex-direction: column; gap: 5px; align-items: flex-start;
   }
   .action-cell .path-status {
-    display: flex; flex-wrap: wrap; gap: 2px;
+    display: flex; flex-wrap: wrap; gap: 10px;
   }
-  .action-cell .status-pill { font-size: 0.66rem; }
   .action-cell .badge { white-space: nowrap; }
 
   .hidden { display: none !important; }
@@ -337,11 +345,9 @@
         <button class="small" id="btnSelectExisting" disabled>Select existing paths</button>
         <button class="small" id="btnSelectMove" disabled>Select all new</button>
         <button class="small" id="btnSelectReplace" disabled>Select all existing</button>
-        <button class="small" id="btnToggleSkipped" disabled style="display:none">Show skipped items</button>
       </div>
     </div>
     <div id="reportItems"></div>
-    <div id="skippedItems" style="margin-top:12px"></div>
   </div>
 
   <div class="panel">
@@ -512,15 +518,14 @@ function setConfirmButtonLabel(label) {
 }
 
 function updateSelectionSummary() {
-  const visibleRows = document.querySelectorAll('.group-body:not(.collapsed) tbody tr');
-  const visibleCheckboxes = document.querySelectorAll('.group-body:not(.collapsed) .item-check');
+  const visibleRows = document.querySelectorAll('.group-body:not(.collapsed) tbody tr:not(.row-skipped)');
   const visibleCount = visibleRows.length;
-  const selected = document.querySelectorAll('.group-body:not(.collapsed) .item-check:checked').length;
-  const total = currentItems.length;
+  const selected = document.querySelectorAll('.group-body:not(.collapsed) .item-check:not(.skip-check):checked').length;
+  const total = currentItems.filter(i => i.action !== 'skip').length;
   $('selectionSummary').textContent = visibleCount
-    ? selected + ' of ' + visibleCount + ' item(s) selected (of ' + total + ' total)'
+    ? selected + ' of ' + visibleCount + ' item(s) selected'
     : total > 0
-      ? '0 of 0 visible (' + total + ' total, try adjusting filters)'
+      ? '0 of 0 visible (of ' + total + ' total, try adjusting filters)'
       : 'No report items loaded yet.';
   const hasItems = total > 0;
   const hasSelection = selected > 0;
@@ -536,16 +541,17 @@ function syncGroupHeaderChecks() {
   document.querySelectorAll('.group-body').forEach(body => {
     const headerCb = body.querySelector('.group-select-all');
     if (!headerCb) return;
-    const checks = body.querySelectorAll('.item-check');
-    headerCb.checked = checks.length > 0 && Array.from(checks).every(cb => cb.checked);
+    const checks = [...body.querySelectorAll('.item-check')].filter(cb => !cb.disabled);
+    headerCb.checked = checks.length > 0 && checks.every(cb => cb.checked);
   });
 }
 
 function setCheckedItems(mode) {
   const checks = mode === 'all' || mode === 'none'
-    ? document.querySelectorAll('.item-check')
-    : document.querySelectorAll('.group-body:not(.collapsed) .item-check');
+    ? document.querySelectorAll('.item-check:not(.skip-check)')
+    : document.querySelectorAll('.group-body:not(.collapsed) .item-check:not(.skip-check)');
   checks.forEach(cb => {
+    if (cb.disabled) return;
     if (mode === 'all') cb.checked = true;
     else if (mode === 'none') cb.checked = false;
     else if (mode === 'existing') cb.checked = cb.dataset.fileexists === 'true';
@@ -754,7 +760,6 @@ function renderReport(report) {
 
 function renderItemsFromReport(report) {
   const container = $('reportItems');
-  const skippedContainer = $('skippedItems');
   const s = report.summary || {};
   const allItems = report.items || [];
 
@@ -797,68 +802,36 @@ function renderItemsFromReport(report) {
     };
   });
 
-  if (mapped.length) {
-    currentItems = mapped;
+  const skippedMapped = skipped.map(item => ({
+    confirmId: item.confirmId,
+    title: 'Skipped items',
+    sourceName: (item.sourcePath || '').split('/').filter(Boolean).pop() || '',
+    sourcePath: item.sourcePath || '',
+    targetPath: '',
+    originalTarget: '',
+    itemType: item.itemType || 'skip',
+    action: 'skip',
+    pathExists: '',
+    fileExists: false,
+    fileSize: item.fileSize,
+    reason: item.error || item.reason || 'Unknown',
+  }));
+
+  const all = mapped.concat(skippedMapped);
+
+  if (all.length) {
+    currentItems = all;
     currentItems.forEach(item => { item._liveTarget = item.targetPath; });
-    renderGroupedTable(container, mapped);
+    renderGroupedTable(container, all);
   } else {
-    container.innerHTML = '<div style="color:#8b949e">No move/replace items to review.</div>';
+    container.innerHTML = '<div style="color:#8b949e">No items to review.</div>';
     currentItems = [];
-  }
-
-  // Store skipped items for toggle
-  currentSkippedItems = skipped;
-
-  // Toggle button
-  const toggleBtn = $('btnToggleSkipped');
-  if (skipped.length) {
-    toggleBtn.style.display = '';
-    toggleBtn.disabled = false;
-    toggleBtn.textContent = 'Show skipped items (' + skipped.length + ')';
-    toggleBtn.onclick = () => {
-      const showing = skippedContainer.style.display !== 'none';
-      if (showing) {
-        skippedContainer.style.display = 'none';
-        toggleBtn.textContent = 'Show skipped items (' + skipped.length + ')';
-      } else {
-        skippedContainer.style.display = '';
-        toggleBtn.textContent = 'Hide skipped items (' + skipped.length + ')';
-        renderSkippedItems(skippedContainer, skipped);
-      }
-    };
-    skippedContainer.style.display = 'none';
-  } else {
-    toggleBtn.style.display = 'none';
-    skippedContainer.style.display = 'none';
-    skippedContainer.innerHTML = '';
   }
 
   updateSelectionSummary();
   // Reset filter
   $('filterInput').value = '';
   $('filterSelect').value = 'all';
-}
-
-function renderSkippedItems(container, items) {
-  if (!items.length) {
-    container.innerHTML = '';
-    return;
-  }
-  let html = '<div style="border-top:1px solid #30363d;padding-top:10px;margin-top:6px">';
-  html += '<div style="font-size:0.8rem;color:#8b949e;margin-bottom:8px">Skipped items — not available for confirmation</div>';
-  html += '<table style="width:100%;font-size:0.78rem"><thead><tr>';
-  html += '<th>Source Path</th><th>Reason</th>';
-  html += '</tr></thead><tbody>';
-  items.forEach(item => {
-    const reason = item.error || item.reason || 'Unknown';
-    const sourceShort = item.sourcePath || item.name || '?';
-    html += '<tr style="color:#8b949e">';
-    html += '<td style="padding:3px 6px;word-break:break-all"><span style="opacity:0.7">' + escHtml(sourceShort) + '</span></td>';
-    html += '<td style="padding:3px 6px;white-space:pre-wrap">' + escHtml(reason) + '</td>';
-    html += '</tr>';
-  });
-  html += '</tbody></table></div>';
-  container.innerHTML = html;
 }
 
 function parseReportMd(md, scanId) {
@@ -921,8 +894,16 @@ function parseReportMd(md, scanId) {
   return items;
 }
 
-function statusPill(label, exists, tip) {
-  return '<span class="status-pill" title="' + tip + '"><span class="mark ' + (exists ? 'exists' : 'missing') + '">' + (exists ? '✓' : '✗') + '</span>' + label + '</span>';
+const STATUS_ICONS = {
+  folder: '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M1.5 4.5A1.5 1.5 0 0 1 3 3h3.2l1.6 1.6h5.2A1.5 1.5 0 0 1 14.5 6.1V11a1.5 1.5 0 0 1-1.5 1.5H3A1.5 1.5 0 0 1 1.5 11z"/></svg>',
+  season: '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M1.5 4.5A1.5 1.5 0 0 1 3 3h3.2l1.6 1.6h5.2A1.5 1.5 0 0 1 14.5 6.1V11a1.5 1.5 0 0 1-1.5 1.5H3A1.5 1.5 0 0 1 1.5 11z"/><circle cx="8" cy="8.9" r="1.4"/></svg>',
+  file: '<svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3 1.5h6.5L13 5v9.5H3z"/><path d="M9.5 1.5V5H13"/></svg>'
+};
+
+function statusPill(iconKey, label, exists, tip) {
+  const cls = exists ? 'exists' : 'missing';
+  return '<span class="status-pill ' + cls + '" title="' + tip + '" aria-label="' + label + ': ' + tip + '">'
+    + '<span class="mark">' + (exists ? '✓' : '✗') + '</span>' + STATUS_ICONS[iconKey] + '</span>';
 }
 
 function renderPathExistsPill(item) {
@@ -930,15 +911,31 @@ function renderPathExistsPill(item) {
     const show = item.pathExists.includes('Show ✓');
     const season = item.pathExists.includes('Season ✓');
     const file = item.pathExists.includes('File ✓');
-    return statusPill('Show', show, show ? 'Main show folder exists on target' : 'Main show folder does not exist on target — will be created')
-      + ' ' + statusPill('Season', season, season ? 'Season folder exists on target' : 'Season folder does not exist on target — will be created')
-      + ' ' + statusPill('File', file, file ? 'File exists on target — it will be replaced' : 'File does not exist on target — new file will be moved in');
+    return statusPill('folder', 'Show', show, show ? 'Main show folder exists on target' : 'Main show folder does not exist on target — will be created')
+      + ' ' + statusPill('season', 'Season', season, season ? 'Season folder exists on target' : 'Season folder does not exist on target — will be created')
+      + ' ' + statusPill('file', 'File', file, file ? 'File exists on target — it will be replaced' : 'File does not exist on target — new file will be moved in');
   }
   const folder = item.pathExists.includes('Folder ✓');
   const file = item.pathExists.includes('File ✓');
   const folderName = item.itemType === 'series' ? 'Show folder' : 'Movie folder';
-  return statusPill('Folder', folder, folder ? folderName + ' exists on target' : folderName + ' does not exist on target — will be created')
-    + ' ' + statusPill('File', file, file ? 'File exists on target — it will be replaced' : 'File does not exist on target — new file will be moved in');
+  return statusPill('folder', 'Folder', folder, folder ? folderName + ' exists on target' : folderName + ' does not exist on target — will be created')
+    + ' ' + statusPill('file', 'File', file, file ? 'File exists on target — it will be replaced' : 'File does not exist on target — new file will be moved in');
+}
+
+function renderPathExistsPill(item) {
+  if (item.itemType === 'series') {
+    const show = item.pathExists.includes('Show ✓');
+    const season = item.pathExists.includes('Season ✓');
+    const file = item.pathExists.includes('File ✓');
+    return statusPill('folder', 'Show', show, show ? 'Main show folder exists on target' : 'Main show folder does not exist on target — will be created')
+      + ' ' + statusPill('season', 'Season', season, season ? 'Season folder exists on target' : 'Season folder does not exist on target — will be created')
+      + ' ' + statusPill('file', 'File', file, file ? 'File exists on target — it will be replaced' : 'File does not exist on target — new file will be moved in');
+  }
+  const folder = item.pathExists.includes('Folder ✓');
+  const file = item.pathExists.includes('File ✓');
+  const folderName = item.itemType === 'series' ? 'Show folder' : 'Movie folder';
+  return statusPill('folder', 'Folder', folder, folder ? folderName + ' exists on target' : folderName + ' does not exist on target — will be created')
+    + ' ' + statusPill('file', 'File', file, file ? 'File exists on target — it will be replaced' : 'File does not exist on target — new file will be moved in');
 }
 
 function groupItems(items) {
@@ -980,12 +977,19 @@ function renderGroupedTable(container, items) {
 
     html += '<div class="group-body" id="' + groupId + '">';
     html += '<div class="group-toolbar">';
+    const skipOnly = group.items.every(i => i.action === 'skip');
     html += '<label class="chk-label"><input type="checkbox" class="group-select-all" data-group="' + gi + '" checked onchange="toggleGroupSelect(' + gi + ', this.checked)"><span class="chk-text">' + escHtml(group.title) + '</span></label>';
-    html += '<a class="search-btn" href="https://duckduckgo.com/?q=' + encodeURIComponent(group.title) + '" target="_blank" title="Search DuckDuckGo for this show">Search</a>';
+    if (!skipOnly) {
+      html += '<a class="search-btn" href="https://duckduckgo.com/?q=' + encodeURIComponent(group.title) + '" target="_blank" title="Search DuckDuckGo for this show">Search</a>';
+    }
     html += '<button class="small" onclick="toggleGroupSelect(' + gi + ', true)">All</button>';
     html += '<button class="small" onclick="toggleGroupSelect(' + gi + ', false)">None</button>';
-    html += '<button class="primary small" onclick="applyGroupTargetEdits(' + gi + ')" style="margin-left:8px">Update Paths</button>';
-    html += '<button class="danger small" onclick="confirmGroup(' + gi + ')">Confirm</button>';
+    if (skipOnly) {
+      html += '<button class="danger small" onclick="deleteSelectedSkipped(' + gi + ')" style="margin-left:8px">Delete Selected</button>';
+    } else {
+      html += '<button class="primary small" onclick="applyGroupTargetEdits(' + gi + ')" style="margin-left:8px">Update Paths</button>';
+      html += '<button class="danger small" onclick="confirmGroup(' + gi + ')">Confirm</button>';
+    }
     html += '</div>';
     html += '<table><thead><tr>';
     html += '<th style="width:40px"></th>';
@@ -997,6 +1001,21 @@ function renderGroupedTable(container, items) {
     html += '</tr></thead><tbody>';
 
     group.items.forEach(item => {
+      if (item.action === 'skip') {
+        html += '<tr class="row-skipped" data-title="' + escHtml(item.title).toLowerCase() + '" data-action="skip" data-fileexists="false">';
+        html += '<td><input type="checkbox" class="item-check skip-check" data-index="' + item._idx + '" data-fileexists="false" checked></td>';
+        html += '<td><div class="action-cell">';
+        html += '<span class="badge action-skip">Skipped</span>';
+        html += '</div></td>';
+        html += '<td colspan="2"><div class="path-cell">';
+        html += '<div class="source-name" title="' + escHtml(item.sourcePath || item.sourceName || '') + '">' + escHtml(item.sourceName || '') + '</div>';
+        html += '<span class="skip-reason">' + escHtml(item.reason || '') + '</span>';
+        html += '</div></td>';
+        html += '<td style="white-space:nowrap;color:#8b949e;font-size:0.8rem">' + (item.fileSize ? formatBytes(item.fileSize) : '') + '</td>';
+        html += '<td style="text-align:right"><button class="danger small" onclick="deleteSourceItem(' + item._idx + ')" title="Delete the source download file">Delete</button></td>';
+        html += '</tr>';
+        return;
+      }
       const fileExists = item.fileExists;
       const actionLabel = item.action === 'replace' ? 'Existing' : 'New';
       const actionBadge = 'badge action-' + item.action;
@@ -1097,8 +1116,12 @@ function applyFilter() {
 
 function toggleAll(e) {
   const checked = e.target.checked;
-  document.querySelectorAll('.item-check').forEach(cb => cb.checked = checked);
-  document.querySelectorAll('.group-select-all').forEach(cb => cb.checked = checked);
+  document.querySelectorAll('.item-check:not(.skip-check)').forEach(cb => {
+    if (!cb.disabled) cb.checked = checked;
+  });
+  document.querySelectorAll('.group-select-all').forEach(cb => {
+    if (!cb.disabled) cb.checked = checked;
+  });
   updateSelectionSummary();
 }
 
@@ -1122,7 +1145,7 @@ function toggleGroupSelect(gi, checked) {
   if (!group) return;
   group.items.forEach(item => {
     const cb = document.querySelector(`.item-check[data-index="${item._idx}"]`);
-    if (cb) cb.checked = checked;
+    if (cb && !cb.disabled) cb.checked = checked;
   });
   // Sync group header checkbox
   const headerCb = document.querySelector(`.group-select-all[data-group="${gi}"]`);
@@ -1162,6 +1185,7 @@ async function confirmGroup(gi) {
   if (!group) return;
   const itemIds = [];
   group.items.forEach(item => {
+    if (item.action === 'skip') return;
     const cb = document.querySelector(`.item-check[data-index="${item._idx}"]`);
     if (cb && cb.checked) itemIds.push(item.confirmId);
   });
@@ -1201,6 +1225,31 @@ async function confirmGroup(gi) {
 }
 
 // ====== DELETE SOURCE ======
+async function deleteSelectedSkipped(gi) {
+  const group = window._reportGroups?.[gi];
+  if (!group) return;
+  const ids = [];
+  group.items.forEach(item => {
+    const cb = document.querySelector(`.item-check[data-index="${item._idx}"]`);
+    if (cb && cb.checked) ids.push(item.confirmId);
+  });
+  if (!ids.length) { toast('Select at least one skipped item to delete', 'info'); return; }
+  if (confirmActive) {
+    toast('Wait for the current move to finish first', 'info');
+    return;
+  }
+  if (!confirm('Delete ' + ids.length + ' source file(s) permanently? This cannot be undone.')) return;
+  try {
+    await mcpCall('delete move new downloads scan items', { scanId, itemIds: ids });
+    log('Deleted ' + ids.length + ' skipped source file(s)', 'good');
+    toast('Deleted ' + ids.length + ' skipped file(s)', 'good');
+    fetchReport();
+  } catch (e) {
+    log('Delete error: ' + e.message, 'err');
+    toast('Delete error: ' + e.message, 'err');
+  }
+}
+
 async function deleteSourceItem(idx) {
   const item = currentItems[idx];
   if (!item) return;
@@ -1355,7 +1404,20 @@ async function confirmSelected() {
     return;
   }
 
-  if (!confirm('Move ' + checked.length + ' item(s)? This can take a while for large or cross-drive files and is not easy to undo.')) return;
+  // Support both itemIds and sourcePaths mechanisms (skipped items are not movable)
+  const itemIds = [];
+  checked.forEach(cb => {
+    const idx = parseInt(cb.dataset.index);
+    const item = currentItems[idx];
+    if (item && item.action !== 'skip') itemIds.push(item.confirmId);
+  });
+
+  if (!itemIds.length) {
+    toast('No move/replace items selected (skipped items are not movable)', 'info');
+    return;
+  }
+
+  if (!confirm('Move ' + itemIds.length + ' item(s)? This can take a while for large or cross-drive files and is not easy to undo.')) return;
 
   try {
     $('btnConfirm').disabled = true;
@@ -1370,12 +1432,6 @@ async function confirmSelected() {
     hideConfirmProgressExtra();
     $('progressFill').style.background = '#d29922';
     focusProgressPanel();
-    // Support both itemIds and sourcePaths mechanisms
-    const itemIds = [];
-    checked.forEach(cb => {
-      const idx = parseInt(cb.dataset.index);
-      if (currentItems[idx]) itemIds.push(currentItems[idx].confirmId);
-    });
 
     log('Confirming ' + itemIds.length + ' items...', 'info');
     const result = await mcpCall('confirm move new downloads scan', { scanId, itemIds });
