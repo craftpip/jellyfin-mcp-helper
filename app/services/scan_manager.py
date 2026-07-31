@@ -187,6 +187,7 @@ class ScanManager:
                         reason="In-progress download",
                         target_path="",
                         action="skip",
+                        file_size=candidate.file_size,
                     )
                 )
                 scan.processed_candidates = index
@@ -209,6 +210,7 @@ class ScanManager:
                         reason="Zero-byte file; download is incomplete or invalid",
                         target_path="",
                         action="skip",
+                        file_size=candidate.file_size,
                     )
                 )
                 scan.processed_candidates = index
@@ -237,6 +239,7 @@ class ScanManager:
                             reason=classification.reason,
                             target_path="",
                             action="skip",
+                            file_size=candidate.file_size,
                         )
                     )
                     scan.processed_candidates = index
@@ -282,6 +285,7 @@ class ScanManager:
                                 reason=f"Lower revision v{revision} skipped; keeping v{existing_revision} for same episode",
                                 target_path="",
                                 action="skip",
+                                file_size=candidate.file_size,
                             )
                         )
                         scan.processed_candidates = index
@@ -345,6 +349,7 @@ class ScanManager:
                         target_path="",
                         action="skip",
                         error=str(exc),
+                        file_size=candidate.file_size,
                     )
                 )
                 scan.processed_candidates = index
@@ -362,6 +367,10 @@ class ScanManager:
             path_name = Path(error.path).name or error.path
             message = f"Filesystem read error while scanning path: {error.error}"
             logger.warning("Scan %s could not read path: %s", scan.scan_id, error.path)
+            try:
+                err_size = Path(error.path).stat().st_size
+            except OSError:
+                err_size = None
             scan.items.append(
                 ScannedItem(
                     confirm_id=self._next_confirm_id(scan),
@@ -373,6 +382,7 @@ class ScanManager:
                     target_path="",
                     action="skip",
                     error=error.error,
+                    file_size=err_size,
                 )
             )
             messages.append(f"{error.path} ({error.error})")

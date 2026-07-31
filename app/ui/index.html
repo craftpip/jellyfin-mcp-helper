@@ -70,6 +70,18 @@
   .progress-bar .fill {
     height: 100%; background: #238636; border-radius: 4px; transition: width .3s;
   }
+  .panel.progress-running {
+    border-color: #d29922;
+    animation: progressGlow 1.6s ease-in-out infinite;
+  }
+  @keyframes progressGlow {
+    0%, 100% {
+      box-shadow: 0 0 0 1px rgba(210,153,34,.2), 0 0 12px rgba(210,153,34,.15);
+    }
+    50% {
+      box-shadow: 0 0 0 1px rgba(210,153,34,.5), 0 0 26px rgba(210,153,34,.4);
+    }
+  }
   .progress-info {
     display: flex; gap: 16px; font-size: 0.82rem; color: #8b949e; flex-wrap: wrap;
   }
@@ -430,6 +442,10 @@ function showProgress(percent, info) {
   $('progressInfo').innerHTML = info.map(s => `<span>${s}</span>`).join('');
 }
 
+function setProgressRunning(on) {
+  $('progressPanel').classList.toggle('progress-running', !!on);
+}
+
 function hideConfirmProgressExtra() {
   $('confirmProgressExtra').classList.add('hidden');
   $('confirmHeadline').textContent = 'Confirm running';
@@ -503,11 +519,15 @@ function renderConfirmProgress(result) {
 function focusProgressPanel() {
   const panel = $('progressPanel');
   if (panel.classList.contains('hidden')) return;
+  const rect = panel.getBoundingClientRect();
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  if (rect.top >= 0 && rect.bottom <= vh) return;
   panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function hideProgress() {
   $('progressPanel').classList.add('hidden');
+  setProgressRunning(false);
   hideConfirmProgressExtra();
 }
 
@@ -678,6 +698,7 @@ async function pollScanProgress() {
       result.elapsed ? result.elapsed : '',
       result.eta ? 'ETA: ' + result.eta : '',
     ].filter(Boolean));
+    setProgressRunning(result.status === 'running');
 
     if (result.status === 'completed') {
       toast('Scan completed — loading report...', 'good');
@@ -1202,6 +1223,7 @@ async function confirmGroup(gi) {
     $('progressFill').style.background = '#d29922';
     focusProgressPanel();
     log('Confirming ' + itemIds.length + ' items from "' + group.title + '"...', 'info');
+    setProgressRunning(true);
     const result = await mcpCall('confirm move new downloads scan', { scanId, itemIds });
     confirmActive = true;
     log('Confirm started! ID: ' + scanId, 'good');
@@ -1434,6 +1456,7 @@ async function confirmSelected() {
     focusProgressPanel();
 
     log('Confirming ' + itemIds.length + ' items...', 'info');
+    setProgressRunning(true);
     const result = await mcpCall('confirm move new downloads scan', { scanId, itemIds });
     confirmActive = true;
     log('Confirm started! ID: ' + scanId, 'good');
@@ -1481,6 +1504,7 @@ async function pollConfirmProgress() {
     ].filter(Boolean));
     renderConfirmProgress(result);
     $('progressFill').style.background = '#d29922';
+    setProgressRunning(result.status === 'running');
 
     if (result.status === 'completed' || result.status === 'idle') {
       confirmActive = false;
@@ -1510,6 +1534,7 @@ async function pollConfirmProgress() {
     hideConfirmProgressExtra();
     setConfirmButtonLabel('Confirm Selected');
     updateSelectionSummary();
+    setProgressRunning(false);
   }
 }
 
