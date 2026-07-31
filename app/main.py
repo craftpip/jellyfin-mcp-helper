@@ -707,6 +707,25 @@ def _mcp_tools() -> list[dict[str, object]]:
             },
         },
         {
+            "name": "delete move new downloads scan items",
+            "description": "Permanently delete the source download file for one or more planned scan items and remove them from the move plan. This is destructive and cannot be undone. Use it when the user does not want to keep a file and it should not be moved into the library.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "scanId": {
+                        "type": "string",
+                        "description": "The scan_id returned by 'move new downloads scan'."
+                    },
+                    "itemIds": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of compact confirmId values from the scan report whose source files should be deleted."
+                    }
+                },
+                "required": ["scanId", "itemIds"]
+            },
+        },
+        {
             "name": "update move new downloads scan",
             "description": "Update planned target destinations for items in a completed scan report. Use this to redirect movie or series items to a different root before confirming. After updating, fetch the report again to verify, then confirm. This tool does not move files.",
             "inputSchema": {
@@ -1234,6 +1253,39 @@ async def mcp(request: dict) -> JSONResponse:
                 )
             except HTTPException as exc:
                 return _mcp_error_response(request_id, -32000, exc.detail)
+
+        if name == "delete move new downloads scan items":
+            scan_id = arguments.get("scanId")
+            item_ids = arguments.get("itemIds")
+            if not scan_id:
+                return _mcp_error_response(request_id, -32602, "scanId is required")
+            if not item_ids or not isinstance(item_ids, list):
+                return _mcp_error_response(request_id, -32602, "itemIds is required and must be a list")
+
+            try:
+                scan = await manager.delete_items(scan_id, item_ids)
+                logger.info("TOOL <<< %s (scan_id=%s, deleted=%d)", name, scan_id, len(item_ids))
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(_format_scan_report(scan)),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except HTTPException as exc:
+                logger.warning("TOOL xxx %s (%s)", name, exc.detail)
+                return _mcp_error_response(request_id, -32000, exc.detail)
+            except Exception as exc:
+                logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
+                return _mcp_error_response(request_id, -32000, str(exc))
 
         if name == "update move new downloads scan":
             scan_id = arguments.get("scanId")

@@ -897,6 +897,61 @@ class ScanManager:
                 else:
                     self._current_scan.service_errors["Jellyfin"] += f"; {error_msg}"
 
+    async def delete_items(self, scan_id: str, item_ids: list[str]) -> ScanPlan:
+        scan = self.get_scan(scan_id)
+
+        if not item_ids:
+            raise HTTPException(status_code=400, detail="itemIds is required")
+
+        if scan.status == "running":
+            raise HTTPException(status_code=400, detail="Scan is still running. Wait for it to complete before deleting items.")
+        if scan.status == "failed":
+            raise HTTPException(status_code=400, detail="Scan failed. Run a new scan before deleting items.")
+        if scan.status == "confirmed":
+            raise HTTPException(status_code=400, detail="Scan already confirmed. Run a new scan before deleting items.")
+        if scan.confirm_status == "running":
+            raise HTTPException(status_code=409, detail="Confirm already running. Wait for it to finish before deleting items.")
+
+        selected = [
+            item
+            for item in scan.items
+            if item.confirm_id in item_ids
+            and item.action in ("move", "replace")
+            and not item.confirmed
+        ]
+
+        if not selected:
+            raise HTTPException(
+                status_code=400,
+                detail="No matching unconfirmed move/replace items found for the given itemIds.",
+            )
+
+        await self._stop_seeding_for_items(selected)
+
+        deleted: list[str] = []
+        for item in selected:
+            source_path = Path(item.source_path)
+            if source_path.exists():
+                try:
+                    source_path.unlink()
+                except OSError as exc:
+                    raise HTTPException(status_code=500, detail=f"Failed to delete source file: {exc}") from exc
+
+            item.action = "skip"
+            item.reason = "Source file deleted by user"
+            item.target_path = ""
+            item.confirmed = True
+            if item.item_type == "movie":
+                scan.counts.movies = max(scan.counts.movies - 1, 0)
+            elif item.item_type == "series":
+                scan.counts.series = max(scan.counts.series - 1, 0)
+            scan.counts.skipped += 1
+            deleted.append(item.source_path)
+            self._cleanup_empty_parents(source_path)
+
+        logger.info("Scan %s deleted %d source file(s): %s", scan_id, len(deleted), deleted)
+        return scan
+
     def delete_scan(self) -> None:
         self._current_scan = None
 

@@ -229,12 +229,11 @@
     display: inline-flex; align-items: center; gap: 4px;
     font-size: 0.72rem; white-space: nowrap;
   }
-  .status-pill .dot {
-    width: 7px; height: 7px; border-radius: 50%; display: inline-block;
+  .status-pill .mark {
+    font-size: 0.8rem; line-height: 1; transform: translateY(1px);
   }
-  .status-pill .dot.exists { background: #3fb950; }
-  .status-pill .dot.missing { background: #f85149; }
-  .status-pill .dot.partial { background: #d29922; }
+  .status-pill .mark.exists { color: #3fb950; }
+  .status-pill .mark.missing { color: #f85149; }
 
   .search-bar {
     display: flex; gap: 8px; margin-bottom: 8px; align-items: center;
@@ -244,6 +243,19 @@
 
   .badge.action-move { background: #1b3827; color: #3fb950; }
   .badge.action-replace { background: #3d2715; color: #d29922; }
+
+  #reportItems table { table-layout: fixed; }
+  #reportItems th, #reportItems td {
+    overflow: hidden; text-overflow: ellipsis; word-wrap: break-word;
+  }
+  .action-cell {
+    display: flex; flex-direction: column; gap: 5px; align-items: flex-start;
+  }
+  .action-cell .path-status {
+    display: flex; flex-wrap: wrap; gap: 2px;
+  }
+  .action-cell .status-pill { font-size: 0.66rem; }
+  .action-cell .badge { white-space: nowrap; }
 
   .hidden { display: none !important; }
   .mt-8 { margin-top: 8px; }
@@ -311,8 +323,8 @@
       <input type="text" id="filterInput" placeholder="Search by title, path..." oninput="applyFilter()">
       <select id="filterSelect" onchange="applyFilter()">
         <option value="all">All items</option>
-        <option value="move">Move only</option>
-        <option value="replace">Replace only</option>
+        <option value="move">New only</option>
+        <option value="replace">Existing only</option>
         <option value="existing">Path exists</option>
         <option value="new">Path new</option>
       </select>
@@ -323,8 +335,8 @@
         <button class="small" id="btnSelectAll" disabled>Select All</button>
         <button class="small" id="btnSelectNone" disabled>Select None</button>
         <button class="small" id="btnSelectExisting" disabled>Select existing paths</button>
-        <button class="small" id="btnSelectMove" disabled>Select all Move</button>
-        <button class="small" id="btnSelectReplace" disabled>Select all Replace</button>
+        <button class="small" id="btnSelectMove" disabled>Select all new</button>
+        <button class="small" id="btnSelectReplace" disabled>Select all existing</button>
         <button class="small" id="btnToggleSkipped" disabled style="display:none">Show skipped items</button>
       </div>
     </div>
@@ -520,6 +532,15 @@ function updateSelectionSummary() {
   });
 }
 
+function syncGroupHeaderChecks() {
+  document.querySelectorAll('.group-body').forEach(body => {
+    const headerCb = body.querySelector('.group-select-all');
+    if (!headerCb) return;
+    const checks = body.querySelectorAll('.item-check');
+    headerCb.checked = checks.length > 0 && Array.from(checks).every(cb => cb.checked);
+  });
+}
+
 function setCheckedItems(mode) {
   const checks = mode === 'all' || mode === 'none'
     ? document.querySelectorAll('.item-check')
@@ -534,6 +555,7 @@ function setCheckedItems(mode) {
       cb.checked = action === mode;
     }
   });
+  syncGroupHeaderChecks();
   updateSelectionSummary();
 }
 
@@ -762,6 +784,7 @@ function renderItemsFromReport(report) {
       confirmId: item.confirmId,
       title: title,
       sourceName: (item.sourcePath || '').split('/').filter(Boolean).pop() || '',
+      sourcePath: item.sourcePath || '',
       targetPath: p,
       originalTarget: p,
       itemType: item.itemType,
@@ -898,19 +921,24 @@ function parseReportMd(md, scanId) {
   return items;
 }
 
+function statusPill(label, exists, tip) {
+  return '<span class="status-pill" title="' + tip + '"><span class="mark ' + (exists ? 'exists' : 'missing') + '">' + (exists ? '✓' : '✗') + '</span>' + label + '</span>';
+}
+
 function renderPathExistsPill(item) {
   if (item.itemType === 'series') {
     const show = item.pathExists.includes('Show ✓');
     const season = item.pathExists.includes('Season ✓');
     const file = item.pathExists.includes('File ✓');
-    return '<span class="status-pill"><span class="dot ' + (show ? 'exists' : 'missing') + '"></span>Show</span>'
-      + ' <span class="status-pill"><span class="dot ' + (season ? 'exists' : 'missing') + '"></span>Season</span>'
-      + ' <span class="status-pill"><span class="dot ' + (file ? 'exists' : 'missing') + '"></span>File</span>';
+    return statusPill('Show', show, show ? 'Main show folder exists on target' : 'Main show folder does not exist on target — will be created')
+      + ' ' + statusPill('Season', season, season ? 'Season folder exists on target' : 'Season folder does not exist on target — will be created')
+      + ' ' + statusPill('File', file, file ? 'File exists on target — it will be replaced' : 'File does not exist on target — new file will be moved in');
   }
   const folder = item.pathExists.includes('Folder ✓');
   const file = item.pathExists.includes('File ✓');
-  return '<span class="status-pill"><span class="dot ' + (folder ? 'exists' : 'missing') + '"></span>Folder</span>'
-    + ' <span class="status-pill"><span class="dot ' + (file ? 'exists' : 'missing') + '"></span>File</span>';
+  const folderName = item.itemType === 'series' ? 'Show folder' : 'Movie folder';
+  return statusPill('Folder', folder, folder ? folderName + ' exists on target' : folderName + ' does not exist on target — will be created')
+    + ' ' + statusPill('File', file, file ? 'File exists on target — it will be replaced' : 'File does not exist on target — new file will be moved in');
 }
 
 function groupItems(items) {
@@ -942,6 +970,7 @@ function renderGroupedTable(container, items) {
   let html = '';
   groups.forEach((group, gi) => {
     const groupId = 'group-' + gi;
+    const isSeries = group.items[0].itemType === 'series';
     html += '<div class="group-header" onclick="toggleGroup(\'' + groupId + '\')">';
     html += '<span class="arrow">&#9660;</span>';
     html += '<span class="g-title">' + escHtml(group.title) + '</span>';
@@ -959,28 +988,31 @@ function renderGroupedTable(container, items) {
     html += '<button class="danger small" onclick="confirmGroup(' + gi + ')">Confirm</button>';
     html += '</div>';
     html += '<table><thead><tr>';
-    html += '<th style="width:32px"></th>';
-    html += '<th style="width:60px">Action</th>';
-    html += '<th>Episode</th>';
+    html += '<th style="width:40px"></th>';
+    html += '<th style="width:150px">Action</th>';
+    if (isSeries) html += '<th style="width:90px">Episode</th>';
     html += '<th colspan="2">Source → Target Path</th>';
-    html += '<th style="width:60px">Size</th>';
-    html += '<th style="width:180px">Path Status</th>';
+    html += '<th style="width:90px">Size</th>';
+    html += '<th style="width:100px">Source</th>';
     html += '</tr></thead><tbody>';
 
     group.items.forEach(item => {
       const fileExists = item.fileExists;
-      const actionLabel = item.action === 'replace' ? 'Replace' : 'Move';
+      const actionLabel = item.action === 'replace' ? 'Existing' : 'New';
       const actionBadge = 'badge action-' + item.action;
       html += '<tr data-title="' + escHtml(item.title).toLowerCase() + '" data-action="' + item.action + '" data-fileexists="' + fileExists + '">';
       html += '<td><input type="checkbox" class="item-check" data-index="' + item._idx + '" data-fileexists="' + fileExists + '" checked></td>';
-      html += '<td><span class="badge ' + actionBadge + '">' + actionLabel + '</span></td>';
-      html += '<td>' + escHtml(item.episode || '') + '</td>';
+      html += '<td><div class="action-cell">';
+      html += '<span class="badge ' + actionBadge + '">' + actionLabel + '</span>';
+      html += '<span class="path-status">' + renderPathExistsPill(item) + '</span>';
+      html += '</div></td>';
+      if (isSeries) html += '<td>' + escHtml(item.episode || '') + '</td>';
       html += '<td colspan="2"><div class="path-cell">';
-      html += '<div class="source-name">' + escHtml(item.sourceName || '') + '</div>';
+      html += '<div class="source-name" title="' + escHtml(item.sourcePath || item.sourceName || '') + '">' + escHtml(item.sourceName || '') + '</div>';
       html += '<input type="text" class="target-input" data-index="' + item._idx + '" value="' + escHtml(item.targetPath) + '">';
       html += '</div></td>';
       html += '<td style="white-space:nowrap;color:#8b949e;font-size:0.8rem">' + (item.fileSize ? formatBytes(item.fileSize) : '') + '</td>';
-      html += '<td style="font-size:0.78rem;white-space:nowrap">' + renderPathExistsPill(item) + '</td>';
+      html += '<td style="text-align:right"><button class="danger small" onclick="deleteSourceItem(' + item._idx + ')" title="Delete the source download file (not the target)">Delete</button></td>';
       html += '</tr>';
     });
 
@@ -1165,6 +1197,27 @@ async function confirmGroup(gi) {
     toast('Confirm error: ' + e.message, 'err');
     setConfirmButtonLabel('Confirm Selected');
     updateSelectionSummary();
+  }
+}
+
+// ====== DELETE SOURCE ======
+async function deleteSourceItem(idx) {
+  const item = currentItems[idx];
+  if (!item) return;
+  if (confirmActive) {
+    toast('Wait for the current move to finish first', 'info');
+    return;
+  }
+  const source = item.sourcePath || item.sourceName || '';
+  if (!confirm('Delete the source download file permanently?\n\n' + source + '\n\nThe file will be removed from your downloads and skipped from the move plan. This cannot be undone.')) return;
+  try {
+    await mcpCall('delete move new downloads scan items', { scanId, itemIds: [item.confirmId] });
+    log('Deleted source file: ' + source, 'good');
+    toast('Deleted: ' + (item.sourceName || 'file'), 'good');
+    fetchReport();
+  } catch (e) {
+    log('Delete error: ' + e.message, 'err');
+    toast('Delete error: ' + e.message, 'err');
   }
 }
 
@@ -1411,6 +1464,7 @@ $('btnSelectMove').addEventListener('click', () => setCheckedItems('move'));
 $('btnSelectReplace').addEventListener('click', () => setCheckedItems('replace'));
 document.addEventListener('change', e => {
   if (e.target.classList && e.target.classList.contains('item-check')) {
+    syncGroupHeaderChecks();
     updateSelectionSummary();
   }
 });

@@ -457,6 +457,116 @@ def test_confirm_stops_seeding_once_for_selected_items(tmp_path, monkeypatch) ->
     asyncio.run(run_test())
 
 
+def test_delete_items_removes_source_and_updates_counts(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "downloads" / "Unwanted.Movie.2026.mkv"
+    source.parent.mkdir(parents=True)
+
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(
+                downloadRoots=[str(tmp_path / "downloads")],
+                movieRoots={"default": str(tmp_path / "movies")},
+            ),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+
+    async def run_test() -> None:
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        source.write_bytes(b"video-bytes")
+        scan.items = [
+            ScannedItem(
+                confirmId="c1",
+                sourcePath=str(source),
+                name=source.name,
+                item_type="movie",
+                confidence=1.0,
+                reason="test",
+                target_path=str(tmp_path / "movies" / "Unwanted.Movie.2026.mkv"),
+                action="move",
+            )
+        ]
+        scan.counts.movies = 1
+
+        async def fake_stop_seeding(items) -> None:
+            return None
+
+        monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
+
+        updated = await manager.delete_items(scan.scan_id, ["c1"])
+
+        assert source.exists() is False
+        item = updated.items[0]
+        assert item.action == "skip"
+        assert item.confirmed is True
+        assert item.reason == "Source file deleted by user"
+        assert item.target_path == ""
+        assert updated.counts.movies == 0
+        assert updated.counts.skipped == 1
+
+        report = _format_scan_report(updated)
+        assert all(i["action"] != "move" for i in report["items"])
+        assert report["summary"]["action_required"] == 0
+
+    asyncio.run(run_test())
+
+
+def test_delete_items_rejects_running_scan_and_unknown_ids(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "downloads" / "Keep.Movie.2026.mkv"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"video-bytes")
+
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(downloadRoots=[str(tmp_path / "downloads")]),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+
+    async def run_test() -> None:
+        scan = await manager.create_scan(ScanRequest())
+        try:
+            await manager.delete_items(scan.scan_id, ["c1"])
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 400
+            assert "still running" in str(getattr(exc, "detail", ""))
+        else:
+            raise AssertionError("Expected delete while running to be rejected")
+        while scan.status == "running":
+            await asyncio.sleep(0)
+
+        scan.items = [
+            ScannedItem(
+                confirmId="c1",
+                sourcePath=str(source),
+                name=source.name,
+                item_type="movie",
+                confidence=1.0,
+                reason="test",
+                target_path=str(tmp_path / "movies" / source.name),
+                action="move",
+            )
+        ]
+
+        try:
+            await manager.delete_items(scan.scan_id, ["nope"])
+        except Exception as exc:
+            assert getattr(exc, "status_code", None) == 400
+            assert "No matching" in str(getattr(exc, "detail", ""))
+        else:
+            raise AssertionError("Expected unknown itemIds to be rejected")
+
+        assert source.exists() is True
+
+    asyncio.run(run_test())
+
+
 def test_extract_paths_adds_download_root_torrent_name_fallback(tmp_path) -> None:
     paths_config = PathsConfig(downloadRoots=[str(tmp_path / "torrents1"), str(tmp_path / "torrents2")])
 
