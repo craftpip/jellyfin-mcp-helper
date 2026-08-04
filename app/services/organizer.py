@@ -207,7 +207,7 @@ class OrganizerService:
         return False
 
     def _classify_candidate(self, candidate: CandidateItem) -> ClassificationResult:
-        return classify_candidate(candidate)
+        return classify_candidate(candidate, self._config.series_title_aliases)
 
     async def _update_ai_output(self, candidate_state_label: str, item_path: str, thinking: str, content: str) -> None:
         # Placeholder, rebound per run in _classify_candidate/_resolve calls.

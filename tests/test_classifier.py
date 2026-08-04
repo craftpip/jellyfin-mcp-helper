@@ -266,3 +266,35 @@ def test_movie_with_special_characters() -> None:
     result = classify_candidate(_candidate(name="Show Name: Subtitle (2021).mkv"))
     assert result.kind == "movie"
     assert result.year == 2021
+
+
+def test_foreign_episode_word_split_out_of_series_title() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="S01E04 The Ghost in the Shell Episodio 04 Robot Rondo (2026) WEBRip 1080p x264 EAC3 ITA ENG JPN SUB ITA ENG - Lullozzo.mkv"
+        )
+    )
+    assert result.kind == "series"
+    assert result.title == "The Ghost in the Shell"
+    assert result.episode_title == "Robot Rondo"
+    assert result.season == 1
+    assert result.episode == 4
+
+
+def test_series_title_alias_maps_to_canonical_name() -> None:
+    result = classify_candidate(
+        _candidate(name="[LoliHouse] Yani Neko - 05 [WebRip 1080p HEVC-10bit AAC SRTx2].mkv"),
+        series_title_aliases={"Yani Neko": "Chainsmoker Cat Yani Neko"},
+    )
+    assert result.kind == "series"
+    assert result.title == "Chainsmoker Cat Yani Neko"
+    assert result.episode_title == "Chainsmoker Cat Yani Neko"
+    assert result.episode == 5
+
+
+def test_series_title_alias_not_applied_when_no_match() -> None:
+    result = classify_candidate(
+        _candidate(name="[LoliHouse] Yani Neko - 05 [WebRip 1080p HEVC-10bit AAC SRTx2].mkv"),
+        series_title_aliases={"Nope": "Other Show"},
+    )
+    assert result.title == "Yani Neko"

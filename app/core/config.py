@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     movie_roots: str = Field(default="", alias="MOVIE_ROOTS")
     series_roots: str = Field(default="", alias="SERIES_ROOTS")
 
+    # Series title aliases: "alias::canonical" entries separated by commas.
+    # Maps release titles (often Japanese) to the library folder name.
+    series_title_aliases: str = Field(default="", alias="SERIES_TITLE_ALIASES")
+
     model_config = {
         "populate_by_name": True,
         "env_file": ".env",
@@ -186,8 +190,21 @@ class ModelConfig(BaseModel):
 class AppConfig(BaseModel):
     paths: PathsConfig
     model: ModelConfig
+    series_title_aliases: dict[str, str] = Field(default_factory=dict)
     log_dir: Path
     report_dir: Path
+
+
+def _parse_series_title_aliases(raw: str) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry or "::" not in entry:
+            continue
+        alias, canonical = (part.strip() for part in entry.split("::", 1))
+        if alias and canonical:
+            aliases[alias] = canonical
+    return aliases
 
 
 _settings: Settings | None = None
@@ -209,6 +226,7 @@ def get_config() -> AppConfig:
     return AppConfig(
         paths=PathsConfig.from_env(settings),
         model=ModelConfig.from_env(settings),
+        series_title_aliases=_parse_series_title_aliases(settings.series_title_aliases),
         log_dir=LOG_DIR,
         report_dir=REPORT_DIR,
     )

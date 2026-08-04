@@ -217,7 +217,7 @@ class ScanManager:
                 continue
 
             try:
-                classification = classify_candidate(candidate)
+                classification = classify_candidate(candidate, self._config.series_title_aliases)
                 scan.counts.total += 1
                 logger.info("Scan %s processing candidate %d/%d: %s", scan.scan_id, scan.counts.total, len(candidates), candidate.source_path)
 

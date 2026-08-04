@@ -35,13 +35,60 @@ CONTAINED_BARE_EPISODE_RE = re.compile(
     re.IGNORECASE,
 )
 
+FOREIGN_EPISODE_RE = re.compile(
+    r"(?:^|[^a-z0-9])(?:episodio|episode|capitulo|capitolo|capítulo|chapitre|épisode|kapitel)\s*(\d{1,3})(?:v\d+)?(?:[^a-z0-9]|$)",
+    re.IGNORECASE,
+)
 
-def classify_candidate(candidate: CandidateItem) -> ClassificationResult:
+
+def _normalize_title_key(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", value.lower()))
+
+
+def _split_foreign_episode_title(title: str | None) -> tuple[str | None, int | None, str | None]:
+    """Split '<Series> Episodio 04 <Episode Title>' into series, number, episode title."""
+    if not title:
+        return title, None, None
+    match = FOREIGN_EPISODE_RE.search(title)
+    if not match:
+        return title, None, None
+    series_part = title[: match.start()].strip(" -._")
+    after_part = title[match.end():].strip(" -._")
+    series = series_part if series_part else title
+    episode_title = after_part or None
+    return series, int(match.group(1)), episode_title
+
+
+def _apply_title_alias(
+    title: str | None,
+    episode_title: str | None,
+    aliases: dict[str, str],
+) -> tuple[str | None, str | None]:
+    if not aliases or not title:
+        return title, episode_title
+    title_key = _normalize_title_key(title)
+    canonical = None
+    for alias, mapped in aliases.items():
+        if title_key and _normalize_title_key(alias) == title_key:
+            canonical = mapped.strip()
+            break
+    if not canonical:
+        return title, episode_title
+    if episode_title and title_key == _normalize_title_key(episode_title):
+        return canonical, canonical
+    return canonical, episode_title
+
+
+def classify_candidate(candidate: CandidateItem, series_title_aliases: dict[str, str] | None = None) -> ClassificationResult:
     label = _candidate_label(candidate)
     parsed = _parse_guessit(label)
 
     title = _extract_title(parsed, candidate)
+    title, foreign_episode, foreign_episode_title = _split_foreign_episode_title(title)
     episode_title = _extract_episode_title(parsed, candidate)
+    title, episode_title = _apply_title_alias(title, episode_title, series_title_aliases or {})
+    if foreign_episode_title and (not episode_title or FOREIGN_EPISODE_RE.search(episode_title)):
+        episode_title = foreign_episode_title
     series_alias = _extract_series_alias(parsed, title)
     year = _extract_int(parsed.get("year"))
     season = _extract_int(parsed.get("season"))
@@ -62,6 +109,9 @@ def classify_candidate(candidate: CandidateItem) -> ClassificationResult:
     if episode is None and _has_container_episode_context(candidate):
         episode = _extract_contained_bare_episode(candidate.name)
         has_explicit_episode = episode is not None
+    if episode is None and foreign_episode is not None:
+        episode = foreign_episode
+        has_explicit_episode = True
 
     kind, confidence, reason = _infer_kind(label, parsed, season, episode, has_explicit_episode)
     if _looks_like_extra(label, parsed) and kind in ("series", "movie"):
