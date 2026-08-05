@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
 
 import httpx
+
+
+logger = logging.getLogger(__name__)
 
 
 ONGOING_STATUSES = {"continuing", "returning series", "in production"}
@@ -164,10 +168,17 @@ class JellyfinClient:
 
     async def _get_user_id(self) -> str:
         users = await self._api_get("/Users")
-        if isinstance(users, list) and len(users) > 0:
-            uid = users[0].get("Id")
-            if uid:
+        if not isinstance(users, list) or len(users) == 0:
+            raise ValueError("Could not resolve Jellyfin user for item queries")
+
+        for user in users:
+            uid = user.get("Id")
+            if uid and (user.get("Policy") or {}).get("EnableAllFolders"):
                 return uid
+
+        uid = users[0].get("Id")
+        if uid:
+            return uid
         raise ValueError("Could not resolve Jellyfin user for item queries")
 
     @staticmethod
@@ -252,8 +263,8 @@ class JellyfinClient:
                 seasons_info = {"total_seasons": 0, "total_episodes": 0, "seasons": []}
                 try:
                     seasons_info = await self._get_series_seasons(series_id, user_id)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("Failed to fetch seasons for series %s (%s): %s", series_id, item_name, exc)
 
                 entry = {
                     "name": item_name,
