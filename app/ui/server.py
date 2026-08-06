@@ -19,7 +19,7 @@ def create_ui_app(mcp_port: int) -> FastAPI:
     global MCP_TARGET_URL
     MCP_TARGET_URL = f"http://localhost:{mcp_port}/mcp"
 
-    ui_app = FastAPI(title="jellyfin-mcp-helper UI")
+    ui_app = FastAPI(title="JellySort UI")
 
     @ui_app.get("/")
     async def index():

@@ -1,12 +1,12 @@
 # Agents
 
-This is the local project AGENTS.md for the jellyfin-mcp-helper repository.
+This is the local project AGENTS.md for the JellySort repository.
 
 Use this file as the project handbook. Keep it compact and practical. Update existing sections when new related learning is added. Do not turn this file into a dated chat log.
 
 ## Skills
 
-Load the jellyfin-mcp-helper skill when working with this codebase.
+Load the jellysort skill when working with this codebase.
 
 The skill contains:
 
@@ -317,7 +317,7 @@ alias_values = series_aliases(path)
 
 **Fix:** Restart the container with `docker compose down && docker compose up -d` (or `docker compose restart`). This re-establishes the bind mount and resolves the I/O error without rebuilding the image.
 
-**Verification:** `docker exec jellyfin-mcp-helper ls /media3/series/` should list directories. Then run the scan again.
+**Verification:** `docker exec jellysort ls /media3/series/` should list directories. Then run the scan again.
 
 **Note:** If a full restart doesn't help, check the host mount (`mount | grep media3`), disk health (`smartctl -H /dev/sdX`), and kernel messages (`sudo dmesg | grep -iE "sdX|EXT4-fs error"`) for hardware or filesystem issues.
 

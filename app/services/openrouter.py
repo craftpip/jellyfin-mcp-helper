@@ -27,8 +27,8 @@ class OpenRouterClient:
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/jellyfin-mcp-helper/jellyfin-mcp-helper",
-            "X-Title": "jellyfin-mcp-helper",
+            "HTTP-Referer": "https://github.com/jellysort/jellysort",
+            "X-Title": "JellySort",
         }
         body = {
             "model": self._config.model,

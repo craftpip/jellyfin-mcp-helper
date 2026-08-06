@@ -1,10 +1,10 @@
-name: jellyfin-mcp-helper
+name: jellysort
 
 services:
-  organizer:
+  jellysort:
     build: .
-    image: jellyfin-mcp-helper:dev
-    container_name: jellyfin-mcp-helper
+    image: jellysort:dev
+    container_name: jellysort
     restart: unless-stopped
     ports:
       - "18328:18327"

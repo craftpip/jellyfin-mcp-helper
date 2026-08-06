@@ -15,7 +15,7 @@ Bug fix release for Jellyfin scan triggering.
 
 ## v0.0.1 - 2026-06-29
 
-First public release of `jellyfin-mcp-helper`.
+First public release of `JellySort`.
 
 ### Changed
 - Changed scan report guidance to emphasize target-path validation and root curation before confirm.

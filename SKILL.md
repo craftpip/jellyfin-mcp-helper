@@ -1,9 +1,9 @@
 ---
-name: jellyfin-mcp-helper
-description: Manage the jellyfin-mcp-helper API service via HTTP when you need to create scan plans, review scan reports, validate destination mappings, and confirm file organization actions.
+name: jellysort
+description: Manage the JellySort API service via HTTP when you need to create scan plans, review scan reports, validate destination mappings, and confirm file organization actions.
 ---
 
-# jellyfin-mcp-helper API Skill
+# JellySort API Skill
 
 ## installation variables (replace all before use)
 - `{{CLONE_PATH}}` - absolute path where this repository is cloned
@@ -21,7 +21,7 @@ description: Manage the jellyfin-mcp-helper API service via HTTP when you need t
 
 ## Running the service
 - The service runs as a Docker container
-- **Always check if the container is running first** using `docker ps --filter name=jellyfin-mcp-helper`
+- **Always check if the container is running first** using `docker ps --filter name=jellysort`
 - If not running, start it with: `docker compose up -d` (from the project root)
 - Port: `{{PORT}}` (from docker-compose.yml)
 

@@ -567,7 +567,7 @@ async def lifespan(app: FastAPI):
     logger.info("Organizer service shutting down")
 
 
-app = FastAPI(title="jellyfin-mcp-helper", version=VERSION, lifespan=lifespan)
+app = FastAPI(title="JellySort", version=VERSION, lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -1015,7 +1015,7 @@ async def mcp(request: dict) -> JSONResponse:
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "jellyfin-mcp-helper", "version": VERSION},
+                    "serverInfo": {"name": "JellySort", "version": VERSION},
                 },
             }
         )

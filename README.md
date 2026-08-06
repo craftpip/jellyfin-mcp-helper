@@ -1,4 +1,4 @@
-# jellyfin-mcp-helper
+# JellySort
 
 An API service and MCP server for organizing downloaded media into a Jellyfin library. It scans download folders, classifies items, plans target paths, lets you review or edit the plan, then confirms the move and optionally refreshes Jellyfin.
 
