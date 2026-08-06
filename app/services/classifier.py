@@ -31,7 +31,7 @@ SEASON_WORD_DASH_EPISODE_RE = re.compile(
 SEASON_FOLDER_RE = re.compile(r"(?:^|[^a-z0-9])(?:season\s*|s)(?P<season>\d{1,2})(?:[^a-z0-9]|$)", re.IGNORECASE)
 BARE_EPISODE_RE = re.compile(r"(?:^|[^a-z0-9])(?P<episode>\d{1,3})(?:v\d+)?(?:[^a-z0-9]|$)", re.IGNORECASE)
 CONTAINED_BARE_EPISODE_RE = re.compile(
-    r"^(?P<episode>\d{1,3})(?:v\d+)?\s*[-_.]\s*(?P<title>\S.*)$",
+    r"^(?P<episode>\d{1,3})(?:v\d+)?\s*(?:[-_ ]|\.(?!\d))\s*(?P<title>\S.*)$",
     re.IGNORECASE,
 )
 
@@ -164,7 +164,7 @@ def _extract_title(parsed: dict[str, Any], candidate: CandidateItem) -> str | No
     title = parsed.get("title") or parsed.get("movie")
     if isinstance(title, str) and title.strip():
         if parsed.get("type") == "episode" or (parsed.get("season") is not None and parsed.get("episode") is not None):
-            if _is_fuller_title(path_series, title) or path_series:
+            if _is_fuller_title(path_series, title) or (path_series and not _has_alpha(title)):
                 return path_series
         return title.strip()
     if candidate.container_path:
@@ -212,6 +212,10 @@ def _extract_episode_title(parsed: dict[str, Any], candidate: CandidateItem) -> 
     guessit_title = parsed.get("title")
     if isinstance(guessit_title, str) and guessit_title.strip():
         if not parsed.get("series"):
+            if parsed.get("type") == "episode":
+                series_title = _extract_series_from_source(candidate)
+                if series_title and _is_fuller_title(series_title, guessit_title):
+                    return None
             return guessit_title.strip()
     return None
 
@@ -310,12 +314,27 @@ def _has_container_episode_context(candidate: CandidateItem) -> bool:
     return bool(candidate.container_path and candidate.relative_path)
 
 
+def _is_year_word(word: str) -> bool:
+    return len(word) == 4 and word.isdigit() and 1900 <= int(word) <= 2100
+
+
+def _has_alpha(value: str) -> bool:
+    return bool(re.search(r"[a-z]", value, re.IGNORECASE))
+
+
 def _is_fuller_title(candidate_title: str | None, parsed_title: str | None) -> bool:
     if not candidate_title or not parsed_title:
         return False
     candidate_words = set(re.findall(r"[a-z0-9]+", candidate_title.lower()))
     parsed_words = set(re.findall(r"[a-z0-9]+", parsed_title.lower()))
-    return len(candidate_title) > len(parsed_title) and bool(parsed_words) and parsed_words <= candidate_words
+    if not parsed_words or not parsed_words <= candidate_words:
+        return False
+    if len(candidate_title) <= len(parsed_title):
+        return False
+    for word in candidate_words - parsed_words:
+        if word.isdigit() and not _is_year_word(word):
+            return False
+    return True
 
 
 def _extract_int(value: Any) -> int | None:

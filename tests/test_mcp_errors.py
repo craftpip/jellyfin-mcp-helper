@@ -332,22 +332,22 @@ def test_mcp_get_ongoing_jellyfin_series_latest_episodes_formats_response(monkey
     class FakeJellyfinClient:
         async def list_ongoing_series_latest_episodes(self, library_name: str, search=None, limit=10):
             assert library_name == "Shows"
-            assert search == "rick"
+            assert search == "show"
             assert limit == 10
             return {
                 "library_name": "Shows",
                 "returned_items": 1,
-                "search": "rick",
+                "search": "show",
                 "items": [
                     {
                         "seriesId": "series-123",
-                        "name": "Rick and Morty",
+                        "name": "Some Ongoing Show",
                         "type": "series",
                         "ongoing": True,
                         "latest_episode": {
                             "season": 9,
                             "episode": 3,
-                            "title": "The Rick, The Mort & The Ugly",
+                            "title": "The Best, The Worst & The Ugly",
                         },
                     }
                 ],
@@ -366,7 +366,7 @@ def test_mcp_get_ongoing_jellyfin_series_latest_episodes_formats_response(monkey
                     "name": "get ongoing jellyfin series latest episodes",
                     "arguments": {
                         "libraryName": "Shows",
-                        "search": "rick",
+                        "search": "show",
                         "limit": 10,
                     },
                 },
@@ -381,7 +381,7 @@ def test_mcp_get_ongoing_jellyfin_series_latest_episodes_formats_response(monkey
     assert payload["items"][0]["latest_episode"] == {
         "season": 9,
         "episode": 3,
-        "title": "The Rick, The Mort & The Ugly",
+        "title": "The Best, The Worst & The Ugly",
     }
     assert "all ongoing series" in payload["next"]
 

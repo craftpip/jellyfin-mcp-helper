@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.models.schemas import CandidateItem
 from app.services.classifier import classify_candidate
 
@@ -13,8 +15,8 @@ def _candidate(
 ) -> CandidateItem:
     return CandidateItem(
         source_root_key="downloads_0",
-        source_root="/data/torrents",
-        source_path=f"/data/torrents/{name}",
+        source_root="/data/downloads",
+        source_path=f"/data/downloads/{name}",
         name=name,
         container_path=container_path,
         relative_path=relative_path,
@@ -30,7 +32,7 @@ def test_episode_sxxexx_pattern() -> None:
 
 
 def test_anime_episode_without_season_defaults_to_series() -> None:
-    result = classify_candidate(_candidate(name="[EMBER] Party kara Tsuihou sareta Sono Chiyushi, Jitsu wa Saikyou ni Tsuki - 01.mkv"))
+    result = classify_candidate(_candidate(name="[RlsGrp] Weird Show - 01.mkv"))
     assert result.kind == "series"
     assert result.episode == 1
 
@@ -64,14 +66,14 @@ def test_season_word_dash_episode() -> None:
 
 
 def test_alternative_title_becomes_series_alias() -> None:
-    result = classify_candidate(_candidate(name="[Judas] Show Name - Future Arc - S04E01v2.mkv"))
+    result = classify_candidate(_candidate(name="[RlsGrp] Show Name - Future Arc - S04E01v2.mkv"))
     assert result.kind == "series"
     assert result.season == 4
     assert result.series_alias == "Future Arc"
 
 
 def test_episode_title_can_be_used_as_series_alias_when_no_season_exists() -> None:
-    result = classify_candidate(_candidate(name="[sam] Show Name - Future Arc - 25.mkv"))
+    result = classify_candidate(_candidate(name="[RlsGrp] Show Name - Future Arc - 25.mkv"))
     assert result.kind == "series"
     assert result.season is None
     assert result.episode == 25
@@ -94,14 +96,14 @@ def test_bare_numbered_episode_in_show_folder_uses_folder_as_series_title() -> N
     result = classify_candidate(
         _candidate(
             name="10-Conclusion.mkv",
-            container_path="/data/torrents/Texhnolyze",
+            container_path="/data/torrents/Neutral Show",
             relative_path="10-Conclusion.mkv",
             file_size=1024,
         )
     )
 
     assert result.kind == "series"
-    assert result.title == "Texhnolyze"
+    assert result.title == "Neutral Show"
     assert result.episode_title == "Conclusion"
     assert result.episode == 10
 
@@ -110,15 +112,60 @@ def test_single_digit_bare_numbered_episode_in_show_folder_is_not_sampled_as_mov
     result = classify_candidate(
         _candidate(
             name="1-Stranger.mkv",
-            container_path="/data/torrents/Texhnolyze",
+            container_path="/data/torrents/Neutral Show",
             relative_path="1-Stranger.mkv",
             file_size=1024,
         )
     )
 
     assert result.kind == "series"
-    assert result.title == "Texhnolyze"
+    assert result.title == "Neutral Show"
     assert result.episode_title == "Stranger"
+    assert result.episode == 1
+
+
+def test_dot_separated_bare_episode_still_works() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="4.The.Conclusion.mkv",
+            container_path="/data/torrents/Neutral Show",
+            relative_path="4.The.Conclusion.mkv",
+        )
+    )
+
+    assert result.kind == "series"
+    assert result.title == "Neutral Show"
+    assert result.episode == 4
+
+
+def test_decimal_number_prefix_is_not_a_bare_episode() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="2.5.Crumpled.Staircase.2021.S01E01.REPACK2.BDRip-1080p.x265.FLAC.EAC3.Dual.Audio-RlsGrp.mkv",
+            container_path="/data/downloads/2.5 Crumpled Staircase (2021) S01 [BDRip 1080p x265 FLAC EAC3 Dual-Audio]-RlsGrp",
+            relative_path="2.5.Crumpled.Staircase.2021.S01E01.REPACK2.BDRip-1080p.x265.FLAC.EAC3.Dual.Audio-RlsGrp.mkv",
+        )
+    )
+
+    assert result.kind == "series"
+    assert result.title == "2.5 Crumpled Staircase (2021)"
+    assert result.season == 1
+    assert result.episode == 1
+    assert result.episode_title is None
+
+
+def test_folder_underscore_numeric_junk_does_not_override_clean_title() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="[RlsGrp] Nimbus (2020) - S02E01.mkv",
+            container_path="/data/downloads/[RlsGrp] Nimbus 7_9 (2020) (Season 02) [1080p][HEVC x265 10bit][Dual-Audio][Multi-Subs]",
+            relative_path="[RlsGrp] Nimbus (2020) - S02E01.mkv",
+        )
+    )
+
+    assert result.kind == "series"
+    assert result.title == "Nimbus"
+    assert result.season == 2
     assert result.episode == 1
 
 
@@ -178,9 +225,9 @@ def test_extra_in_episode_title_is_skipped() -> None:
 def test_bonus_recap_is_skipped() -> None:
     result = classify_candidate(
         _candidate(
-            name="Chobits - Bonus - Recap 18.5.mkv",
-            container_path="/data/torrents/Chobits [1080p;H265] (2002)",
-            relative_path="Chobits - Bonus - Recap 18.5.mkv",
+            name="Neutral Show - Bonus - Recap 18.5.mkv",
+            container_path="/data/torrents/Neutral Show [1080p;H265] (2002)",
+            relative_path="Neutral Show - Bonus - Recap 18.5.mkv",
         )
     )
     assert result.kind == "skip"
@@ -190,7 +237,7 @@ def test_sp_decimal_episode_is_skipped() -> None:
     result = classify_candidate(
         _candidate(
             name="S01E13.5 [SP]-To Make Everyone Happy with My Singing [8D781429].mkv",
-            container_path="/data/torrents/Vivy S01+SP 1080p Dual Audio BDRip 10 bits DD x265-EMBER",
+            container_path="/data/torrents/Neutral Show S01+SP 1080p Dual Audio BDRip 10 bits DD x265-RlsGrp",
             relative_path="S01E13.5 [SP]-To Make Everyone Happy with My Singing [8D781429].mkv",
         )
     )
@@ -200,13 +247,13 @@ def test_sp_decimal_episode_is_skipped() -> None:
 def test_episode_prefers_fuller_container_title() -> None:
     result = classify_candidate(
         _candidate(
-            name="[Judas] Yuusha Party - S01E01.mkv",
-            container_path="/data/torrents/[Judas] Yuusha Party o Oidasareta Kiyoubinbou (Jack-of-All-Trades, Party of None) (Season 01)",
-            relative_path="[Judas] Yuusha Party - S01E01.mkv",
+            name="[RlsGrp] Stray Cat - S01E01.mkv",
+            container_path="/data/torrents/[RlsGrp] Stray Cat of the Ruins (Wandering Star) (Season 01)",
+            relative_path="[RlsGrp] Stray Cat - S01E01.mkv",
         )
     )
     assert result.kind == "series"
-    assert result.title == "Yuusha Party o Oidasareta Kiyoubinbou (Jack-of-All-Trades, Party of None)"
+    assert result.title == "Stray Cat of the Ruins (Wandering Star)"
 
 
 def test_sample_by_keyword_is_skipped() -> None:
@@ -298,3 +345,75 @@ def test_series_title_alias_not_applied_when_no_match() -> None:
         series_title_aliases={"Nope": "Other Show"},
     )
     assert result.title == "Yani Neko"
+
+
+RELEASE_JUNK_TOKENS = (
+    "1080p", "720p", "2160p", "x265", "hevc", "x264", "av1",
+    "flac", "eac3", "aac", "opus", "ddp", "dual-audio", "dual audio",
+    "bdrip", "bluray", "webrip", "web-dl", "multi-subs",
+    "wobble", "hollow", "morrow", "rivet", "tinker", "zephyr",
+    "rlsgrp", "fakesite",
+    "repack", "proper",
+)
+
+
+def _release_junk_tokens(text: str) -> list[str]:
+    lowered = text.lower()
+    return [t for t in RELEASE_JUNK_TOKENS if t in lowered]
+
+
+def test_corpus_paths_classify_cleanly() -> None:
+    import json
+
+    corpus_file = Path(__file__).resolve().parent / "corpus" / "download_paths.json"
+    corpus = json.loads(corpus_file.read_text())
+    assert corpus["candidates"], "corpus fixture must not be empty"
+
+    failures: list[str] = []
+    for entry in corpus["candidates"]:
+        candidate = _candidate(
+            name=entry["name"],
+            container_path=entry.get("container_path"),
+            relative_path=entry.get("relative_path"),
+            file_size=entry.get("file_size"),
+        )
+        result = classify_candidate(candidate)
+
+        if result.kind == "error":
+            failures.append(f"{entry['name']}: kind=error ({result.reason})")
+            continue
+
+        title_junk = _release_junk_tokens(result.title or "")
+        ep_junk = _release_junk_tokens(result.episode_title or "")
+        if title_junk:
+            failures.append(f"{entry['name']}: title {result.title!r} contains {title_junk}")
+        if ep_junk:
+            failures.append(f"{entry['name']}: episode_title {result.episode_title!r} contains {ep_junk}")
+        if result.title and "[" in result.title or "]" in result.title:
+            failures.append(f"{entry['name']}: title {result.title!r} contains brackets")
+
+    assert not failures, "corpus classification regressions:\n" + "\n".join(failures[:50])
+
+
+def test_corpus_underscore_junk_seasons_resolve_to_same_title() -> None:
+    import json
+
+    corpus_file = Path(__file__).resolve().parent / "corpus" / "download_paths.json"
+    corpus = json.loads(corpus_file.read_text())
+
+    titles: dict[str, set[str]] = {}
+    for entry in corpus["candidates"]:
+        container = entry.get("container_path") or ""
+        if "Nimbus" not in container and "Nimbus" not in entry["name"]:
+            continue
+        result = classify_candidate(_candidate(
+            name=entry["name"],
+            container_path=entry.get("container_path"),
+            relative_path=entry.get("relative_path"),
+            file_size=entry.get("file_size"),
+        ))
+        titles.setdefault(container, set()).add(result.title)
+
+    assert titles, "expected at least one Nimbus candidate in corpus"
+    distinct = {next(iter(s)) for s in titles.values() if s}
+    assert len(distinct) == 1, f"Nimbus titles not consistent across folders: {distinct}"

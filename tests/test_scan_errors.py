@@ -93,7 +93,7 @@ def test_create_scan_returns_filesystem_errors_to_user(tmp_path, monkeypatch) ->
 def test_create_scan_skips_zero_byte_media_files(tmp_path, monkeypatch) -> None:
     root = tmp_path / "downloads"
     root.mkdir()
-    zero_file = root / "Rick and Morty S09E01.mkv"
+    zero_file = root / "Zero Byte Show S09E01.mkv"
     zero_file.write_bytes(b"")
     config = AppConfig(
         paths=PathsConfig(downloadRoots=[str(root)]),

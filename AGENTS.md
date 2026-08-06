@@ -65,6 +65,20 @@ After changing any app/ source file, run: docker compose build && docker compose
 
 Verify by rerunning the affected scan or API behavior after restart.
 
+### Corpus fixtures must be obfuscated before commit
+
+The classifier is the central point of this project. Every time a classifier issue appears, the affected real paths are added to the regression corpus so the same bug cannot come back.
+
+`tests/corpus/download_paths.json` is committed, so it must never contain anything that reveals what media the user actually downloaded:
+
+- Replace real series names with random words (they do NOT need to look like plausible shows).
+- Replace real release groups with neutral fakes (e.g. `[RlsGrp]`) — real release groups are recognizable as torrent group tags.
+- Replace real root paths like `/media3/torrents/` with neutral ones (e.g. `/media1/downloads/`). The generic word "torrents" is fine when it refers to the download-root concept in code/config; the repo must never contain the user's real download paths, real media names, or real release groups.
+- Keep the formatting tokens identical so the classifier runs on the same patterns: `SxxEyy`, `v2`, `REPACK`/`REPACK2`, years in parens (year value may change), `1_2`-style underscore junk, dot-separated long titles, bracket-wrapped tags, codec/resolution strings (`1080p`, `x265`, `FLAC`, `Opus 2.0`), episode-per-folder counts and per-season splits.
+- Keep `2.5`-style leading decimals because they are formatting, not identification.
+- Update the container-name-based regression tests (e.g. the underscore-junk consistency test) to match the obfuscated names.
+- Do not commit any reverse mapping back to the real names.
+
 ### Release workflow
 
 Use a two-branch release model:
@@ -136,6 +150,42 @@ Verification:
 2. Manually test the known examples above.
 3. Confirm real episodes with codec decimals remain series.
 4. Confirm numbered anime extras are skipped.
+
+### Decimal-style titles and numeric junk in classifier
+
+**Problem:** Series with a decimal in the title (e.g., `2.5`-prefixed titles) and folders with underscore numeric junk (e.g., `Nimbus 7_9 (2020)`) were mangled.
+
+**Affected file:** `app/services/classifier.py`
+
+**Cause:**
+
+- `CONTAINED_BARE_EPISODE_RE` matched `2.5` (in `2.5.Crumpled.Staircase...`) as a bare episode number with title `5.Crumpled...`, mangling every episode title.
+- `_is_fuller_title` preferred the container folder name over the parsed title, so junk like `7_9` (from `Nimbus 7_9 (2020)`) won over the clean title `Nimbus`.
+
+**Regex change:**
+
+- `CONTAINED_BARE_EPISODE_RE` requires `\.` to NOT be followed by a digit, so floats never match:
+```python
+r"^(?P<episode>\d{1,3})(?:v\d+)?\s*(?:[-_ ]|\.(?!\d))\s*(?P<title>\S.*)$"
+```
+
+**Title preference changes:**
+
+- `_extract_title` prefers the parsed title over the folder name when the folder name contains extra numeric words that are not years (1900-2100), via `_is_fuller_title`.
+- The parsed title is also skipped in favor of the folder name when the parsed title has no alphabetic characters (e.g., bare-episode files whose guessit title is just `1`).
+
+**Correct behavior (names below are the obfuscated corpus equivalents):**
+
+- `2.5.Crumpled.Staircase.2021.S01E01...` → title `2.5 Crumpled Staircase (2021)`, kind=series, episode 1.
+- `[RlsGrp] Nimbus 7_9 (2020) (Season 02) ...` → title `Nimbus`, season 2, not `Nimbus 7_9 (2020)`.
+- Both Nimbus S01 and S02 folders must resolve to the same title `Nimbus` so they merge into one series.
+- `4.The.Conclusion.mkv` in a show folder → kind=series, episode 4. Dot-separated bare episodes still work.
+
+**Verification:**
+
+1. Run python3 -m pytest tests/.
+2. The corpus regression tests in `tests/test_classifier.py` classify every path in `tests/corpus/download_paths.json` and fail if any title/episode_title contains release junk (codecs, resolutions, group names) or brackets.
+3. `tests/corpus/download_paths.json` is the full snapshot of real download-roots paths — refresh it after significant scanner/config changes with a sweep over `scan_candidates(cfg.paths)`. Obfuscate the snapshot before committing (see the "Corpus fixtures must be obfuscated before commit" rule).
 
 ### Pattern fixes must be documented with examples
 
@@ -273,7 +323,7 @@ alias_values = series_aliases(path)
 
 ### Apostrophe normalization in path matching
 
-**Problem:** Series with apostrophes in the name (e.g., `Hell's Paradise`) would not match the same show classified without apostrophes (e.g., `Hells Paradise` from dot-separated filenames). `normalize_series_text("Hell's Paradise")` produced `"hell s paradise"` (3 tokens) while `normalize_series_text("Hells Paradise")` produced `"hells paradise"` (2 tokens). This caused folder matching to fail.
+**Problem:** Series with apostrophes in the name (e.g., `Fox's Den`) would not match the same show classified without apostrophes (e.g., `Foxs Den` from dot-separated filenames). `normalize_series_text("Fox's Den")` produced `"fox s den"` (3 tokens) while `normalize_series_text("Foxs Den")` produced `"foxs den"` (2 tokens). This caused folder matching to fail.
 
 **Affected file:** `app/services/resolver.py` (`normalize_text`)
 
@@ -286,11 +336,11 @@ def normalize_text(value: str) -> str:
 
 This is global — `normalize_series_text` calls `normalize_text`, so both series and movie matching benefit.
 
-**Verification:** `normalize_series_text("Hell's Paradise")` now returns `"hells paradise"` matching `normalize_series_text("Hells Paradise")`.
+**Verification:** `normalize_series_text("Fox's Den")` now returns `"foxs den"` matching `normalize_series_text("Foxs Den")`.
 
 ### File existence by episode number in resolver
 
-**Problem:** The resolver constructed target filenames from scratch using a template (`{episode_title} - S{ss}E{ee}{ext}`) but never checked if a file for that episode already existed in the season directory under a different name. Existing files like `[Judas] Jigokuraku - S01E04v2.mkv` were missed because the constructed path `Hell's Paradise - S01E04.mkv` didn't match, causing `file_exists=False` and action `"move"` instead of `"replace"`.
+**Problem:** The resolver constructed target filenames from scratch using a template (`{episode_title} - S{ss}E{ee}{ext}`) but never checked if a file for that episode already existed in the season directory under a different name. Existing files like `[RlsGrp] Fox Den - S01E04v2.mkv` were missed because the constructed path `Fox Den - S01E04.mkv` didn't match, causing `file_exists=False` and action `"move"` instead of `"replace"`.
 
 **Affected file:** `app/services/resolver.py` (`_resolve_series`)
 

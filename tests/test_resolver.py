@@ -31,7 +31,7 @@ def test_normalize_text_lowercases_and_joins() -> None:
 
 
 def test_normalize_series_text_removes_trailing_year() -> None:
-    assert normalize_series_text("Undone (2019)") == "undone"
+    assert normalize_series_text("Wander (2019)") == "wander"
 
 
 def test_season_dir_candidates() -> None:
@@ -151,23 +151,23 @@ def test_resolve_series_uses_existing_show_folder(tmp_path) -> None:
 def test_resolve_series_matches_existing_folder_without_year(tmp_path) -> None:
     series_root = tmp_path / "series"
     series_root.mkdir()
-    (series_root / "Undone").mkdir()
+    (series_root / "Wander").mkdir()
     config = _make_config(series_roots=[str(series_root)])
     resolver = PathResolver(config)
     candidate = CandidateItem(
         source_root_key="downloads_0",
         source_root="/data/torrents",
-        source_path="/data/torrents/Undone (2019) - S02E01.mkv",
-        name="Undone (2019) - S02E01.mkv",
+        source_path="/data/torrents/Wander (2019) - S02E01.mkv",
+        name="Wander (2019) - S02E01.mkv",
     )
     classification = ClassificationResult(
-        type="series", title="Undone (2019)", year=2019, season=2, episode=1
+        type="series", title="Wander (2019)", year=2019, season=2, episode=1
     )
 
     result = asyncio.run(resolver._resolve_series(candidate, classification))
 
-    assert result.existing_match == str(series_root / "Undone")
-    assert result.target_dir == str(series_root / "Undone" / "Season 02")
+    assert result.existing_match == str(series_root / "Wander")
+    assert result.target_dir == str(series_root / "Wander" / "Season 02")
     assert result.created_show_folder is False
 
 
@@ -214,14 +214,14 @@ def test_series_show_name_normalization(tmp_path) -> None:
     candidate = CandidateItem(
         source_root_key="downloads_0",
         source_root="/data/torrents",
-        source_path="/data/torrents/[Group] K-On!! - S01E01.mkv",
-        name="[Group] K-On!! - S01E01.mkv",
+        source_path="/data/torrents/[Group] Cool Show!! - S01E01.mkv",
+        name="[Group] Cool Show!! - S01E01.mkv",
     )
     classification = ClassificationResult(
-        type="series", title="K-On!!", season=1, episode=1
+        type="series", title="Cool Show!!", season=1, episode=1
     )
     result = asyncio.run(resolver._resolve_series(candidate, classification))
-    assert "K-On!" in result.target_path or "K-On!!" in result.target_path
+    assert "Cool Show!" in result.target_path or "Cool Show!!" in result.target_path
 
 
 def test_resolve_series_finds_existing_across_roots(tmp_path) -> None:
@@ -255,20 +255,20 @@ def test_resolve_series_exact_match_across_many_roots(tmp_path) -> None:
     root2.mkdir()
     for i in range(30):
         (root1 / f"Different Show {i:02d}").mkdir()
-    (root2 / "Rick and Morty").mkdir()
+    (root2 / "Decoy Show").mkdir()
     config = _make_config(series_roots=[str(root1), str(root2)])
     resolver = PathResolver(config)
     candidate = CandidateItem(
         source_root_key="downloads_0",
         source_root="/data/torrents",
-        source_path="/data/torrents/Theres Something About Morty - S09E01.mkv",
-        name="Theres Something About Morty - S09E01.mkv",
+        source_path="/data/torrents/Theres Something About Decoy - S09E01.mkv",
+        name="Theres Something About Decoy - S09E01.mkv",
     )
     classification = ClassificationResult(
-        type="series", title="Rick and Morty", season=9, episode=1
+        type="series", title="Decoy Show", season=9, episode=1
     )
     result = asyncio.run(resolver._resolve_series(candidate, classification))
-    assert result.existing_match == str(root2 / "Rick and Morty")
+    assert result.existing_match == str(root2 / "Decoy Show")
     assert str(root2) in result.target_dir
     assert result.created_show_folder is False
 
@@ -276,47 +276,47 @@ def test_resolve_series_exact_match_across_many_roots(tmp_path) -> None:
 def test_resolve_series_does_not_use_unsafe_fuzzy_existing_match(tmp_path) -> None:
     series_root = tmp_path / "series"
     series_root.mkdir()
-    (series_root / "Farming Life in Another World").mkdir()
+    (series_root / "Farming Life in Another Town").mkdir()
     config = _make_config(series_roots=[str(series_root)])
     resolver = PathResolver(config)
     candidate = CandidateItem(
         source_root_key="downloads_0",
         source_root="/data/torrents",
-        source_path="/data/torrents/Loner Life in Another World S01/S01E01-Loner with the Worst Skills.mkv",
+        source_path="/data/torrents/Loner Life in Another Town S01/S01E01-Loner with the Worst Skills.mkv",
         name="S01E01-Loner with the Worst Skills.mkv",
     )
     classification = ClassificationResult(
-        type="series", title="Loner Life in Another World", season=1, episode=1
+        type="series", title="Loner Life in Another Town", season=1, episode=1
     )
 
     result = asyncio.run(resolver._resolve_series(candidate, classification))
 
     assert result.existing_match is None
-    assert "Loner Life in Another World" in result.target_dir
-    assert "Farming Life in Another World" not in result.target_dir
+    assert "Loner Life in Another Town" in result.target_dir
+    assert "Farming Life in Another Town" not in result.target_dir
 
 
 def test_resolve_series_does_not_use_existing_short_prefix_folder(tmp_path) -> None:
     series_root = tmp_path / "series"
     series_root.mkdir()
-    (series_root / "Mikata").mkdir()
+    (series_root / "Show").mkdir()
     config = _make_config(series_roots=[str(series_root)])
     resolver = PathResolver(config)
     candidate = CandidateItem(
         source_root_key="downloads_0",
         source_root="/data/torrents",
-        source_path="/data/torrents/Mikata ga Yowasugite Hojo Mahou/S01E01.mkv",
+        source_path="/data/torrents/Show Name Quite Long and Detailed/S01E01.mkv",
         name="S01E01.mkv",
     )
     classification = ClassificationResult(
-        type="series", title="Mikata ga Yowasugite Hojo Mahou", season=1, episode=1
+        type="series", title="Show Name Quite Long and Detailed", season=1, episode=1
     )
 
     result = asyncio.run(resolver._resolve_series(candidate, classification))
 
     assert result.existing_match is None
-    assert "Mikata ga Yowasugite Hojo Mahou" in result.target_dir
-    assert result.target_dir != str(series_root / "Mikata" / "Season 01")
+    assert "Show Name Quite Long and Detailed" in result.target_dir
+    assert result.target_dir != str(series_root / "Show" / "Season 01")
 
 
 def test_resolve_movie_finds_existing_across_roots(tmp_path) -> None:
@@ -425,8 +425,8 @@ def test_resolve_series_reuses_alias_season_within_same_scan(tmp_path) -> None:
             CandidateItem(
                 source_root_key="downloads_0",
                 source_root="/data/torrents",
-                source_path="/data/torrents/[sam] SHOW ALPHA - Future Arc - 25.mkv",
-                name="[sam] SHOW ALPHA - Future Arc - 25.mkv",
+                source_path="/data/torrents/[RlsGrp] SHOW ALPHA - Future Arc - 25.mkv",
+                name="[RlsGrp] SHOW ALPHA - Future Arc - 25.mkv",
             ),
             ClassificationResult(
                 type="series",
