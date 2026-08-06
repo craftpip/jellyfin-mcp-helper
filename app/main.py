@@ -249,7 +249,7 @@ def _format_report_md(
         lines.append("|-----|-------|--------|-------------|--------|")
         for item in movies:
             title = Path(item.target_path).parent.name
-            source = Path(item.source_path).name
+            source = item.source_path
             lines.append("| %s | %s | %s | %s | `%s` |" % (item.confirm_id, title, source, _format_path_exists(item), item.target_path))
         lines.append("")
 
@@ -263,7 +263,7 @@ def _format_report_md(
             season = p.parent.name
             tag_match = EPISODE_TAG_RE.search(p.name)
             ep = tag_match.group(0) if tag_match else p.stem
-            source = Path(item.source_path).name
+            source = item.source_path
             lines.append("| %s | %s | %s | %s | %s | %s | `%s` |" % (item.confirm_id, show, season, ep, source, _format_path_exists(item), item.target_path))
         lines.append("")
 

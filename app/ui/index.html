@@ -1030,7 +1030,7 @@ function renderGroupedTable(container, items) {
         html += '<span class="badge action-skip">Skipped</span>';
         html += '</div></td>';
         html += '<td colspan="2"><div class="path-cell">';
-        html += '<div class="source-name" title="' + escHtml(item.sourcePath || item.sourceName || '') + '">' + escHtml(item.sourceName || '') + '</div>';
+        html += '<div class="source-name" title="' + escHtml(item.sourcePath || item.sourceName || '') + '">' + escHtml(item.sourcePath || item.sourceName || '') + '</div>';
         html += '<span class="skip-reason">' + escHtml(item.reason || '') + '</span>';
         html += '</div></td>';
         html += '<td style="white-space:nowrap;color:#8b949e;font-size:0.8rem">' + (item.fileSize ? formatBytes(item.fileSize) : '') + '</td>';
@@ -1049,7 +1049,7 @@ function renderGroupedTable(container, items) {
       html += '</div></td>';
       if (isSeries) html += '<td>' + escHtml(item.episode || '') + '</td>';
       html += '<td colspan="2"><div class="path-cell">';
-      html += '<div class="source-name" title="' + escHtml(item.sourcePath || item.sourceName || '') + '">' + escHtml(item.sourceName || '') + '</div>';
+      html += '<div class="source-name" title="' + escHtml(item.sourcePath || item.sourceName || '') + '">' + escHtml(item.sourcePath || item.sourceName || '') + '</div>';
       html += '<input type="text" class="target-input" data-index="' + item._idx + '" value="' + escHtml(item.targetPath) + '">';
       html += '</div></td>';
       html += '<td style="white-space:nowrap;color:#8b949e;font-size:0.8rem">' + (item.fileSize ? formatBytes(item.fileSize) : '') + '</td>';
