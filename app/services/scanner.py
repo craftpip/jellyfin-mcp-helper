@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -23,6 +24,93 @@ class ScanPathError:
 class ScanCandidatesResult:
     candidates: list[CandidateItem] = field(default_factory=list)
     errors: list[ScanPathError] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class RecentFile:
+    source_root: str
+    source_path: str
+    name: str
+    extension: str
+    file_size: int
+    modified_at: float
+    container_path: str | None = None
+
+
+def recent_video_files(
+    paths_config: PathsConfig,
+    hours: float,
+    errors: list[ScanPathError] | None = None,
+) -> list[RecentFile]:
+    """List video files in the download roots whose mtime falls within the last `hours` hours."""
+    if hours <= 0:
+        return []
+    cutoff = time.time() - hours * 3600
+    collected_errors = errors if errors is not None else []
+    files: list[RecentFile] = []
+
+    for download_root in paths_config.download_roots:
+        root_path = Path(download_root)
+        try:
+            if not root_path.exists():
+                continue
+        except OSError as exc:
+            _record_scan_error(collected_errors, root_path, exc)
+            continue
+
+        try:
+            children = sorted(root_path.iterdir())
+        except OSError as exc:
+            _record_scan_error(collected_errors, root_path, exc)
+            continue
+
+        for child in children:
+            if child.name.startswith('.'):
+                continue
+            if _should_skip_path(child):
+                continue
+            try:
+                if child.is_file():
+                    _collect_recent_file(child, None, cutoff, root_path, files)
+                    continue
+
+                if not child.is_dir():
+                    continue
+
+                for file_path in _iter_child_files(child, collected_errors):
+                    if _should_skip_path(file_path):
+                        continue
+                    _collect_recent_file(file_path, child, cutoff, root_path, files)
+            except OSError as exc:
+                _record_scan_error(collected_errors, child, exc)
+
+    files.sort(key=lambda f: f.modified_at, reverse=True)
+    return files
+
+
+def _collect_recent_file(
+    file_path: Path,
+    child: Path | None,
+    cutoff: float,
+    root_path: Path,
+    files: list[RecentFile],
+) -> None:
+    if file_path.suffix.lower() not in VIDEO_EXTENSIONS:
+        return
+    stat = file_path.stat()
+    if stat.st_mtime < cutoff:
+        return
+    files.append(
+        RecentFile(
+            source_root=str(root_path),
+            source_path=str(file_path),
+            name=file_path.name,
+            extension=file_path.suffix,
+            file_size=stat.st_size,
+            modified_at=stat.st_mtime,
+            container_path=str(child) if child is not None else None,
+        )
+    )
 
 
 def _to_absolute_path(docker_path: str) -> str:

@@ -144,6 +144,57 @@ def _mcp_error_response(request_id: object, code: int, message: str) -> JSONResp
     return JSONResponse({"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}})
 
 
+def _build_recent_file_items(files: list, series_title_aliases: dict[str, str]) -> list[dict]:
+    """Shape recent download files like 'get jellyfin library items' entries."""
+    from app.models.schemas import CandidateItem
+    from app.services.classifier import classify_candidate
+
+    items = []
+    for f in files:
+        candidate = CandidateItem(
+            source_root_key="download",
+            source_root=f.source_root,
+            source_path=f.source_path,
+            name=f.name,
+            extension=f.extension,
+            container_path=f.container_path,
+            relative_path=f.name,
+            file_size=f.file_size,
+        )
+        cls = classify_candidate(candidate, series_title_aliases)
+        if cls.kind == "series":
+            items.append(
+                {
+                    "name": cls.title or f.name,
+                    "type": "series",
+                    "ongoing": False,
+                    "path": f.source_path,
+                    "season_count": 1 if cls.season else 0,
+                    "episode_count": 1 if cls.episode else 0,
+                }
+            )
+        elif cls.kind == "movie":
+            items.append(
+                {
+                    "name": cls.title or f.name,
+                    "type": "movie",
+                    "year": cls.year,
+                    "path": f.source_path,
+                    "audio_languages": [],
+                    "subtitle_languages": [],
+                }
+            )
+        else:
+            items.append(
+                {
+                    "name": cls.title or f.name,
+                    "type": "skip",
+                    "path": f.source_path,
+                }
+            )
+    return items
+
+
 def _format_scan_report(scan: ScanPlan) -> dict:
     if scan.status == "running":
         progress = _format_scan_progress(scan)
@@ -640,6 +691,44 @@ def _mcp_tools() -> list[dict[str, object]]:
             },
         },
         {
+            "name": "get recently added download files",
+            "description": "List video files in the configured download folders on disk that were added or modified within the last N hours. This reads the filesystem, not the Jellyfin library. Useful before starting a scan to see what is new and whether a move is worth doing. Returns the full source path, size, and modification time for each recent file, newest first. This tool is read-only and does not classify or move anything.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "hours": {
+                        "type": "number",
+                        "default": 24,
+                        "description": "How far back in hours to look for files. Defaults to 24."
+                    }
+                }
+            },
+        },
+        {
+            "name": "get recently added in library",
+            "description": "List the individual files most recently added to a Jellyfin library, sorted by DateCreated descending (default: last 72 hours; use 'hours' to change the window). This reads Jellyfin's library index, not the filesystem. It returns episodes and movies as separate items — if a show added two episodes, both episodes appear individually. Each item includes the absolute file path on disk, and movies also include year and audio/subtitle languages.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "libraryName": {
+                        "type": "string",
+                        "description": "The Jellyfin library name to inspect, for example 'Movies' or 'Shows'."
+                    },
+                    "hours": {
+                        "type": "number",
+                        "default": 72,
+                        "description": "How far back in hours to look for items added to the library. Defaults to 72."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Maximum number of most recently added items to return."
+                    }
+                },
+                "required": ["libraryName"]
+            },
+        },
+        {
             "name": "confirm move new downloads scan",
             "description": "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. Use it only after the scan report has been reviewed and approved. If you need to redirect items to a different root, call 'update move new downloads scan' first, then fetch the report again, then confirm.",
             "inputSchema": {
@@ -1096,6 +1185,55 @@ async def mcp(request: dict) -> JSONResponse:
             except HTTPException as exc:
                 return _mcp_error_response(request_id, -32000, exc.detail)
 
+        if name == "get recently added download files":
+            from datetime import datetime as _datetime
+
+            from app.services.scanner import ScanPathError, recent_video_files
+
+            try:
+                raw_hours = arguments.get("hours", 24) or 24
+                hours = float(raw_hours)
+            except (TypeError, ValueError):
+                hours = 24.0
+            hours = min(max(hours, 0.5), 24 * 30)
+            config = get_config()
+            errors: list[ScanPathError] = []
+            files = recent_video_files(config.paths, hours, errors)
+            cutoff = _datetime.now().timestamp() - hours * 3600
+            items = _build_recent_file_items(files, config.series_title_aliases)
+            response = {
+                "tool": "get recently added download files",
+                "query": {"hours": hours, "cutoffUtc": _datetime.fromtimestamp(cutoff).isoformat()},
+                "count": len(items),
+                "rootsChecked": list(config.paths.download_roots),
+                "items": items,
+            }
+            if errors:
+                response["errors"] = [
+                    {"path": e.path, "error": e.error} for e in errors
+                ]
+            response["message"] = (
+                f"Found {len(items)} video file(s) added or modified in the last {hours:g} hour(s). "
+                "Each item follows the same shape as 'get jellyfin library items'. "
+                "This list is informational only — nothing was moved or classified."
+            )
+            response["next"] = "Ask the user if they want to run 'move new downloads scan' to organize these files."
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": json.dumps(response),
+                            }
+                        ],
+                        "isError": False,
+                    },
+                }
+            )
+
         if name == "confirm move new downloads scan":
             scan_id = arguments.get("scanId")
             if not scan_id:
@@ -1461,6 +1599,64 @@ async def mcp(request: dict) -> JSONResponse:
                     ongoing_only=arguments.get("ongoingOnly", False),
                 )
                 result["next"] = "Items are sorted by most recently added first. Search uses client-side fuzzy matching (token overlap + similarity scoring) so it handles typos and partial names. Use ongoingOnly to focus on currently ongoing series."
+                logger.info("TOOL <<< %s (library=%s)", name, library_name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(result),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except Exception as exc:
+                return _mcp_error_response(request_id, -32000, str(exc))
+
+        if name == "get recently added in library":
+            library_name = arguments.get("libraryName")
+            if not library_name:
+                return _mcp_error_response(request_id, -32602, "libraryName is required")
+
+            client = JellyfinClient.from_env()
+            if not client:
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": json.dumps(
+                                        {
+                                            "message": "Jellyfin integration is not configured. Set ENABLE_JELLYFIN_INTEGRATION=true and JELLYFIN_API_KEY in .env"
+                                        }
+                                    ),
+                                }
+                            ],
+                            "isError": False,
+                        },
+                    }
+                )
+
+            try:
+                hours = arguments.get("hours", 72) or 72
+                try:
+                    hours = float(hours)
+                except (TypeError, ValueError):
+                    hours = 72.0
+                result = await client.recently_added_items(
+                    library_name=library_name,
+                    limit=arguments.get("limit", 10),
+                    hours=hours,
+                )
+                result["next"] = "These are the individual episodes and movies most recently added in Jellyfin (DateCreated descending). For recently added download files on disk, use 'get recently added download files'."
                 logger.info("TOOL <<< %s (library=%s)", name, library_name)
                 return JSONResponse(
                     {

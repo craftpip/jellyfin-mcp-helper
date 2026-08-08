@@ -209,6 +209,7 @@ class JellyfinClient:
         search: str | None = None,
         limit: int = 10,
         ongoing_only: bool = False,
+        hours: float | None = None,
     ) -> dict:
         library = await self._resolve_library(library_name)
         user_id = await self._get_user_id()
@@ -219,7 +220,7 @@ class JellyfinClient:
             "ParentId": library["id"],
             "Recursive": "true",
             "IncludeItemTypes": "Series,Movie",
-            "Fields": "ProductionYear,EndDate,Status,MediaStreams,Path",
+            "Fields": "ProductionYear,EndDate,Status,MediaStreams,Path,DateCreated",
             "Limit": str(fetch_limit),
             "UserId": user_id,
             "SortBy": "DateCreated",
@@ -228,6 +229,16 @@ class JellyfinClient:
 
         data = await self._api_get("/Items", params)
         items = data.get("Items", [])
+        if hours is not None and hours > 0:
+            from datetime import datetime, timedelta, timezone
+
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            items = [
+                item
+                for item in items
+                if (created := item.get("DateCreated"))
+                and datetime.fromisoformat(created.replace("Z", "+00:00")).astimezone(timezone.utc) >= cutoff
+            ]
         result_items: list[dict] = []
 
         for item in items:
@@ -289,6 +300,81 @@ class JellyfinClient:
             "returned_items": len(result_items),
             "search": search,
             "ongoing_only": ongoing_only,
+            "items": result_items,
+        }
+
+    async def recently_added_items(
+        self,
+        library_name: str,
+        hours: float = 72,
+        limit: int = 10,
+    ) -> dict:
+        """List the individual episode and movie files most recently added to a library."""
+        from datetime import datetime, timedelta, timezone
+
+        library = await self._resolve_library(library_name)
+        user_id = await self._get_user_id()
+
+        params: dict[str, str] = {
+            "ParentId": library["id"],
+            "Recursive": "true",
+            "IncludeItemTypes": "Episode,Movie",
+            "Fields": "SeriesName,SeasonName,IndexNumber,ParentIndexNumber,Path,DateCreated,ProductionYear,MediaStreams",
+            "Limit": str(500),
+            "UserId": user_id,
+            "SortBy": "DateCreated",
+            "SortOrder": "Descending",
+        }
+
+        data = await self._api_get("/Items", params)
+        items = data.get("Items", [])
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        result_items: list[dict] = []
+
+        for item in items:
+            created_raw = item.get("DateCreated")
+            if created_raw:
+                created = datetime.fromisoformat(created_raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+                if created < cutoff:
+                    continue
+            else:
+                created = None
+
+            item_type = item.get("Type", "").lower()
+            streams = item.get("MediaStreams") or []
+            if item_type == "episode":
+                season = item.get("ParentIndexNumber")
+                episode = item.get("IndexNumber")
+                label = ""
+                if season is not None and episode is not None:
+                    label = f"S{int(season):02d}E{int(episode):02d}"
+                entry = {
+                    "type": "episode",
+                    "name": item.get("Name", ""),
+                    "series": item.get("SeriesName", ""),
+                    "season": season,
+                    "episode": episode,
+                    "label": label,
+                    "path": item.get("Path") or "",
+                }
+            else:
+                entry = {
+                    "type": "movie",
+                    "name": item.get("Name", ""),
+                    "year": item.get("ProductionYear"),
+                    "path": item.get("Path") or "",
+                    "audio_languages": sorted(set(s.get("Language") or "und" for s in streams if s.get("Type") == "Audio")),
+                    "subtitle_languages": sorted(set(s.get("Language") or "und" for s in streams if s.get("Type") == "Subtitle")),
+                }
+            entry["addedAt"] = created.isoformat() if created else None
+            result_items.append(entry)
+
+        result_items = result_items[:limit]
+        return {
+            "library_name": library_name,
+            "returned_items": len(result_items),
+            "hours": hours,
+            "cutoffUtc": cutoff.isoformat(),
             "items": result_items,
         }
 
