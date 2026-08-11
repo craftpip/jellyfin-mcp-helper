@@ -41,7 +41,13 @@ The skill contains:
 - app/services/scanner.py: filesystem scanner
 - app/main.py: FastAPI entry point and MCP handlers
 - app/ui/server.py: Web UI FastAPI server with MCP proxy
-- app/ui/index.html: Web UI single-page HTML+JS frontend
+- app/ui/index.html: Web UI single-page HTML+JS frontend (legacy panel, served at `/legacy`)
+- app/ui/react/: React.js migration of the web UI (Vite build, source)
+- app/ui/react-dist/: built React bundle served at `/` and `/react` (both asset mounts)
+- app/ui/react/src/store/AppStore.jsx: Context + useReducer store mirroring the legacy globals
+- app/ui/react/src/mcp/mcpClient.js: JSON-RPC client (mcpCall, mcpListTools)
+- app/ui/react/src/utils/report.js: pure helpers (item mapping, grouping, filters, smart path sync)
+- app/ui/react/src/components/: React components (ReportPanel, ConfirmModal, PathPills, etc.)
 - plan/: project plans and roadmap documents (markdown)
 - tests/: pytest test suite
 - config/: config files
@@ -54,6 +60,16 @@ The skill contains:
 - INSTALL.md: install documentation
 - README.md: project documentation
 - SKILL.md: project skill documentation
+
+## Web UI (React migration)
+
+See `plan/03-react-migration.md` for the full migration plan and phase checklist. Current state: **the React app is the main UI at `/`**; the legacy panel lives at `/legacy` (308 from `/legacy`). Old `/react` bookmarks 308-redirect to `/`.
+
+- React source lives in `app/ui/react/` (Vite, JavaScript, no TS). `npm run build` outputs to `app/ui/react-dist/`.
+- `server.py` serves `react-dist/` as static files under `/assets` (plus backward-compat `/react/assets`) and routes `GET /` to the built `index.html`; `GET /legacy` redirects to `/legacy/` (legacy `index.html`); `GET /react` redirects to `/` (308).
+- The React client calls the same `/mcp` JSON-RPC proxy. Dev: `npm run dev` in `app/ui/react` with a Vite proxy to `http://localhost:18329`.
+- Frontend tests: `npm test` from `app/ui/react` (Vitest + React Testing Library, jsdom). **Run vitest via `npm test` in `app/ui/react`, never via `npx vitest` from the repo root** — the root install has no jsdom/vite config and fails confusingly.
+- After any React source change: `npm run build` in `app/ui/react`, then `docker restart jellysort` (the compose file bind-mounts `.` into `/app`, so the built `react-dist/` and edited `server.py` are picked up on restart).
 
 ## Project Rules
 
@@ -161,6 +177,7 @@ Verification:
 
 - `CONTAINED_BARE_EPISODE_RE` matched `2.5` (in `2.5.Crumpled.Staircase...`) as a bare episode number with title `5.Crumpled...`, mangling every episode title.
 - `_is_fuller_title` preferred the container folder name over the parsed title, so junk like `7_9` (from `Nimbus 7_9 (2020)`) won over the clean title `Nimbus`.
+- `_has_container_episode_context` treated a leading number in a file inside a folder as a bare episode even when the folder was the movie's own title folder — `3 Idiots (2009)` containing `3 Idiots (2009).mkv` became kind=series episode 3 with title `3 Idiots (2009)`.
 
 **Regex change:**
 
@@ -174,12 +191,18 @@ r"^(?P<episode>\d{1,3})(?:v\d+)?\s*(?:[-_ ]|\.(?!\d))\s*(?P<title>\S.*)$"
 - `_extract_title` prefers the parsed title over the folder name when the folder name contains extra numeric words that are not years (1900-2100), via `_is_fuller_title`.
 - The parsed title is also skipped in favor of the folder name when the parsed title has no alphabetic characters (e.g., bare-episode files whose guessit title is just `1`).
 
+**Contained bare-episode guard:**
+
+- `_container_is_movie_folder(candidate)` returns True when the container folder tokens are a prefix of the file stem tokens (e.g. folder `3 Idiots (2009)` + file `3.Idiots.2009.1080p.BluRay.mkv`). In that shape the leading number is part of the movie title, not an episode number.
+- The contained-bare-episode inference in `classify_candidate`, `_extract_container_series_for_bare_episode`, and the `_extract_episode_title` bare-title path are all skipped when `_container_is_movie_folder` is True, so the folder name is not stolen as the title either.
+
 **Correct behavior (names below are the obfuscated corpus equivalents):**
 
 - `2.5.Crumpled.Staircase.2021.S01E01...` → title `2.5 Crumpled Staircase (2021)`, kind=series, episode 1.
 - `[RlsGrp] Nimbus 7_9 (2020) (Season 02) ...` → title `Nimbus`, season 2, not `Nimbus 7_9 (2020)`.
 - Both Nimbus S01 and S02 folders must resolve to the same title `Nimbus` so they merge into one series.
 - `4.The.Conclusion.mkv` in a show folder → kind=series, episode 4. Dot-separated bare episodes still work.
+- `3 Idiots (2009).mkv` inside a `3 Idiots (2009)` folder → kind=movie, title `3 Idiots`, year 2009, season/episode None. The leading `3` is a title prefix, not episode 3.
 
 **Verification:**
 
@@ -368,6 +391,23 @@ This ensures `Path(target_path).exists()` returns `True` in `scan_manager.py`, c
 
 **Fix:** `syncPathChanges` in `app/ui/index.html` filters by `item.title !== groupTitle` so changes only propagate within the same show group.
 
+### Path editing for solo groups (legacy bug NOT replicated in React)
+
+**Problem:** In the legacy panel, editing the target path of any row whose title group has no other rows always reverts immediately — `syncPathChanges` reverts the input when `anySynced` is false, and there are no siblings to sync. Since every movie is its own group, **Update Paths was broken for all movies** (and single-episode series).
+
+**Correct behavior (React port):** Only revert when the group actually has other rows that could have been synced but none matched. A row alone in its group keeps the edit.
+
+**Change:** `computePathSync` in `app/ui/react/src/utils/report.js` tracks `hasSameGroupSibling`:
+- No same-group sibling → return `null` (keep the edit, no sync, no revert).
+- Siblings exist but none share the changed prefix/chunk → `{ revert: true }` (matches legacy).
+- Siblings synced → `{ updates: [...] }`.
+
+The store's `onTargetInputChange` (AppStore.jsx) already skips revert when `computePathSync` returns `null`.
+
+**Verification:** Unit test `keeps the edit (no revert) when the row is alone in its group` in `report.test.js`. Live check: type a change into a movie's target input — it persists instead of snapping back.
+
+**Note:** The legacy panel still reverts (unfixed on purpose — it stays canonical only for comparison; the fix lives in the React port).
+
 ### Auto-load report on scan complete and page load
 
 **Pattern:** The report should load automatically without requiring the user to click "Get Report". Two triggers:
@@ -375,6 +415,33 @@ This ensures `Path(target_path).exists()` returns `True` in `scan_manager.py`, c
 2. `checkConnection` calls `fetchReport()` after loading libraries on page load
 
 `fetchReport` uses a `finally` block to re-enable the "Get Report" button so it never stays disabled on error.
+
+### React UI routes: root swap, /react and /legacy redirects
+
+**Problem:** The Vite production build uses relative asset URLs (`./assets/...`). At `/` they resolve to `/assets/...`; at `/react/` (no trailing slash) they would resolve to the origin root and 404.
+
+**Fix (current):** The React app is the **main UI at `/`**. In `app/ui/server.py`:
+- `/assets` and `/react/assets` both mount `react-dist/assets` (backward compat for old bookmarks).
+- `GET /` serves `react-dist/index.html`; `GET /react` and `GET /react/` 308-redirect to `/`.
+- `GET /legacy` 308-redirects to `/legacy/`, which serves the legacy `index.html`.
+
+**Verification:** `curl -s -o /dev/null -w '%{http_code}' http://host:18329/react` returns 308 → `/`; `/legacy` returns 308 → `/legacy/`; `/` returns 200; `/assets/<hash>.js` returns 200.
+
+### React UI tests must run via npm test in app/ui/react
+
+**Problem:** Running `npx vitest` from the repo root (no local vitest, no vite config with jsdom) installs a fresh vitest, runs with the node environment, and fails confusingly (no `document`, real network attempts, hung polls).
+
+**Fix:** Always run frontend tests with `npm test` in `app/ui/react`. The local `vitest.config` (jsdom + `src/test/setup.js`) is picked up only there. Frontend test files live next to the code (`src/*.test.jsx`, `src/utils/*.test.js`, `src/components/*.test.jsx`).
+
+**Verification:** `cd app/ui/react && npm test` → all test files green.
+
+### Filesystem rollback hazard on this host
+
+**Problem:** Edits under `/www1/...` occasionally reverted after a container restart (lost `server.py` changes, lost frontend test files), with no error reported by the edit/write tools.
+
+**Fix:** After making changes and before relying on them, re-verify the file content (e.g. `grep`/`cat`), rebuild React (`npm run build`), and restart the container. Keep changes small and re-appliable; re-check critical files after each `docker restart jellysort`.
+
+**Verification:** After a restart, confirm `grep react_redirect app/ui/server.py` and `grep -c 'rel="icon"' app/ui/react/index.html` still match.
 
 ## Plans
 

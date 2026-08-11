@@ -1,0 +1,198 @@
+import { describe, it, expect } from 'vitest'
+import {
+  computePathSync,
+  defaultSelection,
+  groupItems,
+  mapReportItems,
+  matchesFilter,
+  itemSearchText,
+} from './report.js'
+
+const REPORT = {
+  summary: { scan_id: 'scan1', movies: 1, series: 1, skipped: 1, action_required: 2 },
+  items: [
+    {
+      confirmId: 'c1',
+      action: 'move',
+      itemType: 'series',
+      sourcePath: '/media1/downloads/Show.S01E01.mkv',
+      targetPath: '/media1/series/Show Name (2020)/Season 01/Show Name S01E01.mkv',
+      pathExists: 'Show ✗, Season ✗, File ✗',
+      fileExists: false,
+      fileSize: 1073741824,
+      crossDrive: true,
+    },
+    {
+      confirmId: 'c2',
+      action: 'replace',
+      itemType: 'movie',
+      sourcePath: '/media2/downloads/Movie.mkv',
+      targetPath: '/media2/movies/Movie (2024)/Movie.mkv',
+      pathExists: 'Folder ✓, File ✓',
+      fileExists: true,
+      fileSize: 536870912,
+      crossDrive: false,
+    },
+    {
+      confirmId: 'c3',
+      action: 'skip',
+      itemType: 'series',
+      sourcePath: '/media3/downloads/Bad.mkv',
+      error: 'No season folder found',
+      fileSize: 12345,
+    },
+  ],
+}
+
+function buildItems() {
+  return mapReportItems(REPORT)
+}
+
+function itemWithTargets(cloneBase) {
+  return cloneBase.map((i) => ({ ...i, _liveTarget: i.targetPath }))
+}
+
+describe('mapReportItems', () => {
+  it('derives title/season/episode from series target path', () => {
+    const [series] = buildItems()
+    expect(series.title).toBe('Show Name (2020)')
+    expect(series.season).toBe('Season 01')
+    expect(series.episode).toBe('S01E01')
+    expect(series.sourceName).toBe('Show.S01E01.mkv')
+    expect(series.crossDrive).toBe(true)
+  })
+
+  it('derives movie title from target path', () => {
+    const [, movie] = buildItems()
+    expect(movie.title).toBe('Movie (2024)')
+    expect(movie.action).toBe('replace')
+    expect(movie.fileExists).toBe(true)
+  })
+
+  it('maps skipped items with reason', () => {
+    const items = buildItems()
+    const skip = items.find((i) => i.action === 'skip')
+    expect(skip.reason).toBe('No season folder found')
+    expect(skip.title).toBe('Skipped items')
+  })
+})
+
+describe('groupItems', () => {
+  it('groups by title and sums size', () => {
+    const groups = groupItems(buildItems())
+    expect(groups.map((g) => g.title)).toEqual(['Show Name (2020)', 'Movie (2024)', 'Skipped items'])
+    expect(groups[0].totalSize).toBe(1073741824)
+  })
+})
+
+describe('matchesFilter', () => {
+  const [c1, c2] = buildItems()
+  const [series, movie] = [c1, c2]
+
+  it('filters by query text', () => {
+    expect(matchesFilter(movie, 'Movie (2024)', 'all')).toBe(true)
+    expect(matchesFilter(movie, 'Show Name', 'all')).toBe(false)
+  })
+
+  it('filters by action axis', () => {
+    expect(matchesFilter(series, '', 'move')).toBe(true)
+    expect(matchesFilter(movie, '', 'move')).toBe(false)
+    expect(matchesFilter(movie, '', 'replace')).toBe(true)
+  })
+
+  it('filters by fileExists axis', () => {
+    expect(matchesFilter(movie, '', 'existing')).toBe(true)
+    expect(matchesFilter(series, '', 'existing')).toBe(false)
+    expect(matchesFilter(series, '', 'new')).toBe(true)
+  })
+})
+
+describe('defaultSelection', () => {
+  it('selects actionable items only', () => {
+    const items = itemWithTargets(buildItems())
+    expect(defaultSelection(items)).toEqual(['c1', 'c2'])
+  })
+})
+
+describe('computePathSync', () => {
+  function seriesRows() {
+    const base = buildItems()
+    const items = itemWithTargets(base)
+    items[0].title = 'Show Name (2020)'
+    items[1].title = 'Show Name (2020)'
+    items[0].targetPath = '/media1/series/Show Name (2020)/Season 01/Show Name S01E01.mkv'
+    items[0]._liveTarget = items[0].targetPath
+    items[1].targetPath = '/media1/series/Show Name (2020)/Season 01/Show Name S01E02.mkv'
+    items[1]._liveTarget = items[1].targetPath
+    return items
+  }
+
+  it('syncs a changed chunk to sibling rows in the same group', () => {
+    const items = seriesRows()
+    const synced = computePathSync(
+      0,
+      items[0]._liveTarget,
+      '/media1/series/Show Name (2021)/Season 01/Show Name S01E01.mkv',
+      items
+    )
+    expect(synced).not.toBeNull()
+    expect(synced.updates.length).toBe(1)
+    expect(synced.updates[0].idx).toBe(1)
+    expect(synced.updates[0].value).toBe('/media1/series/Show Name (2021)/Season 01/Show Name S01E02.mkv')
+  })
+
+  it('reverts when no sibling shares the changed chunk', () => {
+    const items = seriesRows()
+    const synced = computePathSync(0, items[0]._liveTarget, '/totally/different/path/Show.mkv', items)
+    expect(synced).toEqual({ revert: true })
+  })
+
+  it('keeps the edit (no revert) when the row is alone in its group', () => {
+    const items = seriesRows()
+    items[1].title = 'Other Show'
+    items[1]._liveTarget = '/media1/series/Other Show/Season 01/Other Show S01E01.mkv'
+    items[1].targetPath = items[1]._liveTarget
+    const synced = computePathSync(
+      0,
+      items[0]._liveTarget,
+      '/media2/series/Show Name (2020)/Season 01/Show Name S01E01.mkv',
+      items
+    )
+    expect(synced).toBeNull()
+  })
+
+  it('does not touch rows in other groups even when the prefix matches', () => {
+    const items = seriesRows()
+    items[1].title = 'Show Name (2020)'
+    const other = itemWithTargets(buildItems())
+    items.push({
+      ...other[1],
+      title: 'Other Show',
+      _liveTarget: '/media1/series/Show Name (2020)/Season 01/Show Name S01E03.mkv',
+    })
+    const synced = computePathSync(
+      0,
+      items[0]._liveTarget,
+      '/media1/series/Show Name (2021)/Season 01/Show Name S01E01.mkv',
+      items
+    )
+    expect(synced.updates.length).toBe(1)
+    expect(synced.updates[0].idx).toBe(1)
+    expect(synced.updates.every((u) => items[u.idx].title === 'Show Name (2020)')).toBe(true)
+  })
+
+  it('returns null when value is unchanged', () => {
+    const items = seriesRows()
+    expect(computePathSync(0, items[0]._liveTarget, items[0]._liveTarget, items)).toBe(null)
+  })
+})
+
+describe('itemSearchText', () => {
+  it('includes title, episode and paths', () => {
+    const [series] = buildItems()
+    const text = itemSearchText(series)
+    expect(text).toContain('show name (2020)')
+    expect(text).toContain('s01e01')
+    expect(text).toContain('/media1/series')
+  })
+})

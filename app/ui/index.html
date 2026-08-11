@@ -350,7 +350,10 @@
     <h1>JellySort</h1>
     <div class="subtitle">Scan, review, and move download files into your media library</div>
   </div>
-  <div class="status" id="connStatus">connecting...</div>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <a href="/" style="color:#58a6ff; text-decoration:none; font-size:0.8rem; white-space:nowrap;" title="Open the React UI">React UI →</a>
+    <div class="status" id="connStatus">connecting...</div>
+  </div>
 </div>
 
 <div id="tab-scan">
@@ -386,12 +389,6 @@
 
   <div id="reportPanel" class="panel hidden">
     <h2>Scan Report</h2>
-    <div class="hint" style="margin-bottom:8px">`Path Exists` means the destination path already exists in your library. That can mean adding into an existing series/movie path or replacing an existing file.</div>
-    <div class="legend">
-      <span><span class="mark">✓</span> exists on target</span>
-      <span><span class="mark">✗</span> will be created</span>
-      <span class="crossdrive-badge">Cross-drive</span> slower move between drives
-    </div>
     <div class="summary-strip" id="reportSummaryStrip"></div>
     <div class="search-bar">
       <input type="text" id="filterInput" placeholder="Search by title, path..." oninput="applyFilter()">

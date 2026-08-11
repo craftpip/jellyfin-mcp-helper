@@ -2,6 +2,18 @@
  "scan_source": "obfuscated snapshot of download-root candidates",
  "candidates": [
   {
+   "name": "3 Fossil Geese (2009).mkv",
+   "container_path": "/media1/downloads/3 Fossil Geese (2009)",
+   "relative_path": "3 Fossil Geese (2009).mkv",
+   "file_size": 1500000000
+  },
+  {
+   "name": "3.Fossil.Geese.2009.1080p.BluRay.mkv",
+   "container_path": "/media1/downloads/3 Fossil Geese (2009)",
+   "relative_path": "3.Fossil.Geese.2009.1080p.BluRay.mkv",
+   "file_size": 1500000000
+  },
+  {
    "name": "2.5.Crumpled.Staircase.2021.S01E01.REPACK2.BDRip-1080p.x265.FLAC.EAC3.Dual.Audio-RlsGrp.mkv",
    "container_path": "/media1/downloads/2.5 Crumpled Staircase (2021) S01 [BDRip 1080p x265 FLAC EAC3 Dual-Audio]-RlsGrp",
    "relative_path": "2.5.Crumpled.Staircase.2021.S01E01.REPACK2.BDRip-1080p.x265.FLAC.EAC3.Dual.Audio-RlsGrp.mkv",

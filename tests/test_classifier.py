@@ -138,6 +138,37 @@ def test_dot_separated_bare_episode_still_works() -> None:
     assert result.episode == 4
 
 
+def test_movie_with_leading_number_in_title_folder_is_movie() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="3 Idiots (2009).mkv",
+            container_path="/data/downloads/3 Idiots (2009)",
+            relative_path="3 Idiots (2009).mkv",
+        )
+    )
+
+    assert result.kind == "movie"
+    assert result.title == "3 Idiots"
+    assert result.year == 2009
+    assert result.season is None
+    assert result.episode is None
+
+
+def test_movie_with_leading_number_and_tech_tags_is_movie() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="3.Idiots.2009.1080p.BluRay.mkv",
+            container_path="/data/downloads/3 Idiots (2009)",
+            relative_path="3.Idiots.2009.1080p.BluRay.mkv",
+        )
+    )
+
+    assert result.kind == "movie"
+    assert result.title == "3 Idiots"
+    assert result.year == 2009
+    assert result.episode is None
+
+
 def test_decimal_number_prefix_is_not_a_bare_episode() -> None:
     result = classify_candidate(
         _candidate(

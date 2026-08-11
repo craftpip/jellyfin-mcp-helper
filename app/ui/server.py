@@ -5,12 +5,15 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
 
 HERE = Path(__file__).resolve().parent
 INDEX_HTML = HERE / "index.html"
+REACT_INDEX_HTML = HERE / "react-dist" / "index.html"
+REACT_ASSETS_DIR = HERE / "react-dist" / "assets"
 
 MCP_TARGET_URL: str = ""
 
@@ -21,8 +24,45 @@ def create_ui_app(mcp_target_url: str) -> FastAPI:
 
     ui_app = FastAPI(title="JellySort UI")
 
+    if REACT_ASSETS_DIR.exists():
+        ui_app.mount(
+            "/assets",
+            StaticFiles(directory=str(REACT_ASSETS_DIR)),
+            name="react-assets",
+        )
+        # Backward-compat mount for bookmarks that pointed at /react/assets.
+        ui_app.mount(
+            "/react/assets",
+            StaticFiles(directory=str(REACT_ASSETS_DIR)),
+            name="react-assets-legacy",
+        )
+
+    def _serve_react() -> HTMLResponse:
+        if not REACT_INDEX_HTML.exists():
+            return HTMLResponse(
+                "React UI not built yet. Run `npm run build` in app/ui/react/.",
+                status_code=404,
+            )
+        return HTMLResponse(REACT_INDEX_HTML.read_text(encoding="utf-8"))
+
     @ui_app.get("/")
     async def index():
+        return _serve_react()
+
+    @ui_app.get("/react")
+    async def react_redirect():
+        return RedirectResponse(url="/", status_code=308)
+
+    @ui_app.get("/react/")
+    async def react_index():
+        return RedirectResponse(url="/", status_code=308)
+
+    @ui_app.get("/legacy")
+    async def legacy_redirect():
+        return RedirectResponse(url="/legacy/", status_code=308)
+
+    @ui_app.get("/legacy/")
+    async def legacy_index():
         html = INDEX_HTML.read_text(encoding="utf-8")
         return HTMLResponse(html)
 

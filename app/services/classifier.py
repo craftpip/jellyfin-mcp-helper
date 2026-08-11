@@ -106,7 +106,7 @@ def classify_candidate(candidate: CandidateItem, series_title_aliases: dict[str,
     if episode is None and season_from_folder:
         episode = _extract_bare_episode_from_name(candidate.name)
         has_explicit_episode = episode is not None
-    if episode is None and _has_container_episode_context(candidate):
+    if episode is None and _has_container_episode_context(candidate) and not _container_is_movie_folder(candidate):
         episode = _extract_contained_bare_episode(candidate.name)
         has_explicit_episode = episode is not None
     if episode is None and foreign_episode is not None:
@@ -204,7 +204,7 @@ def _extract_episode_title(parsed: dict[str, Any], candidate: CandidateItem) -> 
     cleaned = _CRC_BRACKETS_RE.sub("", stem)
     cleaned = _CRC_PAREN_RE.sub("", cleaned)
     bare_title = _extract_contained_bare_episode_title(cleaned)
-    if bare_title:
+    if bare_title and not _container_is_movie_folder(candidate):
         return bare_title
     m = _FILENAME_EP_TITLE_RE.match(cleaned)
     if m:
@@ -294,8 +294,33 @@ def _extract_series_from_source(candidate: CandidateItem) -> str | None:
     return None
 
 
+def _container_is_movie_folder(candidate: CandidateItem) -> bool:
+    """True when the container folder is the movie's own title folder.
+
+    A leading number in a file name is only treated as a bare episode when the
+    file sits in a series/season container. When the container folder is named
+    like the file itself (folder tokens are a prefix of the file tokens, e.g.
+    '3 Idiots (2009)' containing '3 Idiots (2009).mkv'), the leading number is
+    part of the movie title, not an episode number.
+    """
+    if not _has_container_episode_context(candidate):
+        return False
+    if _extract_contained_bare_episode(candidate.name) is None:
+        return False
+    folder = _clean_source_folder_name(Path(candidate.container_path or "").name)
+    if not folder:
+        return False
+    file_tokens = re.findall(r"[a-z0-9]+", Path(candidate.name).stem.lower())
+    folder_tokens = re.findall(r"[a-z0-9]+", folder.lower())
+    if not file_tokens or not folder_tokens:
+        return False
+    return folder_tokens == file_tokens[: len(folder_tokens)]
+
+
 def _extract_container_series_for_bare_episode(candidate: CandidateItem) -> str | None:
     if not _has_container_episode_context(candidate):
+        return None
+    if _container_is_movie_folder(candidate):
         return None
     if _extract_contained_bare_episode(candidate.name) is None:
         return None
