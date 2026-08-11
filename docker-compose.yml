@@ -8,6 +8,7 @@ services:
     restart: unless-stopped
     ports:
       - "18328:18327"
+      - "18329:18329"
     env_file:
       - .env
     extra_hosts:
@@ -17,18 +18,3 @@ services:
       - /mnt/media1t/downloads:/media1
       - /mnt/media2t/downloads:/media2
       - /mnt/media3t/downloads:/media3
-
-  jellysort-ui:
-    build: .
-    image: jellysort:dev
-    container_name: jellysort-ui
-    restart: unless-stopped
-    ports:
-      - "18329:18329"
-    environment:
-      MCP_TARGET_URL: http://jellysort:18327/mcp
-    depends_on:
-      - jellysort
-    volumes:
-      - .:/app
-    command: ["uvicorn", "app.ui.main:app", "--host", "0.0.0.0", "--port", "18329"]

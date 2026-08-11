@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 from collections import Counter
 from contextlib import asynccontextmanager
@@ -10,17 +11,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+import uvicorn
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.responses import StreamingResponse
 
-from app.core.config import get_config
+from app.core.config import get_config, get_settings
 from app.core.logging import configure_logging
 from app.core.version import VERSION
 from app.models.schemas import ScanLogEntry, ScanPlan, ScanRequest, ScannedItem
 from app.services.jellyfin import JellyfinClient
 from app.services.release_tracker import ReleaseTracker
 from app.services.scan_manager import ScanManager
+from app.ui.server import create_ui_app
 
 
 logger = logging.getLogger(__name__)
@@ -574,6 +577,20 @@ def _format_scan_progress(scan: ScanPlan) -> dict:
     }
 
 
+def _start_ui_server(config):
+    settings = get_settings()
+    if not settings.web_ui_enabled:
+        return
+    ui_port = settings.web_ui_port
+    mcp_port = 18327
+    ui_app = create_ui_app(f"http://localhost:{mcp_port}/mcp")
+    logger.info("Web UI server starting on port %s (proxying MCP from port %s)", ui_port, mcp_port)
+    try:
+        uvicorn.run(ui_app, host="0.0.0.0", port=ui_port, log_level="info")
+    except OSError:
+        logger.warning("Web UI port %s already in use — skipping", ui_port)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
@@ -582,6 +599,12 @@ async def lifespan(app: FastAPI):
     app.state.scan_manager = ScanManager(config)
     app.state.release_tracker = ReleaseTracker()
     global _cached_library_list
+
+    settings = get_settings()
+    if settings.web_ui_enabled:
+        thread = threading.Thread(target=_start_ui_server, args=(config,), daemon=True)
+        thread.start()
+        logger.info("Web UI thread started on port %s", settings.web_ui_port)
 
     try:
         client = JellyfinClient.from_env()
