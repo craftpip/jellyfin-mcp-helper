@@ -65,6 +65,8 @@ The skill contains:
 
 See `plan/03-react-migration.md` for the full migration plan and phase checklist. Current state: **the React app is the main UI at `/`**; the legacy panel lives at `/legacy` (308 from `/legacy`). Old `/react` bookmarks 308-redirect to `/`.
 
+> **RULE: The legacy UI is frozen.** Do not touch `app/ui/index.html` (the legacy panel) anymore — no edits, no fixes, no feature work. Every change request the user makes is for the **React UI** (`app/ui/react/`). The legacy panel exists at `/legacy` only as a frozen reference; it is intentionally not updated and may diverge.
+
 - React source lives in `app/ui/react/` (Vite, JavaScript, no TS). `npm run build` outputs to `app/ui/react-dist/`.
 - `server.py` serves `react-dist/` as static files under `/assets` (plus backward-compat `/react/assets`) and routes `GET /` to the built `index.html`; `GET /legacy` redirects to `/legacy/` (legacy `index.html`); `GET /react` redirects to `/` (308).
 - The React client calls the same `/mcp` JSON-RPC proxy. Dev: `npm run dev` in `app/ui/react` with a Vite proxy to `http://localhost:18329`.

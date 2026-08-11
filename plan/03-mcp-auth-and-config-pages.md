@@ -44,9 +44,25 @@ requests through; when disabled, requests must present a valid API key.
 - **D3 — API key storage:** `config/mcp_keys.json` (bind-mounted, survives
   rebuilds, read per-request — **no container restart needed** when keys
   change). Keys stored **hashed** (SHA-256), full key shown once at creation.
-- **D4 — Admin page gating:** env + API-key pages are sensitive (they expose
-  `JELLYFIN_API_KEY`, `QBT_MCP_API_KEY`, etc.). Gate them behind
-  `ADMIN_UI_TOKEN`. Without one set, admin pages are disabled with a hint.
+- **D4 — Console access gate (DECIDED):** a single `SERVER_PASSWORD` env var
+  controls console access:
+  - **`SERVER_PASSWORD` set** → the console binds `0.0.0.0` (reachable from
+    any IP on the LAN) and a **login screen** requires the password before the
+    UI (including the Settings + API Keys admin pages) loads.
+  - **`SERVER_PASSWORD` empty** → no login prompt, but the console only binds
+    `127.0.0.1` / localhost — not reachable from the LAN.
+  - The bind address lives in a derived `UI_BIND_HOST` env var that
+    `env_manager` auto-syncs from `SERVER_PASSWORD` on save (one knob drives
+    both). Bind changes need a container recreate (existing banner mechanic).
+- **D4.1 — Docker bind mechanics:** `env_file` passes `UI_BIND_HOST` to the
+  container, but `docker-compose.yml` sets `environment: UI_BIND_HOST: "0.0.0.0"`
+  (compose `environment` overrides `env_file`), so the app always listens on
+  all interfaces **inside** the container. The actual LAN/localhost boundary is
+  enforced by the **host-side port binding** in compose:
+  `"${UI_BIND_HOST:-127.0.0.1}:18329:18329"`. This is required because
+  docker-proxy forwards published ports to the container's bridge IP — a
+  loopback-only bind inside the container would break even host-localhost
+  browsing. Non-Docker (`uvicorn` on the host) uses `UI_BIND_HOST` directly.
 - **D5 — Auth failure transport:** HTTP `401` with a JSON-RPC error body
   (`code: -32001, message: "unauthorized"`). Standard MCP clients treat 401 as
   an auth failure; keep `id` from the request.
