@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 OperationMode = Literal["organize", "normalize"]
 NormalizeMode = Literal["safe", "full"]
 ItemKind = Literal["movie", "series", "skip"]
-ScanStatus = Literal["running", "completed", "confirmed", "failed"]
+ScanStatus = Literal["running", "completed", "confirmed", "failed", "cancelled"]
 RunStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 
 

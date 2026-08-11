@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import time
 from asyncio import create_task, get_running_loop, to_thread
 from datetime import UTC, datetime
@@ -74,12 +75,23 @@ def _path_name_labels(path_value: str) -> set[str]:
     return {label for label in labels if label}
 
 
+def _is_path_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 class ScanManager:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
         self._resolver = PathResolver(config)
         self._current_scan: ScanPlan | None = None
         self._loop = None
+        self._scan_plans: dict[str, ScanPlan] = {}
+        self._scan_cancel_events: dict[str, threading.Event] = {}
+        self._scan_tasks: dict[str, object] = {}
 
     def get_current_scan(self) -> ScanPlan | None:
         return self._current_scan
@@ -91,13 +103,17 @@ class ScanManager:
 
     async def create_scan(self, request: ScanRequest) -> ScanPlan:
         self._loop = get_running_loop()
+        previous_task = None
         if self._current_scan and self._current_scan.status == "running":
-            if request.replace_existing:
-                logger.info("Scan %s: overriding current scan", request.operation)
-                self._current_scan.status = "cancelled"
-                self._current_scan = None
-            else:
-                raise HTTPException(status_code=409, detail="Scan already running. Check scan progress instead of starting a new scan.")
+            previous_scan = self._current_scan
+            logger.info("Scan %s: cancelling previous scan %s", request.operation, previous_scan.scan_id)
+            previous_scan.status = "cancelled"
+            previous_scan.finished_at = datetime.now(UTC)
+            previous_scan.current_candidate = None
+            cancel_event = self._scan_cancel_events.get(previous_scan.scan_id)
+            if cancel_event:
+                cancel_event.set()
+            previous_task = self._scan_tasks.get(previous_scan.scan_id)
 
         now = datetime.now(UTC)
         scan_id = uuid4().hex
@@ -112,6 +128,8 @@ class ScanManager:
             created_at=now,
             started_at=now,
         )
+        self._scan_plans[scan_id] = self._current_scan
+        self._scan_cancel_events[scan_id] = threading.Event()
 
         logger.info(
             "Scan %s started: operation=%s replace_existing=%s",
@@ -120,14 +138,18 @@ class ScanManager:
             request.replace_existing,
         )
 
-        create_task(self._run_scan_task(scan_id, request))
+        self._scan_tasks[scan_id] = create_task(self._run_scan_task(scan_id, request, previous_task))
         return self._current_scan
 
-    async def _run_scan_task(self, scan_id: str, request: ScanRequest) -> None:
+    async def _run_scan_task(self, scan_id: str, request: ScanRequest, previous_task=None) -> None:
         try:
+            if previous_task:
+                await previous_task
+            if self._scan_cancel_events[scan_id].is_set():
+                return
             await to_thread(self._run_scan_sync, scan_id, request)
-            scan = self._current_scan
-            if scan and scan.scan_id == scan_id and scan.status == "running":
+            scan = self._scan_plans.get(scan_id)
+            if scan and scan.status == "running":
                 scan.status = "completed"
                 scan.finished_at = datetime.now(UTC)
                 scan.current_candidate = None
@@ -139,8 +161,8 @@ class ScanManager:
                     len(scan.service_errors),
                 )
         except Exception as exc:
-            scan = self._current_scan
-            if scan and scan.scan_id == scan_id:
+            scan = self._scan_plans.get(scan_id)
+            if scan:
                 scan.status = "failed"
                 scan.finished_at = datetime.now(UTC)
                 scan.error = str(exc)
@@ -148,10 +170,14 @@ class ScanManager:
             logger.error("Scan %s failed: %s", scan_id, str(exc), exc_info=True)
         finally:
             clear_resolver_cache()
+            self._scan_tasks.pop(scan_id, None)
+            self._scan_cancel_events.pop(scan_id, None)
+            self._scan_plans.pop(scan_id, None)
 
     def _run_scan_sync(self, scan_id: str, request: ScanRequest) -> None:
-        scan = self._current_scan
-        if not scan or scan.scan_id != scan_id:
+        scan = self._scan_plans.get(scan_id)
+        cancel_event = self._scan_cancel_events.get(scan_id)
+        if not scan or not cancel_event:
             return
 
         clear_resolver_cache()
@@ -163,7 +189,7 @@ class ScanManager:
         scan_result = scan_candidates(self._config.paths)
         candidates = scan_result.candidates
         scan.total_candidates = len(candidates)
-        self._record_scan_errors(scan_result.errors)
+        self._record_scan_errors(scan, scan_result.errors)
         logger.info(
             "Scan %s found %s readable candidates and %s unreadable paths",
             scan.scan_id,
@@ -172,6 +198,9 @@ class ScanManager:
         )
 
         for index, candidate in enumerate(candidates, start=1):
+            if cancel_event.is_set():
+                logger.info("Scan %s cancelled before candidate %d", scan.scan_id, index)
+                return
             scan.current_candidate_index = index
             scan.current_candidate = candidate.source_path
             if in_progress_paths and self._is_in_progress(candidate.source_path, in_progress_paths):
@@ -356,9 +385,8 @@ class ScanManager:
 
         self._resolver.reset_runtime_state()
 
-    def _record_scan_errors(self, errors: list[ScanPathError]) -> None:
-        scan = self._current_scan
-        if not scan or not errors:
+    def _record_scan_errors(self, scan: ScanPlan, errors: list[ScanPathError]) -> None:
+        if not errors:
             return
 
         messages: list[str] = []
@@ -416,7 +444,10 @@ class ScanManager:
         if scan.status == "failed":
             raise HTTPException(status_code=400, detail="Scan failed. Run a new scan before updating.")
 
-        allowed_roots = list(self._config.paths.movie_roots.values()) + list(self._config.paths.series_roots.values())
+        allowed_roots = [
+            Path(root).resolve(strict=False)
+            for root in list(self._config.paths.movie_roots.values()) + list(self._config.paths.series_roots.values())
+        ]
         updates_by_id = {u["confirmId"]: u["targetPath"] for u in items}
         updated_count = 0
 
@@ -424,21 +455,27 @@ class ScanManager:
             if item.confirm_id not in updates_by_id:
                 continue
             new_target = updates_by_id[item.confirm_id]
+            if item.action == "skip" or item.item_type == "skip":
+                raise HTTPException(status_code=400, detail=f"Item '{item.confirm_id}' is skipped and cannot be redirected")
 
-            if not any(new_target.startswith(root) for root in allowed_roots):
+            target_path_obj = Path(new_target)
+            if not target_path_obj.is_absolute():
+                raise HTTPException(status_code=400, detail=f"Target path '{new_target}' must be absolute")
+            target_path_obj = target_path_obj.resolve(strict=False)
+
+            if not any(_is_path_within(target_path_obj, root) for root in allowed_roots):
                 raise HTTPException(
                     status_code=400,
                     detail=f"Target path '{new_target}' is not under any configured movie or series root",
                 )
 
-            if not new_target.endswith((".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv")):
+            if target_path_obj.suffix.lower() not in (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv"):
                 raise HTTPException(
                     status_code=400,
                     detail=f"Target path '{new_target}' does not have a valid video extension",
                 )
 
-            item.target_path = new_target
-            target_path_obj = Path(new_target)
+            item.target_path = str(target_path_obj)
             target_exists = target_path_obj.exists()
             item.action = "replace" if target_exists else "move"
             parent = target_path_obj.parent
@@ -686,6 +723,7 @@ class ScanManager:
                     confirm_note="Copying file to target drive.",
                 )
             dst.flush()
+            os.fsync(dst.fileno())
         shutil.copystat(source_path, target_path, follow_symlinks=True)
 
     async def _apply_item(self, scan: ScanPlan, item: ScannedItem) -> None:
@@ -737,14 +775,16 @@ class ScanManager:
             ),
         )
 
-        if item.action == "replace" and target_path.exists():
-            logger.info("MOVE REPLACE removing existing target before copy: %s", target_path)
-            target_path.unlink()
-
         started_at = time.perf_counter()
+        temp_path: Path | None = None
         try:
+            if target_path.exists() and item.action != "replace":
+                raise FileExistsError(f"Target file appeared after scan: {target_path}")
+
             if cross_drive and source_path.is_file():
-                self._copy_file_with_progress(scan, source_path, target_path, source_size)
+                temp_path = target_path.parent / f".jellysort-{uuid4().hex}.partial{target_path.suffix}"
+                self._copy_file_with_progress(scan, source_path, temp_path, source_size)
+                os.replace(temp_path, target_path)
                 self._update_confirm_state(
                     scan,
                     confirm_phase="deleting_source",
@@ -755,7 +795,7 @@ class ScanManager:
                 )
                 source_path.unlink()
             else:
-                shutil.move(str(source_path), str(target_path))
+                os.replace(source_path, target_path)
                 self._update_confirm_state(
                     scan,
                     confirm_current_copied_bytes=source_size,
@@ -763,6 +803,8 @@ class ScanManager:
                     confirm_note="Move completed.",
                 )
         except Exception:
+            if temp_path and temp_path.exists():
+                temp_path.unlink()
             elapsed = time.perf_counter() - started_at
             logger.exception(
                 "MOVE FAILED [%s] elapsed=%.1fs source=%s target=%s",

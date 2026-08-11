@@ -5,6 +5,8 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from app.core.config import AppConfig, ModelConfig, PathsConfig
 from app.main import _format_confirm_progress, _format_scan_progress, _format_scan_report
 from app.models.schemas import ScanPlan, ScanRequest, ScannedItem
@@ -147,7 +149,7 @@ def test_create_scan_returns_running_immediately(tmp_path, monkeypatch) -> None:
     assert scan.status == "completed"
 
 
-def test_create_scan_rejects_second_running_scan(tmp_path, monkeypatch) -> None:
+def test_create_scan_cancels_previous_running_scan(tmp_path, monkeypatch) -> None:
     config = AppConfig(
         paths=PathsConfig(downloadRoots=[]),
         model=ModelConfig(),
@@ -162,14 +164,10 @@ def test_create_scan_rejects_second_running_scan(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(manager, "_run_scan_sync", fake_run_scan)
 
     async def run_test():
-        scan = await manager.create_scan(ScanRequest(replaceExisting=False))
-        try:
-            await manager.create_scan(ScanRequest(replaceExisting=False))
-        except Exception as exc:
-            assert getattr(exc, "status_code", None) == 409
-        else:
-            raise AssertionError("Expected duplicate running scan to be rejected")
-        while scan.status == "running":
+        first_scan = await manager.create_scan(ScanRequest(replaceExisting=False))
+        second_scan = await manager.create_scan(ScanRequest(replaceExisting=False))
+        assert first_scan.status == "cancelled"
+        while second_scan.status == "running":
             await asyncio.sleep(0)
 
     asyncio.run(run_test())
@@ -342,7 +340,7 @@ def test_confirm_uses_tracked_copy_for_cross_drive_file(tmp_path, monkeypatch) -
             return None
 
         real_path_stat = Path.stat
-        copied = {"called": False}
+        copied = {"called": False, "target": None}
 
         class FakeStat:
             def __init__(self, real_stat, st_dev=None):
@@ -360,6 +358,7 @@ def test_confirm_uses_tracked_copy_for_cross_drive_file(tmp_path, monkeypatch) -
 
         def fake_copy(scan_obj, source_path, target_path, source_size):
             copied["called"] = True
+            copied["target"] = target_path
             target_path.write_bytes(source_path.read_bytes())
             manager._update_confirm_state(
                 scan_obj,
@@ -380,6 +379,9 @@ def test_confirm_uses_tracked_copy_for_cross_drive_file(tmp_path, monkeypatch) -
             await asyncio.sleep(0)
 
         assert copied["called"] is True
+        assert copied["target"].name.startswith(".jellysort-")
+        assert ".partial" in copied["target"].name
+        assert copied["target"].exists() is False
         assert source.exists() is False
         assert target.read_bytes() == b"video-bytes"
         assert scan.confirm_status == "completed"
@@ -388,6 +390,66 @@ def test_confirm_uses_tracked_copy_for_cross_drive_file(tmp_path, monkeypatch) -
         assert scan.counts.moved == 1
 
     asyncio.run(run_test())
+
+
+def test_cross_drive_replace_preserves_existing_target_when_copy_fails(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "download.mkv"
+    source.write_bytes(b"new-video")
+    target_dir = tmp_path / "library"
+    target_dir.mkdir()
+    target = target_dir / "download.mkv"
+    target.write_bytes(b"old-video")
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(downloadRoots=[]),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+    scan = ScanPlan(
+        scan_id="scan",
+        status="completed",
+        operation="organize",
+        created_at=datetime.now(UTC),
+    )
+    item = ScannedItem(
+        confirmId="i1",
+        sourcePath=str(source),
+        name=source.name,
+        item_type="movie",
+        confidence=1.0,
+        reason="test",
+        target_path=str(target),
+        action="replace",
+    )
+    real_path_stat = Path.stat
+
+    class FakeStat:
+        def __init__(self, real_stat, st_dev=None):
+            self._real_stat = real_stat
+            self.st_dev = real_stat.st_dev if st_dev is None else st_dev
+
+        def __getattr__(self, name):
+            return getattr(self._real_stat, name)
+
+    def fake_path_stat(path_obj, *args, **kwargs):
+        stat_result = real_path_stat(path_obj, *args, **kwargs)
+        if path_obj == target_dir:
+            return FakeStat(stat_result, st_dev=stat_result.st_dev + 1)
+        return stat_result
+
+    def fail_copy(*args, **kwargs):
+        raise OSError("simulated copy failure")
+
+    monkeypatch.setattr("pathlib.Path.stat", fake_path_stat)
+    monkeypatch.setattr(manager, "_copy_file_with_progress", fail_copy)
+
+    with pytest.raises(OSError, match="simulated copy failure"):
+        asyncio.run(manager._apply_item(scan, item))
+
+    assert source.read_bytes() == b"new-video"
+    assert target.read_bytes() == b"old-video"
 
 
 def test_confirm_stops_seeding_once_for_selected_items(tmp_path, monkeypatch) -> None:
@@ -811,6 +873,37 @@ def test_scan_report_includes_structured_items_with_skipped(tmp_path, monkeypatc
     assert actionable_item["sourcePath"] == str(good)
     assert actionable_item["action"] in ("move", "replace")
     assert "targetPath" in actionable_item
-    assert "folderExists" in actionable_item
-
+    assert "showFolderExists" in actionable_item
+    assert "seasonFolderExists" in actionable_item
+    assert "fileExists" in actionable_item
     assert report["report_md"]
+
+
+def test_update_scan_rejects_target_path_traversal(tmp_path) -> None:
+    movie_root = tmp_path / "movies"
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(movieRoots={"default": str(movie_root)}),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+    now = datetime.now(UTC)
+    scan = ScanPlan(scan_id="scan", status="completed", operation="organize", created_at=now)
+    scan.items = [
+        ScannedItem(
+            confirmId="i1",
+            sourcePath=str(tmp_path / "download.mkv"),
+            name="download.mkv",
+            item_type="movie",
+            confidence=1.0,
+            reason="test",
+            target_path=str(movie_root / "Movie" / "Movie.mkv"),
+            action="move",
+        )
+    ]
+    manager._current_scan = scan
+
+    with pytest.raises(Exception, match="not under any configured"):
+        manager.update_scan("scan", [{"confirmId": "i1", "targetPath": str(movie_root / ".." / "outside.mkv")}])

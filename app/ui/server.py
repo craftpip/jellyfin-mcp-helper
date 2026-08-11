@@ -15,9 +15,9 @@ INDEX_HTML = HERE / "index.html"
 MCP_TARGET_URL: str = ""
 
 
-def create_ui_app(mcp_port: int) -> FastAPI:
+def create_ui_app(mcp_target_url: str) -> FastAPI:
     global MCP_TARGET_URL
-    MCP_TARGET_URL = f"http://localhost:{mcp_port}/mcp"
+    MCP_TARGET_URL = mcp_target_url
 
     ui_app = FastAPI(title="JellySort UI")
 
