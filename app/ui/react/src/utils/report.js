@@ -1,4 +1,5 @@
 // Pure helpers ported from the legacy panel. No DOM access — unit-testable.
+import { isCrossDrive } from './format.js'
 
 // Report item mapping (legacy renderItemsFromReport). Derives title/season/episode
 // from the target path.
@@ -143,4 +144,15 @@ export function computePathSync(changedIdx, oldPath, newPath, items) {
 // Default selection on report render: every actionable item checked, skipped unchecked.
 export function defaultSelection(items) {
   return items.filter((i) => i.action !== 'skip').map((i) => i.confirmId)
+}
+
+// Cross-drive check using the live (edited) target path. The backend-computed
+// flag reflects the target at scan time and goes stale once the target is edited
+// in the UI (e.g. /media3 -> /media2). So: when the target was changed, judge by
+// drive roots only; otherwise trust the backend flag (real device check) first.
+export function isCrossDriveItem(item) {
+  const live = item._liveTarget || item.targetPath || ''
+  const changed = !!(item._liveTarget && item._liveTarget !== item.originalTarget)
+  if (changed) return isCrossDrive(item.sourcePath, live)
+  return !!(item.crossDrive || isCrossDrive(item.sourcePath, live))
 }

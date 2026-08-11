@@ -410,6 +410,32 @@ The store's `onTargetInputChange` (AppStore.jsx) already skips revert when `comp
 
 **Note:** The legacy panel still reverts (unfixed on purpose — it stays canonical only for comparison; the fix lives in the React port).
 
+### Confirm progress tool name mismatch (React UI)
+
+**Problem:** After clicking "Start Move" in the confirm modal, the progress never updated and the backend logged `TOOL xxx get move new downloads scan confirm progress (not found)` on every poll. The cross-drive copy ran fine in the background; only the UI polling failed.
+
+**Cause:** `app/ui/react/src/store/AppStore.jsx` `pollConfirmProgress()` called the tool `'get move new downloads scan confirm progress'`, but the backend registers `'get move new downloads confirm progress'` (`app/main.py` tool list + handler dispatch). The legacy `app/ui/index.html` has the same typo (frozen, not fixed).
+
+**Fix:** `AppStore.jsx:484` → `'get move new downloads confirm progress'`.
+
+**Verification:** After `npm run build` + container restart, confirm a cross-drive move and watch the modal update live (Phase, Copied, Speed, File %). Backend logs show `✅ Ran "get move new downloads confirm progress"` with no `(not found)`.
+
+### Confirm progress counts were cumulative across confirms
+
+**Problem:** Confirming items in multiple batches on one scan showed wrong progress in the confirm modal — e.g. after confirming 4 movies one-by-one, the last 1-item confirm showed `Overall: 5/1 (100%)` and `Counts: Moved: 5`. The processed/moved counts accumulated across confirms while the total reset per confirm.
+
+**Cause:** `_format_confirm_progress` (`app/main.py`) computed `processed = scan.counts.moved + scan.counts.replaced + scan.counts.failed` — but `scan.counts` is cumulative for the whole scan (used by the final report), while `total = scan.confirm_total` is per-confirm.
+
+**Fix (per-confirm scoped progress):**
+- `ScanPlan` (`app/models/schemas.py`) gained `confirm_processed`, `confirm_start_moved`, `confirm_start_replaced`, `confirm_start_failed`.
+- `run_confirm` (`scan_manager.py`) resets `confirm_processed = 0` and snapshots the cumulative counts as baselines when a confirm starts.
+- The move loop increments `confirm_processed` in a `finally` block per item.
+- `_format_confirm_progress` now reports `processed = confirm_processed` and per-confirm counts as `counts.* - confirm_start_*`.
+
+The scan report still uses the cumulative `scan.counts` (unchanged), so the post-confirm report summary stays correct.
+
+**Verification:** `python3 -m pytest tests/` (the confirm-progress test in `tests/test_scan_errors.py` now asserts `processed`/`total` and per-confirm `counts`). Live: after several one-by-one confirms, each modal shows `Overall: N/N (100%)` with per-batch counts, never `5/1`.
+
 ### Auto-load report on scan complete and page load
 
 **Pattern:** The report should load automatically without requiring the user to click "Get Report". Two triggers:

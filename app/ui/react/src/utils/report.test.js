@@ -3,6 +3,7 @@ import {
   computePathSync,
   defaultSelection,
   groupItems,
+  isCrossDriveItem,
   mapReportItems,
   matchesFilter,
   itemSearchText,
@@ -111,6 +112,26 @@ describe('defaultSelection', () => {
   it('selects actionable items only', () => {
     const items = itemWithTargets(buildItems())
     expect(defaultSelection(items)).toEqual(['c1', 'c2'])
+  })
+})
+
+describe('isCrossDriveItem', () => {
+  it('trusts the backend flag when the target is unchanged', () => {
+    const items = itemWithTargets(buildItems())
+    expect(isCrossDriveItem(items[0])).toBe(true)
+    expect(isCrossDriveItem(items[1])).toBe(false)
+  })
+
+  it('detects cross-drive from an edited live target', () => {
+    const items = itemWithTargets(buildItems())
+    items[1]._liveTarget = '/media3/movies/Movie (2024)/Movie.mkv'
+    expect(isCrossDriveItem(items[1])).toBe(true)
+  })
+
+  it('lets the drive roots win over a stale backend flag once the target is edited', () => {
+    const items = itemWithTargets(buildItems())
+    items[0]._liveTarget = '/media1/series/Show Name (2020)/Season 02/Show Name S01E01.mkv'
+    expect(isCrossDriveItem(items[0])).toBe(false)
   })
 })
 

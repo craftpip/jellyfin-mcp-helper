@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useReducer, useRef } from 'react'
 import { mcpCall, mcpListTools } from '../mcp/mcpClient.js'
-import { computePathSync, defaultSelection, groupItems, mapReportItems } from '../utils/report.js'
+import { computePathSync, defaultSelection, groupItems, isCrossDriveItem, mapReportItems } from '../utils/report.js'
 
 const AppStoreContext = createContext(null)
 
@@ -332,14 +332,19 @@ export function AppStoreProvider({ children }) {
       if (!item) return
       const oldPath = item._liveTarget || item.targetPath
       const updated = [...items]
-      updated[idx] = { ...item, _liveTarget: value }
+      updated[idx] = { ...item, _liveTarget: value, crossDrive: isCrossDriveItem({ ...item, _liveTarget: value }) }
       const sync = computePathSync(idx, oldPath, value, updated)
       if (sync) {
         if (sync.revert) {
-          updated[idx] = { ...updated[idx], _liveTarget: oldPath }
+          updated[idx] = { ...updated[idx], _liveTarget: oldPath, crossDrive: isCrossDriveItem({ ...updated[idx], _liveTarget: oldPath }) }
         } else {
           sync.updates.forEach((u) => {
-            updated[u.idx] = { ...updated[u.idx], _liveTarget: u.value }
+            const sibling = updated[u.idx]
+            updated[u.idx] = {
+              ...sibling,
+              _liveTarget: u.value,
+              crossDrive: isCrossDriveItem({ ...sibling, _liveTarget: u.value }),
+            }
           })
         }
       }
@@ -376,7 +381,10 @@ export function AppStoreProvider({ children }) {
       toast('Paths updated in "' + group.title + '"', 'good')
       const items = stateRef.current.currentItems.map((item) => {
         const u = updates.find((x) => x.confirmId === item.confirmId)
-        if (u) return { ...item, originalTarget: u.targetPath }
+        if (u) {
+          const applied = { ...item, targetPath: u.targetPath, originalTarget: u.targetPath, _liveTarget: u.targetPath }
+          return { ...applied, crossDrive: isCrossDriveItem(applied) }
+        }
         return item
       })
       dispatch({ type: 'SET_ITEMS', currentItems: items, reportGroups: groupItems(items) })
@@ -473,7 +481,7 @@ export function AppStoreProvider({ children }) {
     if (!stateRef.current.confirmActive) return
     try {
       const result = await mcpCall(
-        'get move new downloads scan confirm progress',
+        'get move new downloads confirm progress',
         stateRef.current.scanId ? { scanId: stateRef.current.scanId } : {}
       )
       const p = result.processed ?? 0
@@ -502,14 +510,13 @@ export function AppStoreProvider({ children }) {
       }
       if (result.status === 'running') {
         dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Moving ' + p + '/' + t + '...' })
-        if (timers.current.confirmPoll) clearTimeout(timers.current.confirmPoll)
-        timers.current.confirmPoll = setTimeout(pollConfirmProgress, POLL_INTERVAL_MS)
       }
     } catch (e) {
       log('Confirm progress error: ' + e.message, 'err')
-      toast('Confirm progress error: ' + e.message, 'err')
-      dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
-      dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
+    }
+    if (stateRef.current.confirmActive) {
+      if (timers.current.confirmPoll) clearTimeout(timers.current.confirmPoll)
+      timers.current.confirmPoll = setTimeout(pollConfirmProgress, POLL_INTERVAL_MS)
     }
   }
 

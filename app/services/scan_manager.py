@@ -556,6 +556,10 @@ class ScanManager:
             )
 
         scan.confirm_status = "running"
+        scan.confirm_processed = 0
+        scan.confirm_start_moved = scan.counts.moved
+        scan.confirm_start_replaced = scan.counts.replaced
+        scan.confirm_start_failed = scan.counts.failed
         self._update_confirm_state(
             scan,
             confirm_phase="preparing",
@@ -645,6 +649,8 @@ class ScanManager:
                         confirm_note=f"Failed to move item: {exc}",
                     )
                     logger.error("Failed %s for %s: %s", item.action, item.source_path, str(exc), exc_info=True)
+                finally:
+                    scan.confirm_processed += 1
 
             self._update_confirm_state(
                 scan,
@@ -699,7 +705,14 @@ class ScanManager:
             )
             logger.error("Confirm task failed for scan %s: %s", scan_id, str(exc), exc_info=True)
 
-    def _copy_file_with_progress(self, scan: ScanPlan, source_path: Path, target_path: Path, source_size: int) -> None:
+    async def _copy_file_with_progress(self, scan: ScanPlan, source_path: Path, target_path: Path, source_size: int) -> None:
+        # Run the blocking copy in a worker thread so the asyncio event loop stays
+        # free to serve 'get move new downloads confirm progress' polls. The worker
+        # mutates the shared scan object after each chunk; reads from the loop thread
+        # are plain attribute reads, so live progress is visible while the copy runs.
+        await to_thread(self._copy_file_worker, scan, source_path, target_path, source_size)
+
+    def _copy_file_worker(self, scan: ScanPlan, source_path: Path, target_path: Path, source_size: int) -> None:
         copied_bytes = 0
         chunk_size = 8 * 1024 * 1024
         started_at = time.perf_counter()
@@ -783,7 +796,7 @@ class ScanManager:
 
             if cross_drive and source_path.is_file():
                 temp_path = target_path.parent / f".jellysort-{uuid4().hex}.partial{target_path.suffix}"
-                self._copy_file_with_progress(scan, source_path, temp_path, source_size)
+                await self._copy_file_with_progress(scan, source_path, temp_path, source_size)
                 os.replace(temp_path, target_path)
                 self._update_confirm_state(
                     scan,

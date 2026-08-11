@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react'
 import { useAppStore } from '../store/AppStore.jsx'
-import { fileName, formatBytes, formatConfirmPhase } from '../utils/format.js'
+import { fileName, formatBytes, formatDuration, formatConfirmPhase, splitDrive } from '../utils/format.js'
+import { isCrossDriveItem } from '../utils/report.js'
 
 export default function ConfirmModal() {
   const { state } = useAppStore()
@@ -19,7 +21,7 @@ function PreflightView({ itemIds, label }) {
   const totalSize = items.reduce((s, i) => s + (Number(i.fileSize) || 0), 0)
   const moveCount = items.filter((i) => i.action === 'move').length
   const replaceCount = items.filter((i) => i.action === 'replace').length
-  const crossCount = items.filter((i) => i.crossDrive).length
+  const crossCount = items.filter((i) => isCrossDriveItem(i)).length
 
   return (
     <div className="modal-overlay" id="confirmModal">
@@ -30,42 +32,62 @@ function PreflightView({ itemIds, label }) {
             ['Items', items.length],
             ['Move', moveCount],
             ['Replace', replaceCount],
+            crossCount > 0 && ['Cross-drive', crossCount, '#d29922'],
             ['Total size', totalSize ? formatBytes(totalSize) : '—'],
-          ].map(([l, v]) => (
-            <div className="summary-pill" key={l}>
-              <strong>{v}</strong> {l}
-            </div>
-          ))}
+          ]
+            .filter(Boolean)
+            .map(([l, v, color]) => (
+              <div className="summary-pill" key={l} style={color ? { color } : undefined}>
+                <strong>{v}</strong> {l}
+              </div>
+            ))}
         </div>
         {crossCount > 0 && (
           <div className="warn-box" id="confirmCrossDriveWarn">
             <strong>Cross-drive move detected</strong>
             <div id="confirmCrossDriveWarnText">
-              {crossCount} of {items.length} item(s) move between different drives. Cross-drive moves copy the
-              file to the destination, then delete the source, so they take longer than same-drive moves — large
-              files can take several minutes.
+              {crossCount} of {items.length} item(s) will be moved between hard drives — this will take some
+              time.
             </div>
           </div>
         )}
         <div className="confirm-list" id="confirmList">
-          {items.slice(0, 8).map((i) => (
-            <div className="confirm-row" key={i.confirmId}>
-              <span className={'badge action-' + i.action}>{i.action === 'replace' ? 'Existing' : 'New'}</span>
-              <span className="c-title" title={i.targetPath || i.sourcePath || ''}>
-                {i.title || i.sourceName || ''}
-              </span>
-              <span style={{ color: '#8b949e', whiteSpace: 'nowrap' }}>
-                {i.fileSize ? formatBytes(i.fileSize) : ''}
-              </span>
-              {i.crossDrive && (
-                <span className="crossdrive-badge" title="This item moves between different drives">
-                  Cross-drive
-                </span>
-              )}
-            </div>
-          ))}
+          {items.slice(0, 8).map((i) => {
+            const cross = isCrossDriveItem(i)
+            const liveTarget = i._liveTarget || i.targetPath || ''
+            const src = splitDrive(i.sourcePath || '')
+            const dst = splitDrive(liveTarget)
+            return (
+              <div className="confirm-row" key={i.confirmId}>
+                <div className="confirm-row-top">
+                  <span className={'badge action-' + i.action}>{i.action === 'replace' ? 'Existing' : 'New'}</span>
+                  <span className="c-title" title={liveTarget || i.sourcePath || ''}>
+                    {i.title || i.sourceName || ''}
+                  </span>
+                  <span className="c-size">{i.fileSize ? formatBytes(i.fileSize) : ''}</span>
+                  {cross && (
+                    <span className="crossdrive-badge" title="Moved between hard drives — will take some time">
+                      Cross-drive
+                    </span>
+                  )}
+                </div>
+                <div className="confirm-row-paths">
+                  <div className="confirm-path" title={i.sourcePath || ''}>
+                    <span className="path-mark">FROM</span>
+                    <span className={'path-drive' + (cross ? ' diff' : '')}>{src.drive || '/'}</span>
+                    <span className="path-rest">{src.rest}</span>
+                  </div>
+                  <div className="confirm-path" title={liveTarget}>
+                    <span className="path-mark">TO</span>
+                    <span className={'path-drive' + (cross ? ' diff' : '')}>{dst.drive || '/'}</span>
+                    <span className="path-rest">{dst.rest}</span>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
           {items.length > 8 && (
-            <div className="confirm-row" style={{ color: '#8b949e', justifyContent: 'center' }}>
+            <div className="confirm-row" style={{ color: '#8b949e', alignItems: 'center' }}>
               +{items.length - 8} more
             </div>
           )}
@@ -85,6 +107,11 @@ function PreflightView({ itemIds, label }) {
 
 function ProgressView({ progress }) {
   const { actions } = useAppStore()
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
   const processed = progress.processed ?? 0
   const total = progress.total ?? 0
   const running = progress.status === 'running'
@@ -97,9 +124,22 @@ function ProgressView({ progress }) {
         ? 'Confirm completed'
         : 'Moving ' + Math.min(processed + (running ? 1 : 0), total) + ' of ' + total
 
+  // Overall percent blends the finished-item count with the in-flight file copy,
+  // so the bar advances while one large cross-drive file is being copied instead
+  // of sitting at 0% until the item finishes.
+  const itemProgress = total ? processed / total : (progress.percent || 0) / 100
+  const fileProgress = running && progress.current_percent != null ? progress.current_percent / 100 : 0
+  const overallPercent = Math.min(100, (done ? 1 : itemProgress + fileProgress / Math.max(total, 1)) * 100)
+
+  // Elapsed ticks locally between polls so the counter never appears frozen.
+  const lastUpdate = progress.last_update_at ? new Date(progress.last_update_at).getTime() : now
+  const liveElapsed = (progress.elapsed_seconds || 0) + (running ? Math.max(0, (now - lastUpdate) / 1000) : 0)
+
   const metaRows = [
     ['Phase', formatConfirmPhase(progress.phase)],
-    ['Overall', processed + '/' + total + ' (' + (progress.percent || 0) + '%)'],
+    ['Overall', processed + '/' + total + ' (' + Math.round(overallPercent) + '%)'],
+    ['Elapsed', formatDuration(liveElapsed)],
+    progress.eta ? ['Overall ETA', progress.eta] : null,
     progress.counts
       ? [
           'Counts',
@@ -108,8 +148,6 @@ function ProgressView({ progress }) {
           ' · Failed: ' + (progress.counts.failed || 0),
         ]
       : null,
-    progress.elapsed ? ['Elapsed', progress.elapsed] : null,
-    progress.eta ? ['Overall ETA', progress.eta] : null,
     progress.last_update_at
       ? ['Last update', new Date(progress.last_update_at).toLocaleTimeString()]
       : null,
@@ -132,7 +170,7 @@ function ProgressView({ progress }) {
   const note =
     progress.note ||
     (progress.cross_drive
-      ? 'Cross-drive move — copying to a different drive, then removing the source. Large files can take a while.'
+      ? 'Cross-drive move — will take some time because the file is being moved between hard drives.'
       : '')
 
   return (
@@ -140,7 +178,7 @@ function ProgressView({ progress }) {
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
         <h3 id="confirmModalTitle">{title}</h3>
         <div className="progress-bar" style={{ marginTop: '8px' }}>
-          <div className="fill" style={{ width: Math.min(progress.percent || 0, 100) + '%', background: '#d29922' }} />
+          <div className="fill" style={{ width: overallPercent + '%', background: '#d29922' }} />
         </div>
         <div className="progress-kv" style={{ marginTop: '8px' }}>
           {metaRows.map(([l, v]) => (

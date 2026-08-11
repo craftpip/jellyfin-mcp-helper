@@ -84,6 +84,10 @@ class ScanPlan(BaseModel):
     confirm_current_target: str | None = None
     confirm_started_at: datetime | None = None
     confirm_total: int = 0
+    confirm_processed: int = 0
+    confirm_start_moved: int = 0
+    confirm_start_replaced: int = 0
+    confirm_start_failed: int = 0
     confirm_current_size_bytes: int | None = None
     confirm_current_copied_bytes: int | None = None
     confirm_current_speed_bytes: float | None = None

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useAppStore } from '../store/AppStore.jsx'
 import { formatBytes } from '../utils/format.js'
-import { matchesFilter } from '../utils/report.js'
+import { matchesFilter, isCrossDriveItem } from '../utils/report.js'
 import PathPills from './PathPills.jsx'
 
 const FILTER_DEFS = [
@@ -334,8 +334,8 @@ function ReportRow({ item, isSeries }) {
       <td>
         <div className="action-cell">
           <span className={'badge action-' + item.action}>{actionLabel}</span>
-          {item.crossDrive && (
-            <span className="crossdrive-badge" title="This item moves between different drives — the copy+delete takes longer">
+          {isCrossDriveItem(item) && (
+            <span className="crossdrive-badge" title="Moved between hard drives — will take some time">
               Cross-drive
             </span>
           )}

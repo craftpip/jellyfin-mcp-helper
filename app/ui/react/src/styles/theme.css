@@ -299,13 +299,37 @@ a.search-btn:hover { background: #1f2937; color: #79c0ff; }
   margin: 10px 0;
 }
 .confirm-list .confirm-row {
-  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  display: flex; flex-direction: column; gap: 4px; padding: 6px 10px;
   border-bottom: 1px solid #21262d; font-size: 0.82rem;
 }
 .confirm-list .confirm-row:last-child { border-bottom: none; }
+.confirm-row-top {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+}
 .confirm-list .confirm-row .c-title {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: #c9d1d9;
+}
+.confirm-row-top .c-size { color: #8b949e; white-space: nowrap; }
+.confirm-row-paths {
+  display: flex; flex-direction: column; gap: 2px; padding-left: 2px;
+  font-size: 0.74rem; min-width: 0;
+}
+.confirm-path {
+  display: flex; align-items: baseline; gap: 6px; min-width: 0;
+  color: #8b949e; white-space: nowrap;
+}
+.confirm-path .path-mark {
+  flex: 0 0 auto; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em; opacity: 0.85;
+}
+.confirm-path .path-drive {
+  flex: 0 0 auto; font-weight: 600; color: #79c0ff;
+}
+.confirm-path .path-drive.diff {
+  color: #f0883e; background: rgba(240,136,62,.12); border-radius: 4px; padding: 0 4px; margin-left: -4px;
+}
+.confirm-path .path-rest {
+  overflow: hidden; text-overflow: ellipsis;
 }
 .modal-actions {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px;

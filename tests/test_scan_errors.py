@@ -241,6 +241,7 @@ def test_format_confirm_progress_includes_phase_and_transfer_metrics(tmp_path) -
     scan.confirm_phase = "moving"
     scan.confirm_started_at = datetime.now(UTC) - timedelta(seconds=10)
     scan.confirm_total = 4
+    scan.confirm_processed = 1
     scan.counts.moved = 1
     scan.confirm_current_item = "/downloads/show.mkv"
     scan.confirm_current_target = "/media/show.mkv"
@@ -258,6 +259,9 @@ def test_format_confirm_progress_includes_phase_and_transfer_metrics(tmp_path) -
     assert progress["phase"] == "moving"
     assert progress["processed"] == 1
     assert progress["total"] == 4
+    assert progress["counts"]["moved"] == 1
+    assert progress["counts"]["replaced"] == 0
+    assert progress["counts"]["failed"] == 0
     assert progress["current_file"] == "/downloads/show.mkv"
     assert progress["current_target"] == "/media/show.mkv"
     assert progress["current_size_bytes"] == 1000
@@ -290,7 +294,7 @@ def test_copy_file_with_progress_updates_scan_metrics(tmp_path) -> None:
         created_at=datetime.now(UTC),
     )
 
-    manager._copy_file_with_progress(scan, source, target, source.stat().st_size)
+    asyncio.run(manager._copy_file_with_progress(scan, source, target, source.stat().st_size))
 
     assert target.read_bytes() == b"x" * 1024
     assert scan.confirm_phase == "moving"
@@ -369,9 +373,12 @@ def test_confirm_uses_tracked_copy_for_cross_drive_file(tmp_path, monkeypatch) -
                 confirm_note="Copying file to target drive.",
             )
 
+        async def fake_async_copy(scan_obj, source_path, target_path, source_size):
+            fake_copy(scan_obj, source_path, target_path, source_size)
+
         monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
         monkeypatch.setattr(manager, "_trigger_jellyfin_scans", fake_trigger_jellyfin)
-        monkeypatch.setattr(manager, "_copy_file_with_progress", fake_copy)
+        monkeypatch.setattr(manager, "_copy_file_with_progress", fake_async_copy)
         monkeypatch.setattr("pathlib.Path.stat", fake_path_stat)
 
         await manager.confirm_scan(scan.scan_id)

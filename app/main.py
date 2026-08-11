@@ -452,7 +452,7 @@ def _format_confirm_progress(scan: ScanPlan) -> dict:
     now = datetime.now(UTC)
     started_at = scan.confirm_started_at or now
     elapsed_seconds = max((now - started_at).total_seconds(), 0.0)
-    processed = scan.counts.moved + scan.counts.replaced + scan.counts.failed
+    processed = scan.confirm_processed
     total = scan.confirm_total
     percent = round((processed / total) * 100, 1) if total else 0.0
     eta_seconds = None
@@ -503,9 +503,9 @@ def _format_confirm_progress(scan: ScanPlan) -> dict:
         "note": scan.confirm_note,
         "last_update_at": scan.confirm_last_update_at.isoformat() if scan.confirm_last_update_at else None,
         "counts": {
-            "moved": scan.counts.moved,
-            "replaced": scan.counts.replaced,
-            "failed": scan.counts.failed,
+            "moved": scan.counts.moved - scan.confirm_start_moved,
+            "replaced": scan.counts.replaced - scan.confirm_start_replaced,
+            "failed": scan.counts.failed - scan.confirm_start_failed,
         },
         "next": next_step,
     }
