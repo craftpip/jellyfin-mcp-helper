@@ -3,12 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Jellyfin MCP Organizer</title>
+<title>JellySort</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    margin: 0; padding: 20px; background: #0d1117; color: #c9d1d9;
+    margin: 0 auto; padding: 20px; max-width: 1600px;
+    background: #0d1117; color: #c9d1d9;
   }
   h1 { margin: 0 0 4px 0; font-size: 1.4rem; }
   .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 16px; }
@@ -22,6 +23,22 @@
   }
   .top-bar .status.connected { background: #1b3827; color: #3fb950; }
   .top-bar .status.error { background: #3d1417; color: #f85149; }
+
+  .panel-sub {
+    margin-top: 12px; padding-top: 12px; border-top: 1px solid #30363d;
+  }
+  .panel-sub h3 {
+    margin: 0 0 8px 0; font-size: 0.88rem; color: #8b949e;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+
+  details.log-panel summary {
+    cursor: pointer; color: #e6edf3; font-size: 1rem; font-weight: 600;
+    list-style: none;
+  }
+  details.log-panel summary::-webkit-details-marker { display: none; }
+  details.log-panel summary::before { content: '▸ '; color: #8b949e; }
+  details.log-panel[open] summary::before { content: '▾ '; }
 
   .panel {
     background: #161b22; border: 1px solid #30363d; border-radius: 8px;
@@ -40,6 +57,8 @@
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.primary { background: #238636; border-color: #2ea043; }
   button.primary:hover { background: #2ea043; }
+  button.warn { background: #6d4a0e; border-color: #b07f1e; }
+  button.warn:hover { background: #855d14; }
   button.danger { background: #b6232c; border-color: #da3633; }
   button.danger:hover { background: #da3633; }
   button.small { padding: 3px 10px; font-size: 0.78rem; }
@@ -277,6 +296,49 @@
   }
   .action-cell .badge { white-space: nowrap; }
 
+  .warn-box {
+    background: #3d2715; border: 1px solid #d29922; color: #d29922;
+    border-radius: 6px; padding: 10px 12px; font-size: 0.85rem; margin: 10px 0;
+    line-height: 1.45;
+  }
+  .confirm-list {
+    max-height: 220px; overflow-y: auto; border: 1px solid #30363d; border-radius: 6px;
+    margin: 10px 0;
+  }
+  .confirm-list .confirm-row {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    border-bottom: 1px solid #21262d; font-size: 0.82rem;
+  }
+  .confirm-list .confirm-row:last-child { border-bottom: none; }
+  .confirm-list .confirm-row .c-title {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: #c9d1d9;
+  }
+  .modal-actions {
+    display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px;
+  }
+  .crossdrive-badge {
+    display: inline-block; padding: 0 8px; border-radius: 10px;
+    font-size: 0.72rem; font-weight: 500;
+    background: #3d2715; color: #d29922; border: 1px solid rgba(210,153,34,.5);
+    white-space: nowrap;
+  }
+
+  .filter-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .filter-chips button {
+    border-radius: 999px; padding: 3px 12px; font-size: 0.78rem;
+    background: #0d1117; border: 1px solid #30363d; color: #8b949e;
+    cursor: pointer;
+  }
+  .filter-chips button.active { background: #1f3a5f; border-color: #58a6ff; color: #79c0ff; }
+  .filter-chips .chip-count { opacity: .75; }
+
+  .legend {
+    display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+    font-size: 0.78rem; color: #8b949e; margin-bottom: 8px;
+  }
+  .legend .mark { color: #8b949e; font-weight: 600; }
+
   .hidden { display: none !important; }
   .mt-8 { margin-top: 8px; }
 </style>
@@ -285,18 +347,13 @@
 
 <div class="top-bar">
   <div>
-    <h1>Jellyfin MCP Organizer</h1>
+    <h1>JellySort</h1>
     <div class="subtitle">Scan, review, and move download files into your media library</div>
   </div>
   <div class="status" id="connStatus">connecting...</div>
 </div>
 
-<div class="tabs">
-  <button class="active" data-tab="scan">Scan &amp; Move</button>
-</div>
-
-<!-- ====== SCAN TAB ====== -->
-<div class="tab-content active" id="tab-scan">
+<div id="tab-scan">
   <div class="panel">
     <div class="hint">Main flow lives here now. Start a scan, review the planned paths, then confirm the items you actually want to move.</div>
     <div class="flow">
@@ -310,9 +367,14 @@
     <h2>Actions</h2>
     <div class="btn-row">
       <button class="primary" id="btnStartScan">Start Scan</button>
-      <button id="btnProgress">Check Progress</button>
       <button id="btnReport">Get Report</button>
-      <button class="danger" id="btnConfirm" disabled>Confirm Selected</button>
+      <button class="warn" id="btnConfirm" disabled>Confirm Selected</button>
+    </div>
+    <div class="panel-sub">
+      <h3>Jellyfin Library Scans</h3>
+      <div class="btn-row" id="libraryScanButtons">
+        <span style="color:#8b949e;font-size:0.82rem">Loading libraries...</span>
+      </div>
     </div>
   </div>
 
@@ -320,35 +382,27 @@
     <h2>Progress</h2>
     <div class="progress-bar"><div class="fill" id="progressFill" style="width:0%"></div></div>
     <div class="progress-info" id="progressInfo"></div>
-    <div id="confirmProgressExtra" class="progress-stack hidden mt-8">
-      <div class="progress-section">
-        <h3 id="confirmHeadline">Confirm running</h3>
-        <div class="progress-note" id="confirmNote"></div>
-        <div class="progress-kv" id="confirmMeta"></div>
-      </div>
-      <div class="progress-section">
-        <h3>Current File</h3>
-        <div class="progress-bar"><div class="fill" id="currentFileFill" style="width:0%;background:#58a6ff"></div></div>
-        <div class="progress-kv" id="currentFileMeta"></div>
-      </div>
-    </div>
   </div>
 
   <div id="reportPanel" class="panel hidden">
     <h2>Scan Report</h2>
-    <div style="font-size:0.8rem;color:#8b949e;margin-bottom:8px" id="reportSummary"></div>
     <div class="hint" style="margin-bottom:8px">`Path Exists` means the destination path already exists in your library. That can mean adding into an existing series/movie path or replacing an existing file.</div>
+    <div class="legend">
+      <span><span class="mark">✓</span> exists on target</span>
+      <span><span class="mark">✗</span> will be created</span>
+      <span class="crossdrive-badge">Cross-drive</span> slower move between drives
+    </div>
     <div class="summary-strip" id="reportSummaryStrip"></div>
     <div class="search-bar">
       <input type="text" id="filterInput" placeholder="Search by title, path..." oninput="applyFilter()">
-      <select id="filterSelect" onchange="applyFilter()">
-        <option value="all">All items</option>
-        <option value="move">New only</option>
-        <option value="replace">Existing only</option>
-        <option value="existing">Path exists</option>
-        <option value="new">Path new</option>
+      <select id="rowLimit" onchange="applyRowLimit()" title="Maximum rows rendered at once">
+        <option value="50">Show 50</option>
+        <option value="100" selected>Show 100</option>
+        <option value="500">Show 500</option>
+        <option value="0">Show all</option>
       </select>
     </div>
+    <div class="filter-chips" id="filterChips"></div>
     <div class="report-toolbar">
       <div class="hint" id="selectionSummary">No report items loaded yet.</div>
       <div class="report-actions">
@@ -362,20 +416,43 @@
     <div id="reportItems"></div>
   </div>
 
-  <div class="panel">
-    <h2>Log</h2>
-    <div class="log" id="log"></div>
-  </div>
+  <details class="panel log-panel">
+    <summary>Log</summary>
+    <div class="log" id="log" style="margin-top:10px"></div>
+  </details>
+</div>
 
-  <div class="panel">
-    <h2>Jellyfin Library Scans</h2>
-    <div class="btn-row" id="libraryScanButtons">
-      <span style="color:#8b949e;font-size:0.82rem">Loading libraries...</span>
+<!-- ====== CONFIRM MODAL ====== -->
+<div class="modal-overlay hidden" id="confirmModal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
+    <h3 id="confirmModalTitle">Confirm Move</h3>
+    <div id="confirmPreflight">
+      <div class="summary-strip" id="confirmSummaryStrip"></div>
+      <div id="confirmCrossDriveWarn" class="warn-box hidden">
+        <strong>Cross-drive move detected</strong>
+        <div id="confirmCrossDriveWarnText"></div>
+      </div>
+      <div class="confirm-list" id="confirmList"></div>
+      <div class="modal-actions">
+        <button id="confirmModalCancel">Cancel</button>
+        <button class="primary" id="confirmModalStart">Start Move</button>
+      </div>
+    </div>
+    <div id="confirmProgressView" class="hidden">
+      <div class="progress-bar" style="margin-top:8px"><div class="fill" id="confirmModalFill" style="width:0%;background:#d29922"></div></div>
+      <div class="progress-kv" id="confirmModalMeta" style="margin-top:8px"></div>
+      <div class="progress-section" style="margin-top:10px">
+        <h3>Current File</h3>
+        <div class="progress-bar"><div class="fill" id="confirmModalFileFill" style="width:0%;background:#58a6ff"></div></div>
+        <div class="progress-kv" id="confirmModalCurrentMeta" style="margin-top:6px"></div>
+      </div>
+      <div id="confirmModalNote" class="progress-note hidden"></div>
+      <div class="modal-actions">
+        <button class="primary" id="confirmModalDone" style="display:none">Done</button>
+      </div>
     </div>
   </div>
 </div>
-
-
 
 <script>
 // ====== CONFIG ======
@@ -383,10 +460,13 @@ const MCP_URL = '/mcp';
 // ====== STATE ======
 let scanId = null;
 let confirmActive = false;
+let scanRunning = false;
 let pollTimer = null;
 let currentItems = [];
 let currentSkippedItems = [];
 let jellyfinLibraries = [];
+let currentFilter = 'all';
+let rowLimit = 100;
 const POLL_INTERVAL_MS = 2000;
 
 // ====== HELPERS ======
@@ -446,15 +526,6 @@ function setProgressRunning(on) {
   $('progressPanel').classList.toggle('progress-running', !!on);
 }
 
-function hideConfirmProgressExtra() {
-  $('confirmProgressExtra').classList.add('hidden');
-  $('confirmHeadline').textContent = 'Confirm running';
-  $('confirmNote').textContent = '';
-  $('confirmMeta').innerHTML = '';
-  $('currentFileMeta').innerHTML = '';
-  $('currentFileFill').style.width = '0%';
-}
-
 function formatBytes(bytes) {
   if (bytes === undefined || bytes === null) return '';
   let size = Number(bytes);
@@ -484,28 +555,98 @@ function fileName(path) {
   return path ? path.split('/').pop() : '';
 }
 
-function renderConfirmProgress(result) {
-  $('confirmProgressExtra').classList.remove('hidden');
+// ====== CONFIRM MODAL ======
+let _confirmItemIds = [];
+
+function openConfirmModal(itemIds, label) {
+  if (confirmActive) {
+    toast('A move is already running — wait for it to finish', 'info');
+    return;
+  }
+  _confirmItemIds = itemIds;
+  const items = itemIds
+    .map(id => currentItems.find(i => i.confirmId === id))
+    .filter(Boolean);
+
+  const totalSize = items.reduce((s, i) => s + (Number(i.fileSize) || 0), 0);
+  const moveCount = items.filter(i => i.action === 'move').length;
+  const replaceCount = items.filter(i => i.action === 'replace').length;
+  const crossCount = items.filter(i => i.crossDrive).length;
+
+  $('confirmModalTitle').textContent = 'Confirm Move — ' + (label || (items.length + ' item(s)'));
+  $('confirmSummaryStrip').innerHTML = [
+    ['Items', items.length],
+    ['Move', moveCount],
+    ['Replace', replaceCount],
+    ['Total size', totalSize ? formatBytes(totalSize) : '—'],
+  ].map(([l, v]) => '<div class="summary-pill"><strong>' + v + '</strong> ' + l + '</div>').join('');
+
+  const warn = $('confirmCrossDriveWarn');
+  if (crossCount > 0) {
+    warn.classList.remove('hidden');
+    $('confirmCrossDriveWarnText').textContent = crossCount + ' of ' + items.length
+      + ' item(s) move between different drives. Cross-drive moves copy the file to the destination, then delete the source, so they take longer than same-drive moves — large files can take several minutes.';
+  } else {
+    warn.classList.add('hidden');
+  }
+
+  const rows = items.slice(0, 8).map(i => {
+    const size = i.fileSize ? formatBytes(i.fileSize) : '';
+    const xd = i.crossDrive ? '<span class="crossdrive-badge" title="This item moves between different drives">Cross-drive</span>' : '';
+    const badge = i.action === 'replace' ? 'Existing' : 'New';
+    return '<div class="confirm-row">'
+      + '<span class="badge action-' + i.action + '">' + badge + '</span>'
+      + '<span class="c-title" title="' + escHtml(i.targetPath || i.sourcePath || '') + '">' + escHtml(i.title || i.sourceName || '') + '</span>'
+      + '<span style="color:#8b949e;white-space:nowrap">' + size + '</span>'
+      + xd
+      + '</div>';
+  }).join('');
+  $('confirmList').innerHTML = rows
+    + (items.length > 8 ? '<div class="confirm-row" style="color:#8b949e;justify-content:center">+' + (items.length - 8) + ' more</div>' : '');
+
+  $('confirmPreflight').classList.remove('hidden');
+  $('confirmProgressView').classList.add('hidden');
+  $('confirmModalCancel').style.display = '';
+  $('confirmModalStart').style.display = '';
+  $('confirmModalStart').disabled = false;
+  $('confirmModalStart').textContent = 'Start Move';
+  $('confirmModalDone').style.display = 'none';
+  $('confirmModal').classList.remove('hidden');
+}
+
+function closeConfirmModal() {
+  $('confirmModal').classList.add('hidden');
+  $('confirmModalCancel').style.display = '';
+  $('confirmModalDone').style.display = 'none';
+}
+
+function renderConfirmModalProgress(result) {
+  $('confirmPreflight').classList.add('hidden');
+  $('confirmProgressView').classList.remove('hidden');
   const processed = result.processed ?? 0;
   const total = result.total ?? 0;
-  const currentIndex = total ? Math.min(processed + (result.status === 'running' ? 1 : 0), total) : processed;
-  $('confirmHeadline').textContent = result.status === 'completed'
-    ? 'Confirm completed'
-    : result.status === 'failed'
-      ? 'Confirm failed'
-      : 'Working on item ' + currentIndex + ' of ' + total;
-  $('confirmNote').textContent = result.note || (result.cross_drive ? 'Cross-drive move detected. Large files can take a while.' : '');
-  $('confirmMeta').innerHTML = [
+  const running = result.status === 'running';
+  const done = result.status === 'completed' || result.status === 'idle' || result.status === 'failed';
+
+  $('confirmModalTitle').textContent = result.status === 'failed'
+    ? 'Confirm failed'
+    : done
+      ? 'Confirm completed'
+      : 'Moving ' + Math.min(processed + (running ? 1 : 0), total) + ' of ' + total;
+
+  $('confirmModalFill').style.width = Math.min(result.percent || 0, 100) + '%';
+  $('confirmModalMeta').innerHTML = [
     'Phase: <strong>' + escHtml(formatConfirmPhase(result.phase)) + '</strong>',
     'Overall: <strong>' + processed + '/' + total + ' (' + (result.percent || 0) + '%)</strong>',
+    result.counts ? 'Moved: <strong>' + (result.counts.moved || 0) + '</strong> · Replaced: <strong>' + (result.counts.replaced || 0) + '</strong> · Failed: <strong>' + (result.counts.failed || 0) + '</strong>' : '',
     result.elapsed ? 'Elapsed: <strong>' + escHtml(result.elapsed) + '</strong>' : '',
     result.eta ? 'Overall ETA: <strong>' + escHtml(result.eta) + '</strong>' : '',
     result.last_update_at ? 'Last update: <strong>' + escHtml(new Date(result.last_update_at).toLocaleTimeString()) + '</strong>' : '',
   ].filter(Boolean).map(s => `<div>${s}</div>`).join('');
 
-  const currentPercent = result.current_percent || 0;
-  $('currentFileFill').style.width = Math.min(currentPercent, 100) + '%';
-  $('currentFileMeta').innerHTML = [
+  const filePercent = result.current_percent || 0;
+  $('confirmModalFileFill').style.width = Math.min(filePercent, 100) + '%';
+  $('confirmModalCurrentMeta').innerHTML = [
     result.current_file ? 'Source: <strong>' + escHtml(fileName(result.current_file)) + '</strong>' : '',
     result.current_target ? 'Target: <strong>' + escHtml(result.current_target) + '</strong>' : '',
     result.current_size_bytes != null ? 'Size: <strong>' + escHtml(formatBytes(result.current_size_bytes)) + '</strong>' : '',
@@ -514,6 +655,16 @@ function renderConfirmProgress(result) {
     result.current_eta ? 'File ETA: <strong>' + escHtml(result.current_eta) + '</strong>' : '',
     result.current_percent != null ? 'File progress: <strong>' + escHtml(String(result.current_percent)) + '%</strong>' : '',
   ].filter(Boolean).map(s => `<div>${s}</div>`).join('');
+
+  const note = result.note || (result.cross_drive ? 'Cross-drive move — copying to a different drive, then removing the source. Large files can take a while.' : '');
+  const noteEl = $('confirmModalNote');
+  if (note) { noteEl.textContent = note; noteEl.classList.remove('hidden'); }
+  else { noteEl.classList.add('hidden'); }
+
+  // Non-dismissable while running
+  $('confirmModalCancel').style.display = 'none';
+  $('confirmModalStart').style.display = 'none';
+  $('confirmModalDone').style.display = done ? '' : 'none';
 }
 
 function focusProgressPanel() {
@@ -528,13 +679,18 @@ function focusProgressPanel() {
 function hideProgress() {
   $('progressPanel').classList.add('hidden');
   setProgressRunning(false);
-  hideConfirmProgressExtra();
 }
 
 function setConfirmButtonLabel(label) {
   $('btnConfirm').textContent = label;
-  const smallConfirm = $('btnConfirmSmall');
-  if (smallConfirm) smallConfirm.textContent = label;
+}
+
+function updateActionButtons() {
+  const hasSelection = document.querySelectorAll('.item-check:not(.skip-check):checked').length > 0;
+  $('btnConfirm').disabled = !hasSelection || confirmActive;
+  $('btnReport').disabled = !scanId;
+  $('btnStartScan').disabled = scanRunning || confirmActive;
+  if (!scanRunning) $('btnStartScan').textContent = 'Start Scan';
 }
 
 function updateSelectionSummary() {
@@ -548,13 +704,10 @@ function updateSelectionSummary() {
       ? '0 of 0 visible (of ' + total + ' total, try adjusting filters)'
       : 'No report items loaded yet.';
   const hasItems = total > 0;
-  const hasSelection = selected > 0;
-  $('btnConfirm').disabled = !hasSelection || confirmActive;
-  const smallConfirm = $('btnConfirmSmall');
-  if (smallConfirm) smallConfirm.disabled = !hasSelection || confirmActive;
   ['btnSelectAll', 'btnSelectNone', 'btnSelectExisting', 'btnSelectMove', 'btnSelectReplace'].forEach(id => {
     if ($(id)) $(id).disabled = !hasItems;
   });
+  updateActionButtons();
 }
 
 function syncGroupHeaderChecks() {
@@ -584,16 +737,6 @@ function setCheckedItems(mode) {
   syncGroupHeaderChecks();
   updateSelectionSummary();
 }
-
-// ====== TAB SWITCHING ======
-document.querySelectorAll('.tabs button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-    btn.classList.add('active');
-    $('tab-' + btn.dataset.tab).classList.add('active');
-  });
-});
 
 // ====== CONNECTION CHECK ======
 async function checkConnection() {
@@ -637,10 +780,13 @@ checkConnection();
 
 // ====== START SCAN ======
 $('btnStartScan').addEventListener('click', async () => {
+  if (scanRunning || confirmActive) return;
   try {
     const btn = $('btnStartScan');
     btn.disabled = true;
     btn.textContent = 'Scanning...';
+    scanRunning = true;
+    updateActionButtons();
     log('Starting scan...', 'info');
     hideProgress();
     if (pollTimer) clearTimeout(pollTimer);
@@ -648,7 +794,6 @@ $('btnStartScan').addEventListener('click', async () => {
       'Starting scan...',
       'Waiting for backend to create the scan plan',
     ]);
-    hideConfirmProgressExtra();
     focusProgressPanel();
     const result = await mcpCall('move new downloads scan');
     scanId = result.scan_id || null;
@@ -666,9 +811,9 @@ $('btnStartScan').addEventListener('click', async () => {
   } catch (e) {
     log('Scan error: ' + e.message, 'err');
     toast('Scan error: ' + e.message, 'err');
+    scanRunning = false;
   } finally {
-    $('btnStartScan').disabled = false;
-    $('btnStartScan').textContent = 'Start Scan';
+    updateActionButtons();
   }
 
   // Auto-poll progress after starting
@@ -683,6 +828,8 @@ async function pollScanProgress() {
       log(result?.hint || 'No active scan found', 'warn');
       hideProgress();
       scanId = null;
+      scanRunning = false;
+      updateActionButtons();
       return;
     }
     scanId = result.scan_id || scanId;
@@ -701,6 +848,8 @@ async function pollScanProgress() {
     setProgressRunning(result.status === 'running');
 
     if (result.status === 'completed') {
+      scanRunning = false;
+      updateActionButtons();
       toast('Scan completed — loading report...', 'good');
       hideProgress();
       setTimeout(fetchReport, 500);
@@ -713,66 +862,49 @@ async function pollScanProgress() {
   }
 }
 
-// ====== CHECK PROGRESS (manual, smart) ======
-$('btnProgress').addEventListener('click', () => {
-  if (confirmActive) {
-    pollConfirmProgress();
-  } else {
-    pollScanProgress();
-  }
-});
-
 // ====== GET REPORT ======
 async function fetchReport() {
   try {
     const result = await mcpCall('get move new downloads scan report', scanId ? { scanId } : {});
     if (!result || result.hint) {
-      log(result?.hint || 'No scan report available', 'warn');
-      toast('No scan to report — start one first!', 'info');
+      if (scanId) log(result?.hint || 'No scan report available', 'warn');
+      scanId = null;
+      scanRunning = false;
       $('reportPanel').classList.add('hidden');
       return;
     }
     if (result.progress) {
       log('Scan is still running — check progress first', 'warn');
-      toast('Scan still running — check progress first', 'info');
       return;
     }
+    scanRunning = false;
     scanId = result.summary?.scan_id || scanId;
     renderReport(result);
     log('Report loaded — ' + (result.summary?.action_required || 0) + ' actions pending', 'good');
-    toast('Report loaded', 'good');
   } catch (e) {
     log('Report error: ' + e.message, 'err');
     toast('Report error: ' + e.message, 'err');
   } finally {
-    $('btnReport').disabled = false;
+    updateActionButtons();
   }
 }
 
 $('btnReport').addEventListener('click', () => {
-  $('btnReport').disabled = true;
+  if (!scanId) return;
   fetchReport();
 });
 
 function renderReport(report) {
   const s = report.summary || {};
   $('reportPanel').classList.remove('hidden');
-  const idHtml = s.scan_id ? 'scan_id: <span onclick="copyText(\'' + s.scan_id + '\')" style="cursor:pointer;border-bottom:1px dashed #8b949e" title="Click to copy">' + s.scan_id + '</span>' : '';
-  $('reportSummary').innerHTML = [
-    (s.total ?? '?') + ' candidates',
-    (s.movies ?? '?') + ' movies',
-    (s.series ?? '?') + ' series',
-    (s.skipped ?? '?') + ' skipped',
-    (s.action_required ?? '?') + ' actions needed',
-    idHtml,
-  ].filter(Boolean).join(' | ');
+  const idHtml = s.scan_id ? '<span onclick="copyText(\'' + s.scan_id + '\')" style="cursor:pointer;border-bottom:1px dashed #8b949e;color:#8b949e;font-size:0.8rem" title="Click to copy">scan_id: ' + s.scan_id + '</span>' : '';
   $('reportSummaryStrip').innerHTML = [
     ['Movies', s.movies ?? 0],
     ['Series', s.series ?? 0],
     ['Skipped', s.skipped ?? 0, '#8b949e'],
     ['Actions Needed', s.action_required ?? 0, '#d29922'],
   ].map(([label, value, color]) => `<div class="summary-pill" style="${color ? 'color:' + color : ''}"><strong>${value}</strong> ${label}</div>`).join('') +
-  '<div style="margin-left:auto;display:flex;gap:4px">' +
+  '<div style="margin-left:auto;display:flex;gap:4px;align-items:center">' + idHtml +
   '<button class="small" onclick="toggleAllGroups(false)">Collapse all</button>' +
   '<button class="small" onclick="toggleAllGroups(true)">Expand all</button>' +
   '</div>';
@@ -819,6 +951,7 @@ function renderItemsFromReport(report) {
       pathExists: item.pathExists || '',
       fileExists: item.fileExists || false,
       fileSize: item.fileSize,
+      crossDrive: item.crossDrive || false,
       season: season,
       episode: episode,
     };
@@ -840,20 +973,77 @@ function renderItemsFromReport(report) {
   }));
 
   const all = mapped.concat(skippedMapped);
+  window._reportAll = all;
 
-  if (all.length) {
-    currentItems = all;
+  renderItemsFromSlice(all);
+
+  updateSelectionSummary();
+  renderFilterChips();
+  // Reset filter
+  $('filterInput').value = '';
+  currentFilter = 'all';
+}
+
+function renderItemsFromSlice(all) {
+  const container = $('reportItems');
+  const limit = rowLimit > 0 ? rowLimit : all.length;
+  const sliced = all.slice(0, limit);
+
+  if (sliced.length) {
+    currentItems = sliced;
     currentItems.forEach(item => { item._liveTarget = item.targetPath; });
-    renderGroupedTable(container, all);
+    renderGroupedTable(container, sliced);
   } else {
     container.innerHTML = '<div style="color:#8b949e">No items to review.</div>';
     currentItems = [];
   }
 
+  const hiddenCount = Math.max(0, all.length - limit);
+  const hint = hiddenCount > 0
+    ? '<div class="hint mt-8">Showing ' + sliced.length + ' of ' + all.length + ' items — raise the "Show" limit above to render more, or filter with the chips.</div>'
+    : '';
+  let hintEl = $('reportLimitHint');
+  if (hintEl) hintEl.innerHTML = hint;
+  else if (hint) {
+    hintEl = document.createElement('div');
+    hintEl.id = 'reportLimitHint';
+    hintEl.innerHTML = hint;
+    container.parentNode.insertBefore(hintEl, container.nextSibling);
+  }
+}
+
+function renderFilterChips() {
+  const all = window._reportAll || [];
+  const actionable = all.filter(i => i.action !== 'skip');
+  const counts = {
+    all: actionable.length,
+    move: actionable.filter(i => i.action === 'move').length,
+    replace: actionable.filter(i => i.action === 'replace').length,
+    existing: actionable.filter(i => i.fileExists).length,
+    new: actionable.filter(i => !i.fileExists).length,
+  };
+  const defs = [
+    ['all', 'All'],
+    ['move', 'New'],
+    ['replace', 'Replace'],
+    ['existing', 'Existing path'],
+    ['new', 'New path'],
+  ];
+  $('filterChips').innerHTML = defs.map(([k, label]) =>
+    '<button class="filter-chip' + (currentFilter === k ? ' active' : '') + '" onclick="setFilter(\'' + k + '\')">' + label + ' <span class="chip-count">' + counts[k] + '</span></button>'
+  ).join('');
+}
+
+function setFilter(key) {
+  currentFilter = key;
+  renderFilterChips();
+  applyFilter();
+}
+
+function applyRowLimit() {
+  rowLimit = parseInt($('rowLimit').value) || 0;
+  renderItemsFromSlice(window._reportAll || []);
   updateSelectionSummary();
-  // Reset filter
-  $('filterInput').value = '';
-  $('filterSelect').value = 'all';
 }
 
 function parseReportMd(md, scanId) {
@@ -1000,7 +1190,7 @@ function renderGroupedTable(container, items) {
     html += '<div class="group-body" id="' + groupId + '">';
     html += '<div class="group-toolbar">';
     const skipOnly = group.items.every(i => i.action === 'skip');
-    html += '<label class="chk-label"><input type="checkbox" class="group-select-all" data-group="' + gi + '" checked onchange="toggleGroupSelect(' + gi + ', this.checked)"><span class="chk-text">' + escHtml(group.title) + '</span></label>';
+    html += '<label class="chk-label"><input type="checkbox" class="group-select-all" data-group="' + gi + '"' + (skipOnly ? '' : ' checked') + ' onchange="toggleGroupSelect(' + gi + ', this.checked)"><span class="chk-text">' + escHtml(group.title) + '</span></label>';
     if (!skipOnly) {
       html += '<a class="search-btn" href="https://duckduckgo.com/?q=' + encodeURIComponent(group.title) + '" target="_blank" title="Search DuckDuckGo for this show">Search</a>';
     }
@@ -1010,7 +1200,7 @@ function renderGroupedTable(container, items) {
       html += '<button class="danger small" onclick="deleteSelectedSkipped(' + gi + ')" style="margin-left:8px">Delete Selected</button>';
     } else {
       html += '<button class="primary small" onclick="applyGroupTargetEdits(' + gi + ')" style="margin-left:8px">Update Paths</button>';
-      html += '<button class="danger small" onclick="confirmGroup(' + gi + ')">Confirm</button>';
+      html += '<button class="warn small" onclick="confirmGroup(' + gi + ')">Confirm</button>';
     }
     html += '</div>';
     html += '<table><thead><tr>';
@@ -1019,13 +1209,13 @@ function renderGroupedTable(container, items) {
     if (isSeries) html += '<th style="width:90px">Episode</th>';
     html += '<th colspan="2">Source → Target Path</th>';
     html += '<th style="width:90px">Size</th>';
-    html += '<th style="width:100px">Source</th>';
+    html += '<th style="width:110px">Actions</th>';
     html += '</tr></thead><tbody>';
 
     group.items.forEach(item => {
       if (item.action === 'skip') {
         html += '<tr class="row-skipped" data-title="' + escHtml(item.title).toLowerCase() + '" data-action="skip" data-fileexists="false">';
-        html += '<td><input type="checkbox" class="item-check skip-check" data-index="' + item._idx + '" data-fileexists="false" checked></td>';
+        html += '<td><input type="checkbox" class="item-check skip-check" data-index="' + item._idx + '" data-fileexists="false"></td>';
         html += '<td><div class="action-cell">';
         html += '<span class="badge action-skip">Skipped</span>';
         html += '</div></td>';
@@ -1045,6 +1235,7 @@ function renderGroupedTable(container, items) {
       html += '<td><input type="checkbox" class="item-check" data-index="' + item._idx + '" data-fileexists="' + fileExists + '" checked></td>';
       html += '<td><div class="action-cell">';
       html += '<span class="badge ' + actionBadge + '">' + actionLabel + '</span>';
+      if (item.crossDrive) html += '<span class="crossdrive-badge" title="This item moves between different drives — the copy+delete takes longer">Cross-drive</span>';
       html += '<span class="path-status">' + renderPathExistsPill(item) + '</span>';
       html += '</div></td>';
       if (isSeries) html += '<td>' + escHtml(item.episode || '') + '</td>';
@@ -1060,11 +1251,6 @@ function renderGroupedTable(container, items) {
     html += '</tbody></table>';
     html += '</div>';
   });
-
-  html += '<div style="margin-top:8px;display:flex;gap:10px">';
-  html += '<button class="primary small" onclick="applyTargetEdits()">Update Selected Paths</button>';
-  html += '<button class="danger small" onclick="confirmSelected()" id="btnConfirmSmall">Confirm Selected</button>';
-  html += '</div>';
 
   container.innerHTML = html;
 }
@@ -1098,7 +1284,7 @@ function toggleAllGroups(expand) {
 
 function applyFilter() {
   const query = ($('filterInput').value || '').toLowerCase();
-  const filterVal = $('filterSelect').value;
+  const filterVal = currentFilter;
 
   document.querySelectorAll('.group-header').forEach(header => {
     const body = header.nextElementSibling;
@@ -1212,39 +1398,8 @@ async function confirmGroup(gi) {
     if (cb && cb.checked) itemIds.push(item.confirmId);
   });
   if (!itemIds.length) { toast('Select at least one item in this group', 'info'); return; }
-  if (!confirm('Move ' + itemIds.length + ' item(s) from "' + group.title + '"? This can take a while for large or cross-drive files and is not easy to undo.')) return;
-  try {
-    $('btnConfirm').disabled = true;
-    const smallConfirm = $('btnConfirmSmall');
-    if (smallConfirm) smallConfirm.disabled = true;
-    if (pollTimer) clearTimeout(pollTimer);
-    setConfirmButtonLabel('Starting confirm...');
-    showProgress(0, ['Preparing confirm...', 'Waiting for backend to start moving files']);
-    hideConfirmProgressExtra();
-    $('progressFill').style.background = '#d29922';
-    focusProgressPanel();
-    log('Confirming ' + itemIds.length + ' items from "' + group.title + '"...', 'info');
-    setProgressRunning(true);
-    const result = await mcpCall('confirm move new downloads scan', { scanId, itemIds });
-    confirmActive = true;
-    log('Confirm started! ID: ' + scanId, 'good');
-    toast('Confirm started in background', 'good');
-    const p0 = result.processed ?? 0;
-    const t0 = result.total ?? 0;
-    showProgress(result.percent || 0, ['Confirm: ' + p0 + '/' + t0, result.phase ? 'Phase: ' + formatConfirmPhase(result.phase) : '', result.current_file ? fileName(result.current_file) : ''].filter(Boolean));
-    renderConfirmProgress(result);
-    $('progressFill').style.background = '#d29922';
-    log('Confirm progress: ' + p0 + '/' + t0 + ' (' + (result.status || 'running') + ')', 'info');
-    toast('Confirm running: ' + p0 + '/' + t0, 'info');
-    focusProgressPanel();
-    setConfirmButtonLabel('Confirm running...');
-    pollConfirmProgress();
-  } catch (e) {
-    log('Confirm error: ' + e.message, 'err');
-    toast('Confirm error: ' + e.message, 'err');
-    setConfirmButtonLabel('Confirm Selected');
-    updateSelectionSummary();
-  }
+  if (confirmActive) { toast('A move is already running — wait for it to finish', 'info'); return; }
+  openConfirmModal(itemIds, '"' + group.title + '"');
 }
 
 // ====== DELETE SOURCE ======
@@ -1420,7 +1575,7 @@ $('reportItems').addEventListener('keydown', (e) => {
 });
 
 // ====== CONFIRM ======
-async function confirmSelected() {
+function confirmSelected() {
   const checked = document.querySelectorAll('.item-check:checked');
   if (!checked.length) {
     toast('Select at least one item to confirm', 'info');
@@ -1440,102 +1595,81 @@ async function confirmSelected() {
     return;
   }
 
-  if (!confirm('Move ' + itemIds.length + ' item(s)? This can take a while for large or cross-drive files and is not easy to undo.')) return;
+  if (confirmActive) { toast('A move is already running — wait for it to finish', 'info'); return; }
+  openConfirmModal(itemIds, 'selected items');
+}
 
+async function runConfirm(itemIds) {
   try {
-    $('btnConfirm').disabled = true;
-    const smallConfirm = $('btnConfirmSmall');
-    if (smallConfirm) smallConfirm.disabled = true;
-    if (pollTimer) clearTimeout(pollTimer);
-    setConfirmButtonLabel('Starting confirm...');
-    showProgress(0, [
-      'Preparing confirm...',
-      'Waiting for backend to start moving files',
-    ]);
-    hideConfirmProgressExtra();
-    $('progressFill').style.background = '#d29922';
-    focusProgressPanel();
-
-    log('Confirming ' + itemIds.length + ' items...', 'info');
-    setProgressRunning(true);
-    const result = await mcpCall('confirm move new downloads scan', { scanId, itemIds });
     confirmActive = true;
+    updateActionButtons();
+    if (pollTimer) clearTimeout(pollTimer);
+    setConfirmButtonLabel('Confirm running...');
+    $('confirmModalCancel').style.display = 'none';
+    $('confirmModalStart').style.display = 'none';
+    renderConfirmModalProgress({ status: 'running', phase: 'preparing', processed: 0, total: itemIds.length });
+
+    log('Confirming ' + itemIds.length + ' item(s)...', 'info');
+    const result = await mcpCall('confirm move new downloads scan', { scanId, itemIds });
     log('Confirm started! ID: ' + scanId, 'good');
     toast('Confirm started in background', 'good');
-
-    // Show confirm progress
-    const p0 = result.processed ?? 0;
-    const t0 = result.total ?? 0;
-    showProgress(result.percent || 0, [
-      'Confirm: ' + p0 + '/' + t0,
-      result.phase ? 'Phase: ' + formatConfirmPhase(result.phase) : '',
-      result.current_file ? fileName(result.current_file) : '',
-    ].filter(Boolean));
-    renderConfirmProgress(result);
-    $('progressFill').style.background = '#d29922';
-    log('Confirm progress: ' + p0 + '/' + t0 + ' (' + (result.status || 'running') + ')', 'info');
-    toast('Confirm running: ' + p0 + '/' + t0, 'info');
-    focusProgressPanel();
-    setConfirmButtonLabel('Confirm running...');
-
-    // Poll confirm progress
+    renderConfirmModalProgress(result);
     pollConfirmProgress();
   } catch (e) {
     log('Confirm error: ' + e.message, 'err');
     toast('Confirm error: ' + e.message, 'err');
+    confirmActive = false;
+    closeConfirmModal();
     setConfirmButtonLabel('Confirm Selected');
     updateSelectionSummary();
   }
 }
 
+$('confirmModalStart').addEventListener('click', () => {
+  $('confirmModalStart').disabled = true;
+  runConfirm(_confirmItemIds);
+});
+$('confirmModalCancel').addEventListener('click', closeConfirmModal);
+$('confirmModalDone').addEventListener('click', closeConfirmModal);
+
 async function pollConfirmProgress() {
   if (!confirmActive) return;
   try {
-    const result = await mcpCall('get move new downloads confirm progress', scanId ? { scanId } : {});
+    const result = await mcpCall('get move new downloads scan confirm progress', scanId ? { scanId } : {});
     const p = result.processed ?? 0;
     const t = result.total ?? 0;
-    log('Confirm progress: ' + p + '/' + t + ' (' + (result.status || 'unknown') + ')' + (result.current_file ? ' — ' + result.current_file : ''), 'info');
-    showProgress(result.percent || 0, [
-      'Confirm: ' + p + '/' + t,
-      result.phase ? 'Phase: ' + formatConfirmPhase(result.phase) : '',
-      'Moved: ' + (result.counts?.moved || 0) + '  Replaced: ' + (result.counts?.replaced || 0) + '  Failed: ' + (result.counts?.failed || 0),
-      result.current_file ? fileName(result.current_file) : '',
-      result.elapsed ? result.elapsed : '',
-      result.eta ? 'ETA: ' + result.eta : '',
-    ].filter(Boolean));
-    renderConfirmProgress(result);
-    $('progressFill').style.background = '#d29922';
-    setProgressRunning(result.status === 'running');
+    log('Confirm progress: ' + p + '/' + t + ' (' + (result.status || 'unknown') + ')', 'info');
+    renderConfirmModalProgress(result);
 
     if (result.status === 'completed' || result.status === 'idle') {
       confirmActive = false;
       setConfirmButtonLabel('Confirm Selected');
       updateSelectionSummary();
-      toast('Confirm completed! Moved: ' + (result.counts?.moved || 0) + ', Replaced: ' + (result.counts?.replaced || 0) + ', Failed: ' + (result.counts?.failed || 0), 'good');
-      log('Confirm completed. Moved: ' + (result.counts?.moved || 0) + ', Replaced: ' + (result.counts?.replaced || 0) + ', Failed: ' + (result.counts?.failed || 0), 'good');
-      $('progressFill').style.background = '';
+      const moved = result.counts?.moved || 0;
+      const replaced = result.counts?.replaced || 0;
+      const failed = result.counts?.failed || 0;
+      log('Confirm completed. Moved: ' + moved + ', Replaced: ' + replaced + ', Failed: ' + failed, 'good');
+      toast('Confirm completed! Moved: ' + moved + ', Replaced: ' + replaced + ', Failed: ' + failed, 'good');
       setTimeout(fetchReport, 800);
       return;
     }
-    if (result.status === 'running') {
-      setConfirmButtonLabel('Copying ' + p + '/' + t + '...');
-      toast('Confirm progress: ' + p + '/' + t + (result.current_file ? ' — ' + result.current_file.split('/').pop() : ''), 'info');
-      if (pollTimer) clearTimeout(pollTimer);
-      pollTimer = setTimeout(pollConfirmProgress, POLL_INTERVAL_MS);
-    } else {
+    if (result.status === 'failed') {
       confirmActive = false;
-      hideConfirmProgressExtra();
       setConfirmButtonLabel('Confirm Selected');
       updateSelectionSummary();
+      return;
+    }
+    if (result.status === 'running') {
+      setConfirmButtonLabel('Moving ' + p + '/' + t + '...');
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = setTimeout(pollConfirmProgress, POLL_INTERVAL_MS);
     }
   } catch (e) {
     log('Confirm progress error: ' + e.message, 'err');
     toast('Confirm progress error: ' + e.message, 'err');
     confirmActive = false;
-    hideConfirmProgressExtra();
     setConfirmButtonLabel('Confirm Selected');
     updateSelectionSummary();
-    setProgressRunning(false);
   }
 }
 
