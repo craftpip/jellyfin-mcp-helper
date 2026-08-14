@@ -1,21 +1,36 @@
 import { useAppStore } from '../store/AppStore.jsx'
+import LibraryScanDropdown from './LibraryScanDropdown.jsx'
 
 export default function TopBar() {
-  const { state } = useAppStore()
-  const cls = state.connStatus === 'connected' ? 'connected' : state.connStatus === 'error' ? 'error' : ''
+  const { state, actions } = useAppStore()
   return (
     <div className="top-bar">
       <div>
         <h1>JellySort</h1>
-        <div className="subtitle">Scan, review, and move download files into your media library</div>
+        <div className="subtitle">Move your new files to the dedicated library folders where they belong</div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <a href="/legacy/" style={{ color: '#58a6ff', textDecoration: 'none', fontSize: '0.8rem', whiteSpace: 'nowrap' }} title="Open the legacy panel">
-          ← Legacy UI
-        </a>
-        <div className={'status' + (cls ? ' ' + cls : '')} id="connStatus">
-          {state.connMessage}
-        </div>
+      <div className="top-actions">
+        {state.reportVisible && !state.scanRunning && (
+          <button
+            type="button"
+            className="primary"
+            id="btnScanHeader"
+            disabled={state.confirmActive}
+            onClick={actions.startScan}
+            title="Start a new scan"
+          >
+            Scan
+          </button>
+        )}
+        {state.jellyfinLibraries.length > 0 && <LibraryScanDropdown />}
+        <button type="button" className="small" onClick={actions.toggleLogs} title="Show or hide the log panel">
+          {state.logsVisible ? 'Hide Logs' : 'Show Logs'}
+        </button>
+        {state.authRequired && state.authed && (
+          <button type="button" className="small logout-btn" onClick={actions.logout} title="Log out of this panel">
+            Log out
+          </button>
+        )}
       </div>
     </div>
   )

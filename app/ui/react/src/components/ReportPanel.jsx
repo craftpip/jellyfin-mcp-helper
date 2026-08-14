@@ -19,10 +19,8 @@ export default function ReportPanel() {
     reportVisible,
     reportAll,
     reportSummary,
-    currentItems,
     reportGroups,
     currentFilter,
-    rowLimit,
     selectedIds,
     expandedGroups,
   } = state
@@ -63,7 +61,6 @@ export default function ReportPanel() {
   }
 
   const summary = reportSummary || {}
-  const hiddenCount = Math.max(0, reportAll.length - currentItems.length)
 
   return (
     <div className="panel" id="reportPanel">
@@ -111,17 +108,6 @@ export default function ReportPanel() {
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search by title, path..."
         />
-        <select
-          id="rowLimit"
-          value={rowLimit}
-          onChange={(e) => actions.setRowLimit(parseInt(e.target.value, 10) || 0)}
-          title="Maximum rows rendered at once"
-        >
-          <option value="50">Show 50</option>
-          <option value="100">Show 100</option>
-          <option value="500">Show 500</option>
-          <option value="0">Show all</option>
-        </select>
       </div>
 
       <div className="filter-chips" id="filterChips">
@@ -182,13 +168,6 @@ export default function ReportPanel() {
           )
         })}
       </div>
-
-      {hiddenCount > 0 && (
-        <div className="hint mt-8" id="reportLimitHint">
-          Showing {currentItems.length} of {reportAll.length} items — raise the "Show" limit above to render
-          more, or filter with the chips.
-        </div>
-      )}
     </div>
   )
 }
@@ -197,6 +176,9 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems }) {
   const { state, actions } = useAppStore()
   const isSeries = group.items[0].itemType === 'series'
   const skipOnly = group.items.every((i) => i.action === 'skip')
+  const hasPathEdits = group.items.some(
+    (i) => ((i._liveTarget || i.targetPath) || '').trim() !== ((i.originalTarget || i.targetPath) || '').trim()
+  )
   const allChecked =
     group.items.length > 0 &&
     group.items.every((i) => state.selectedIds.includes(i.confirmId))
@@ -226,26 +208,26 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems }) {
               href={'https://duckduckgo.com/?q=' + encodeURIComponent(group.title)}
               target="_blank"
               rel="noreferrer"
-              title="Search DuckDuckGo for this show"
+              title={'Search for "' + group.title + '" on DuckDuckGo (opens in a new tab)'}
             >
               Search
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                <path d="M7 17L17 7" />
+                <path d="M8 7h9v9" />
+              </svg>
             </a>
           )}
-          <button className="small" onClick={() => actions.toggleGroupSelect(gi, true)}>
-            All
-          </button>
-          <button className="small" onClick={() => actions.toggleGroupSelect(gi, false)}>
-            None
-          </button>
           {skipOnly ? (
             <button className="danger small" style={{ marginLeft: '8px' }} onClick={() => actions.deleteSelectedSkipped(gi)}>
               Delete Selected
             </button>
           ) : (
             <>
-              <button className="primary small" style={{ marginLeft: '8px' }} onClick={() => actions.applyGroupTargetEdits(gi)}>
-                Update Paths
-              </button>
+              {hasPathEdits && (
+                <button className="primary small" style={{ marginLeft: '8px' }} onClick={() => actions.applyGroupTargetEdits(gi)}>
+                  Update Paths
+                </button>
+              )}
               <button className="warn small" onClick={() => actions.confirmGroup(gi)}>
                 Confirm
               </button>
@@ -311,7 +293,7 @@ function ReportRow({ item, isSeries }) {
           <button
             className="danger small"
             onClick={() => actions.deleteSourceItem(item._idx)}
-            title="Delete the source download file"
+            title="Delete the source file"
           >
             Delete
           </button>
@@ -372,7 +354,7 @@ function ReportRow({ item, isSeries }) {
         <button
           className="danger small"
           onClick={() => actions.deleteSourceItem(item._idx)}
-          title="Delete the source download file (not the target)"
+          title="Delete the source file (not the target)"
         >
           Delete
         </button>

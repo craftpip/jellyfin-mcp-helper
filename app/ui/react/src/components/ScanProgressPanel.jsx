@@ -13,31 +13,42 @@ export default function ScanProgressPanel({ progress }) {
 
   if (!progress) return null
 
-  const info =
-    progress.lines ||
-    [
-      'ID: ' + (progress.scan_id || ''),
-      'Status: ' + (progress.status || ''),
-      progress.processed !== undefined ? progress.processed + '/' + progress.total : '',
-      progress.current_file ? progress.current_file : '',
-      progress.elapsed ? progress.elapsed : '',
-      progress.eta ? 'ETA: ' + progress.eta : '',
-    ].filter(Boolean)
+  const waiting = progress.status === 'starting' || (progress.status === 'running' && !progress.total)
+
+  if (waiting) {
+    return (
+      <div id="progressPanel" className="progress-center progress-starting">
+        <span className="spinner" aria-hidden="true" />
+        <div className="progress-status">Starting scan...</div>
+        <div className="progress-meta">Preparing the scan plan...</div>
+      </div>
+    )
+  }
+
+  const statusLabel =
+    progress.status === 'completed'
+      ? 'Scan complete'
+      : progress.status === 'failed'
+        ? 'Scan failed'
+        : 'Scanning...'
+
+  const percent = Math.round(progress.percent || 0)
 
   return (
-    <div
-      id="progressPanel"
-      className={'panel' + (progress.status === 'running' ? ' progress-running' : '')}
-    >
-      <h2>Progress</h2>
+    <div id="progressPanel" className="progress-center">
+      <div className="progress-status">{statusLabel}</div>
       <div className="progress-bar">
-        <div className="fill" style={{ width: Math.min(progress.percent || 0, 100) + '%' }} />
+        <div className="fill" style={{ width: Math.min(percent, 100) + '%' }} />
       </div>
-      <div className="progress-info">
-        {info.map((s, i) => (
-          <span key={i}>{s}</span>
-        ))}
+      <div className="progress-percent">{percent}%</div>
+      <div className="progress-meta">
+        {progress.processed}/{progress.total} {progress.elapsed ? '· ' + progress.elapsed : ''}
       </div>
+      {progress.current_file && (
+        <div className="progress-file" title={progress.current_file}>
+          {progress.current_file}
+        </div>
+      )}
     </div>
   )
 }

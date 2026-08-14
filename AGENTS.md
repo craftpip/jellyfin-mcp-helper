@@ -6,20 +6,12 @@ Use this file as the project handbook. Keep it compact and practical. Update exi
 
 ## Skills
 
-Load the jellysort skill when working with this codebase.
-
-The skill contains:
-
-- Base configuration and URLs
-- API endpoints
-- MCP protocol details using JSON-RPC 2.0
-- Log interpretation
-- Workflow guidance
+No jellysort skill is installed in this environment yet — do not try to load one. The repo-root `SKILL.md` that used to describe one was a stale, unfinished template (unfilled `{{PLACEHOLDER}}` values, old REST-only workflow) and has been removed. The service is MCP-first (JSON-RPC 2.0 on port 18328) with legacy REST scan endpoints still present for compatibility.
 
 ## Commands
 
 - Test: python3 -m pytest tests/
-- Rebuild after source changes: docker compose build && docker compose up -d
+- Rebuild after source changes: docker compose build && docker compose restart
 - Web UI: enabled via WEB_UI_ENABLED=true in .env, served on port 18329
 - MCP API: port 18328 (external), 18327 (internal)
 
@@ -35,41 +27,38 @@ The skill contains:
 - app/services/ollama.py: Ollama LLM client
 - app/services/openrouter.py: OpenRouter LLM client
 - app/services/organizer.py: scan, classify, resolve, and move orchestration
+- app/services/release_tracker.py: ongoing-release tracking (state in config/ongoing_releases.json)
 - app/services/resolver.py: PathResolver path-matching logic
 - app/services/run_manager.py: legacy run management
 - app/services/scan_manager.py: scan-plan workflow, scan then confirm
 - app/services/scanner.py: filesystem scanner
 - app/main.py: FastAPI entry point and MCP handlers
-- app/ui/server.py: Web UI FastAPI server with MCP proxy
-- app/ui/index.html: Web UI single-page HTML+JS frontend (legacy panel, served at `/legacy`)
-- app/ui/react/: React.js migration of the web UI (Vite build, source)
-- app/ui/react-dist/: built React bundle served at `/` and `/react` (both asset mounts)
-- app/ui/react/src/store/AppStore.jsx: Context + useReducer store mirroring the legacy globals
-- app/ui/react/src/mcp/mcpClient.js: JSON-RPC client (mcpCall, mcpListTools)
+- app/ui/server.py: Web UI FastAPI server (serves React bundle, native `/api` routes, legacy MCP proxy, panel auth)
+- app/ui/react/: React.js web UI (Vite build, source)
+- app/ui/react-dist/: built React bundle served at `/` (`/react` and `/react/assets` are backward-compat mounts that 308-redirect/re-serve)
+- app/ui/react/src/store/AppStore.jsx: Context + useReducer store
+- app/ui/react/src/api/apiClient.js: REST API client (apiGet/Post/Patch/Delete, auth token)
+- app/ui/react/src/components/: React components (ReportPanel, ConfirmModal, PathPills, LoginScreen, etc.)
 - app/ui/react/src/utils/report.js: pure helpers (item mapping, grouping, filters, smart path sync)
-- app/ui/react/src/components/: React components (ReportPanel, ConfirmModal, PathPills, etc.)
-- plan/: project plans and roadmap documents (markdown)
+- plans/: project plans and roadmap documents (markdown)
 - tests/: pytest test suite
-- config/: config files
+- config/: config files plus runtime state (`current_scan.json`, `ongoing_releases.json`)
 - logs/: runtime logs
 - reports/: generated reports
 - .env: active configuration
 - docker-compose.yml: container orchestration
 - Dockerfile: image build definition
 - requirements.txt: Python dependencies
-- INSTALL.md: install documentation
 - README.md: project documentation
-- SKILL.md: project skill documentation
 
-## Web UI (React migration)
+## Web UI (React)
 
-See `plan/03-react-migration.md` for the full migration plan and phase checklist. Current state: **the React app is the main UI at `/`**; the legacy panel lives at `/legacy` (308 from `/legacy`). Old `/react` bookmarks 308-redirect to `/`.
-
-> **RULE: The legacy UI is frozen.** Do not touch `app/ui/index.html` (the legacy panel) anymore — no edits, no fixes, no feature work. Every change request the user makes is for the **React UI** (`app/ui/react/`). The legacy panel exists at `/legacy` only as a frozen reference; it is intentionally not updated and may diverge.
+Current state: **the React app is the main UI at `/`**. Old `/react` bookmarks 308-redirect to `/`. The legacy HTML panel (`app/ui/index.html`, served at `/legacy`) has been deleted.
 
 - React source lives in `app/ui/react/` (Vite, JavaScript, no TS). `npm run build` outputs to `app/ui/react-dist/`.
-- `server.py` serves `react-dist/` as static files under `/assets` (plus backward-compat `/react/assets`) and routes `GET /` to the built `index.html`; `GET /legacy` redirects to `/legacy/` (legacy `index.html`); `GET /react` redirects to `/` (308).
-- The React client calls the same `/mcp` JSON-RPC proxy. Dev: `npm run dev` in `app/ui/react` with a Vite proxy to `http://localhost:18329`.
+- `server.py` serves `react-dist/` as static files under `/assets` (plus backward-compat `/react/assets`) and routes `GET /` to the built `index.html`; `GET /react` redirects to `/` (308).
+- The React client calls native `/api` REST routes on the UI server (`app/ui/server.py`), which share the backend `ScanManager`/`ReleaseTracker`. The old `/mcp` JSON-RPC proxy has been **removed** — the panel is fully independent of the MCP server. Dev: `npm run dev` in `app/ui/react` with a Vite proxy to `http://localhost:18329` (`/api`).
+- Panel auth: `UI_PANEL_PASSWORD` in `.env`. When set, `/api` routes except `/api/status`, `/api/login`, and static assets require a Bearer token from `POST /api/login`; the React app shows `LoginScreen` and stores the token in `localStorage`. When empty, `GET /api/status` reports `auth.required: false` and the panel is open.
 - Frontend tests: `npm test` from `app/ui/react` (Vitest + React Testing Library, jsdom). **Run vitest via `npm test` in `app/ui/react`, never via `npx vitest` from the repo root** — the root install has no jsdom/vite config and fails confusingly.
 - After any React source change: `npm run build` in `app/ui/react`, then `docker restart jellysort` (the compose file bind-mounts `.` into `/app`, so the built `react-dist/` and edited `server.py` are picked up on restart).
 
@@ -110,15 +99,12 @@ When ready to release:
 
 1. Merge or fast-forward dev into prod.
 2. Update version in app/core/version.py.
-3. Update CHANGELOG.md.
-4. Run python3 -m pytest tests/.
-5. Run docker compose build.
-6. Create the release commit.
-7. Tag from prod as vX.Y.Z.
+3. Run python3 -m pytest tests/.
+4. Run docker compose build.
+5. Create the release commit.
+6. Tag from prod as vX.Y.Z.
 
 app/core/version.py is the single source of truth for the service version.
-
-RELEASE.md is the canonical workflow document.
 
 ## Known Patterns And Fixes
 
@@ -250,9 +236,9 @@ if not new_target.endswith((".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".fl
 
 **Problem:** Good candidates like Mortal Kombat (1995) were skipped with reason "Matched movie pattern" despite being correctly classified as a movie.
 
-**Cause:** `app/ui/index.html` had the "Replace existing files" checkbox unchecked by default, sending `replaceExisting: false` to the backend. When the target path already exists AND `replaceExisting` is false, the scan manager (line 281 in `scan_manager.py`) sets the action to `"skip"`.
+**Cause:** The legacy `app/ui/index.html` (now deleted) had the "Replace existing files" checkbox unchecked by default, sending `replaceExisting: false` to the backend. When the target path already exists AND `replaceExisting` is false, the scan manager (line 281 in `scan_manager.py`) sets the action to `"skip"`.
 
-**Fix:** Set `checked` on the checkbox input so it defaults to ON, matching the backend default of `replace_existing=True` in `ScanRequest`.
+**Fix:** Set `checked` on the checkbox input so it defaults to ON, matching the backend default of `replace_existing=True` in `ScanRequest`. The React UI has no such checkbox and relies on the backend default `replace_existing=True`.
 
 **The checkbox label matters:** Use clear labels like "Replace existing files" not "Override existing scan".
 
@@ -391,30 +377,28 @@ This ensures `Path(target_path).exists()` returns `True` in `scan_manager.py`, c
 
 **Problem:** Smart path sync changed root-level segments (e.g., `/media1/` → `/media2/`) across ALL groups, not just the current show.
 
-**Fix:** `syncPathChanges` in `app/ui/index.html` filters by `item.title !== groupTitle` so changes only propagate within the same show group.
+**Fix:** `syncPathChanges` (the legacy panel, now deleted) filtered by `item.title !== groupTitle` so changes only propagate within the same show group. `computePathSync` in `app/ui/react/src/utils/report.js` keeps this behavior.
 
-### Path editing for solo groups (legacy bug NOT replicated in React)
+### Path editing for solo groups
 
-**Problem:** In the legacy panel, editing the target path of any row whose title group has no other rows always reverts immediately — `syncPathChanges` reverts the input when `anySynced` is false, and there are no siblings to sync. Since every movie is its own group, **Update Paths was broken for all movies** (and single-episode series).
+**Problem:** Editing the target path of any row whose title group has no other rows always reverts immediately — `syncPathChanges` reverts the input when `anySynced` is false, and there are no siblings to sync. Since every movie is its own group, **Update Paths was broken for all movies** (and single-episode series).
 
-**Correct behavior (React port):** Only revert when the group actually has other rows that could have been synced but none matched. A row alone in its group keeps the edit.
+**Correct behavior:** Only revert when the group actually has other rows that could have been synced but none matched. A row alone in its group keeps the edit.
 
 **Change:** `computePathSync` in `app/ui/react/src/utils/report.js` tracks `hasSameGroupSibling`:
 - No same-group sibling → return `null` (keep the edit, no sync, no revert).
-- Siblings exist but none share the changed prefix/chunk → `{ revert: true }` (matches legacy).
+- Siblings exist but none share the changed prefix/chunk → `{ revert: true }`.
 - Siblings synced → `{ updates: [...] }`.
 
 The store's `onTargetInputChange` (AppStore.jsx) already skips revert when `computePathSync` returns `null`.
 
 **Verification:** Unit test `keeps the edit (no revert) when the row is alone in its group` in `report.test.js`. Live check: type a change into a movie's target input — it persists instead of snapping back.
 
-**Note:** The legacy panel still reverts (unfixed on purpose — it stays canonical only for comparison; the fix lives in the React port).
-
 ### Confirm progress tool name mismatch (React UI)
 
 **Problem:** After clicking "Start Move" in the confirm modal, the progress never updated and the backend logged `TOOL xxx get move new downloads scan confirm progress (not found)` on every poll. The cross-drive copy ran fine in the background; only the UI polling failed.
 
-**Cause:** `app/ui/react/src/store/AppStore.jsx` `pollConfirmProgress()` called the tool `'get move new downloads scan confirm progress'`, but the backend registers `'get move new downloads confirm progress'` (`app/main.py` tool list + handler dispatch). The legacy `app/ui/index.html` has the same typo (frozen, not fixed).
+**Cause:** `app/ui/react/src/store/AppStore.jsx` `pollConfirmProgress()` called the tool `'get move new downloads scan confirm progress'`, but the backend registers `'get move new downloads confirm progress'` (`app/main.py` tool list + handler dispatch).
 
 **Fix:** `AppStore.jsx:484` → `'get move new downloads confirm progress'`.
 
@@ -444,16 +428,15 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 `fetchReport` uses a `finally` block to re-enable the "Get Report" button so it never stays disabled on error.
 
-### React UI routes: root swap, /react and /legacy redirects
+### React UI routes: root swap, /react redirects
 
 **Problem:** The Vite production build uses relative asset URLs (`./assets/...`). At `/` they resolve to `/assets/...`; at `/react/` (no trailing slash) they would resolve to the origin root and 404.
 
 **Fix (current):** The React app is the **main UI at `/`**. In `app/ui/server.py`:
 - `/assets` and `/react/assets` both mount `react-dist/assets` (backward compat for old bookmarks).
 - `GET /` serves `react-dist/index.html`; `GET /react` and `GET /react/` 308-redirect to `/`.
-- `GET /legacy` 308-redirects to `/legacy/`, which serves the legacy `index.html`.
 
-**Verification:** `curl -s -o /dev/null -w '%{http_code}' http://host:18329/react` returns 308 → `/`; `/legacy` returns 308 → `/legacy/`; `/` returns 200; `/assets/<hash>.js` returns 200.
+**Verification:** `curl -s -o /dev/null -w '%{http_code}' http://host:18329/react` returns 308 → `/`; `/` returns 200; `/assets/<hash>.js` returns 200.
 
 ### React UI tests must run via npm test in app/ui/react
 
@@ -473,7 +456,7 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 ## Plans
 
-The `plan/` directory is the central location for all project plans and roadmap documents. Each plan is a markdown file. When working on a plan, reference the plan file path in conversations and use it as a checklist. Plans can be created, implemented incrementally, and marked complete within the same file.
+The `plans/` directory is the central location for all project plans and roadmap documents. Each plan is a markdown file, named with a leading number (e.g. `03-mcp-auth-and-config-pages.md`). When working on a plan, reference the plan file path in conversations and use it as a checklist. Plans can be created, implemented incrementally, and marked complete within the same file.
 
 ## Project Learnings
 

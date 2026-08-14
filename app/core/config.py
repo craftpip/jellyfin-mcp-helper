@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     web_ui_enabled: bool = Field(default=False, alias="WEB_UI_ENABLED")
     web_ui_port: int = Field(default=18329, alias="WEB_UI_PORT")
 
+    # Web UI panel auth. Empty (default) = direct login, no password prompt.
+    ui_panel_password: str = Field(default="", alias="UI_PANEL_PASSWORD")
+
     # Paths settings
     download_roots: str = Field(default="", alias="DOWNLOAD_ROOTS")
     movie_roots: str = Field(default="", alias="MOVIE_ROOTS")

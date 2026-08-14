@@ -4,18 +4,6 @@ import userEvent from '@testing-library/user-event'
 import App from './App.jsx'
 import { AppStoreProvider } from './store/AppStore.jsx'
 
-function toolsList() {
-  return { jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'move new downloads scan' }] } }
-}
-
-function jsonRpcResult(payload) {
-  return {
-    jsonrpc: '2.0',
-    id: 1,
-    result: { content: [{ type: 'text', text: JSON.stringify(payload) }] },
-  }
-}
-
 const REPORT = {
   summary: { scan_id: 'scan1', movies: 1, series: 1, skipped: 1, action_required: 2 },
   items: [
@@ -55,20 +43,18 @@ const REPORT = {
 beforeEach(() => {
   vi.stubGlobal(
     'fetch',
-    vi.fn((_url, opts) => {
-      const body = opts?.body ? JSON.parse(opts.body) : null
-      let payload
-      if (body?.method === 'tools/list') {
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(toolsList()) })
-      }
-      if (body?.method === 'tools/call' && body.params.name === 'get available jellyfin libraries list') {
+    vi.fn((url, opts) => {
+      const method = (opts?.method || 'GET').toUpperCase()
+      const path = String(url)
+      let payload = {}
+      if (method === 'GET' && path === '/api/status') {
+        payload = { auth: { required: false } }
+      } else if (method === 'GET' && path === '/api/libraries') {
         payload = { libraries: [{ name: 'Movies' }, { name: 'Series' }] }
-      } else if (body?.method === 'tools/call' && body.params.name === 'get move new downloads scan report') {
+      } else if (method === 'GET' && (path === '/api/scans/current/report' || path === '/api/scans/scan1/report')) {
         payload = REPORT
-      } else {
-        payload = {}
       }
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(jsonRpcResult(payload)) })
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
     })
   )
 })
@@ -90,8 +76,11 @@ describe('App integration', () => {
   it('connects, loads libraries and renders the full report', async () => {
     renderApp()
 
-    expect(await screen.findByText('connected (1 tools)')).toBeInTheDocument()
-    expect(screen.getByText('Scan Movies')).toBeInTheDocument()
+    expect(await screen.findByText(/Move your new files to the dedicated library folders/)).toBeInTheDocument()
+    expect(screen.getByText('Scan library...')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByText('Scan library...'))
+    expect(await screen.findByText('Scan Movies')).toBeInTheDocument()
     expect(screen.getByText('Scan Series')).toBeInTheDocument()
 
     expect((await screen.findAllByText('Show Name (2020)')).length).toBeGreaterThan(0)
@@ -131,16 +120,111 @@ describe('App integration', () => {
     expect(await screen.findByText('1 of 2 item(s) selected')).toBeInTheDocument()
   })
 
-  it('opens the confirm modal preflight when Confirm Selected is clicked', async () => {
+  it('opens the confirm modal preflight when a group Confirm is clicked', async () => {
     renderApp()
     await screen.findAllByText('Movie (2024)')
     await screen.findByText('2 of 2 item(s) selected')
 
-    await userEvent.click(screen.getByText('Confirm Selected'))
+    await userEvent.click(screen.getAllByText('Confirm')[0])
 
     const modal = await screen.findByText('Start Move')
     expect(modal).toBeInTheDocument()
     expect(screen.getByText(/Confirm Move/)).toBeInTheDocument()
     expect(modal.closest('#confirmModal').querySelectorAll('.confirm-row').length).toBeGreaterThan(0)
+  })
+
+  it('does not flash the Start Scan button between scan completion and report load', async () => {
+    let reportCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, opts) => {
+        const method = (opts?.method || 'GET').toUpperCase()
+        const path = String(url)
+        let payload = {}
+        if (method === 'GET' && path === '/api/status') {
+          payload = { auth: { required: false } }
+        } else if (method === 'GET' && path === '/api/libraries') {
+          payload = { libraries: [] }
+        } else if (method === 'GET' && path.includes('/api/scans/') && path.includes('/report')) {
+          reportCalls += 1
+          payload = reportCalls === 1 ? { hint: 'no scan' } : REPORT
+        } else if (method === 'POST' && path === '/api/scans') {
+          payload = { scan_id: 's9', processed: 0, total: 10, percent: 0, status: 'starting' }
+        } else if (method === 'GET' && path.includes('/api/scans/') && path.includes('/progress')) {
+          payload = { scan_id: 's9', status: 'completed', processed: 10, total: 10, percent: 100 }
+        }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+      })
+    )
+    renderApp()
+
+    await screen.findByText('Start Scan')
+    await userEvent.click(screen.getByText('Start Scan'))
+
+    expect(await screen.findByText('Loading report...', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByText('Start Scan')).not.toBeInTheDocument()
+
+    expect((await screen.findAllByText('Movie (2024)', {}, { timeout: 3000 })).length).toBeGreaterThan(0)
+    expect(screen.queryByText('Loading report...')).not.toBeInTheDocument()
+  })
+
+  it('keeps Start Scan visible when logs are shown and no report exists', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, opts) => {
+        const method = (opts?.method || 'GET').toUpperCase()
+        const path = String(url)
+        let payload = {}
+        if (method === 'GET' && path === '/api/status') {
+          payload = { auth: { required: false } }
+        } else if (method === 'GET' && path === '/api/libraries') {
+          payload = { libraries: [] }
+        } else if (method === 'GET' && path.includes('/report')) {
+          payload = { hint: 'no scan' }
+        }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+      })
+    )
+    renderApp()
+
+    await screen.findByText('Start Scan')
+    await userEvent.click(screen.getByText('Show Logs'))
+
+    expect(screen.getByText('Start Scan')).toBeInTheDocument()
+    expect(screen.getByText('Hide Logs')).toBeInTheDocument()
+    expect(screen.getByText('Log')).toBeInTheDocument()
+  })
+
+  it('shows the login screen when auth is required and unlocks after login', async () => {
+    let statusCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, opts) => {
+        const method = (opts?.method || 'GET').toUpperCase()
+        const path = String(url)
+        let payload = {}
+        if (path === '/api/status') {
+          statusCalls += 1
+          payload = statusCalls === 1 ? { auth: { required: true } } : { auth: { required: false } }
+        } else if (method === 'POST' && path === '/api/login') {
+          payload = { token: 'tok123', directLogin: true }
+        } else if (method === 'GET' && path === '/api/libraries') {
+          payload = { libraries: [] }
+        } else if (method === 'GET' && path === '/api/scans/current/report') {
+          payload = { hint: 'no scan' }
+        }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+      })
+    )
+    renderApp()
+
+    expect(await screen.findByPlaceholderText('Panel password')).toBeInTheDocument()
+    expect(screen.queryByText('Start Scan')).not.toBeInTheDocument()
+
+    await userEvent.type(screen.getByPlaceholderText('Panel password'), 'secret')
+    await userEvent.click(screen.getByText('Log in'))
+
+    expect(await screen.findByText('Start Scan')).toBeInTheDocument()
+    expect(await screen.findByText('Log out')).toBeInTheDocument()
   })
 })

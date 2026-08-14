@@ -186,6 +186,30 @@ Current REST endpoints:
 
 Legacy compatibility endpoints still exist under `/runs`, but new integrations should use `/scans`.
 
+## Web UI
+
+A React single-page app for the scan -> review -> confirm workflow, served by
+the UI server on port `18329` (`WEB_UI_ENABLED=true`). The UI talks to the
+backend through native `/api` REST routes on the UI server (no MCP round-trip):
+
+- `GET /api/status` — service info + `auth.required`.
+- `GET /api/libraries` — Jellyfin library list.
+- `POST /api/libraries/{name}/scan` — trigger a library scan.
+- `POST /api/scans` — create a scan.
+- `GET /api/scans/{scan_id}/progress` and `/report` (`current` variants exist) — poll + report.
+- `PATCH /api/scans/current/items` — edit target paths.
+- `POST /api/scans/current/confirm` — start the move.
+- `GET /api/scans/{scan_id}/confirm-progress` — poll the move.
+- `DELETE /api/scans/current/items` — delete source files.
+
+Set `UI_PANEL_PASSWORD` to protect the panel. When set, `/api` routes (except
+`/api/status`, `/api/login`, and static assets) require a Bearer token from
+`POST /api/login`; the UI shows a login screen and stores the token in
+`localStorage`. Leave it empty to keep the panel open.
+
+Build/update the UI bundle from `app/ui/react` with `npm run build`, then
+`docker restart jellysort`.
+
 ## MCP
 
 List tools:
@@ -308,6 +332,9 @@ Important variables from `.env.example`:
 | `DOWNLOAD_ROOTS` | Yes | Comma-separated download roots |
 | `MOVIE_ROOTS` | Yes | Comma-separated movie roots, optional `::description` |
 | `SERIES_ROOTS` | Yes | Comma-separated series roots, optional `::description` |
+| `WEB_UI_ENABLED` | No | Enable the web UI server on port 18329 |
+| `WEB_UI_PORT` | No | Web UI port (default `18329`) |
+| `UI_PANEL_PASSWORD` | No | Panel password; when set, the web UI requires login |
 
 ## Development
 

@@ -13,7 +13,7 @@ export default defineConfig(({ command }) => ({
   server: {
     port: 5173,
     proxy: {
-      '/mcp': {
+      '/api': {
         target: 'http://localhost:18329',
         changeOrigin: true,
       },

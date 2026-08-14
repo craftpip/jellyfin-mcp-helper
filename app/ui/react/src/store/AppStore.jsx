@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useReducer, useRef } from 'react'
-import { mcpCall, mcpListTools } from '../mcp/mcpClient.js'
+import { apiDelete, apiGet, apiPatch, apiPost, getAuthToken, setAuthToken } from '../api/apiClient.js'
 import { computePathSync, defaultSelection, groupItems, isCrossDriveItem, mapReportItems } from '../utils/report.js'
+import { buildTransferQueue, deriveTransferQueue, TRANSFER_DONE_REMOVE_MS } from '../utils/transfer.js'
 
 const AppStoreContext = createContext(null)
 
@@ -10,25 +11,29 @@ const LOG_LIMIT = 1000
 const initialState = {
   connStatus: 'connecting',
   connMessage: 'connecting...',
+  authRequired: false,
+  authed: false,
   jellyfinLibraries: [],
   libraryScanning: null,
   scanId: null,
   scanRunning: false,
   scanProgress: null,
+  reportLoading: false,
   reportVisible: false,
   reportAll: [],
   reportSummary: null,
   currentItems: [],
   reportGroups: [],
-  currentFilter: 'all',
-  rowLimit: 100,
   selectedIds: [],
   expandedGroups: [],
   confirmActive: false,
   confirmButtonLabel: 'Confirm Selected',
   confirmModal: { open: false, itemIds: [], label: '', progress: null },
   logEntries: [],
+  logsVisible: false,
   toasts: [],
+  transferQueue: [],
+  transferSummary: null,
 }
 
 function toggleInList(list, value) {
@@ -39,6 +44,8 @@ function reducer(state, action) {
   switch (action.type) {
     case 'SET_CONN':
       return { ...state, connStatus: action.status, connMessage: action.message }
+    case 'SET_AUTH':
+      return { ...state, authRequired: action.authRequired, authed: action.authed }
     case 'SET_LIBRARIES':
       return { ...state, jellyfinLibraries: action.libraries }
     case 'SET_LIBRARY_SCANNING':
@@ -49,6 +56,8 @@ function reducer(state, action) {
       return { ...state, scanRunning: action.scanRunning }
     case 'SET_SCAN_PROGRESS':
       return { ...state, scanProgress: action.progress }
+    case 'SET_REPORT_LOADING':
+      return { ...state, reportLoading: action.reportLoading }
     case 'SET_CONFIRM_ACTIVE':
       return { ...state, confirmActive: action.confirmActive }
     case 'SET_CONFIRM_BUTTON_LABEL':
@@ -56,23 +65,29 @@ function reducer(state, action) {
     case 'SET_CONFIRM_MODAL':
       return { ...state, confirmModal: action.modal }
     case 'SET_REPORT':
-      return { ...state, ...action.payload }
+      return { ...state, ...action.payload, reportLoading: false }
     case 'SET_SELECTION':
       return { ...state, selectedIds: action.selectedIds }
     case 'SET_ITEMS':
       return { ...state, currentItems: action.currentItems, reportGroups: action.reportGroups }
-    case 'SET_FILTER':
-      return { ...state, currentFilter: action.filter }
     case 'TOGGLE_GROUP':
       return { ...state, expandedGroups: toggleInList(state.expandedGroups, action.gid) }
     case 'SET_GROUPS_EXPANDED':
       return { ...state, expandedGroups: action.list }
     case 'ADD_LOG':
       return { ...state, logEntries: [...state.logEntries, action.entry].slice(-LOG_LIMIT) }
+    case 'SET_LOGS_VISIBLE':
+      return { ...state, logsVisible: action.visible }
     case 'ADD_TOAST':
       return { ...state, toasts: [...state.toasts, action.toast] }
     case 'REMOVE_TOAST':
       return { ...state, toasts: state.toasts.filter((t) => t.id !== action.id) }
+    case 'SET_TRANSFER_QUEUE':
+      return { ...state, transferQueue: action.queue }
+    case 'SET_TRANSFER_SUMMARY':
+      return { ...state, transferSummary: action.summary }
+    case 'REMOVE_TRANSFER_ITEM':
+      return { ...state, transferQueue: state.transferQueue.filter((t) => t.id !== action.id) }
     default:
       return state
   }
@@ -84,7 +99,8 @@ export function AppStoreProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState)
   const stateRef = useRef(state)
   stateRef.current = state
-  const timers = useRef({ scanPoll: null, confirmPoll: null, paste: null })
+  const timers = useRef({ scanPoll: null, confirmPoll: null, paste: null, transferRemoval: {} })
+  const confirmStateRef = useRef({ completed: 0, failed: 0 })
   const didInit = useRef(false)
 
   // ---- feedback primitives ----
@@ -98,6 +114,10 @@ export function AppStoreProvider({ children }) {
     dispatch({ type: 'ADD_LOG', entry: { msg, type } })
   }
 
+  function toggleLogs() {
+    dispatch({ type: 'SET_LOGS_VISIBLE', visible: !stateRef.current.logsVisible })
+  }
+
   async function copyText(text) {
     try {
       await navigator.clipboard.writeText(text)
@@ -107,13 +127,25 @@ export function AppStoreProvider({ children }) {
     }
   }
 
+  // ---- transfer queue (bottom-right copy progress toasts) ----
+  function scheduleTransferRemovals(queue) {
+    const now = Date.now()
+    queue.forEach((t) => {
+      if ((t.state !== 'done' && t.state !== 'failed') || !t.doneAt) return
+      if (timers.current.transferRemoval[t.id]) return
+      const delay = Math.max(0, TRANSFER_DONE_REMOVE_MS - (now - t.doneAt))
+      timers.current.transferRemoval[t.id] = setTimeout(() => {
+        delete timers.current.transferRemoval[t.id]
+        dispatch({ type: 'REMOVE_TRANSFER_ITEM', id: t.id })
+      }, delay)
+    })
+  }
+
   // ---- report rendering ----
   function renderReport(report) {
     const all = mapReportItems(report)
     const s = report.summary || {}
-    const limit = stateRef.current.rowLimit > 0 ? stateRef.current.rowLimit : all.length
-    const sliced = all.slice(0, limit)
-    const withLive = sliced.map((i) => ({ ...i, _liveTarget: i.targetPath }))
+    const withLive = all.map((i) => ({ ...i, _liveTarget: i.targetPath }))
     const groups = groupItems(withLive)
     dispatch({
       type: 'SET_REPORT',
@@ -123,7 +155,6 @@ export function AppStoreProvider({ children }) {
         reportSummary: s,
         currentItems: withLive,
         reportGroups: groups,
-        currentFilter: 'all',
         selectedIds: defaultSelection(withLive),
         expandedGroups: groups.map((g, gi) => 'group-' + gi),
         scanId: s.scan_id || stateRef.current.scanId,
@@ -133,8 +164,11 @@ export function AppStoreProvider({ children }) {
 
   async function fetchReport() {
     const scanId = stateRef.current.scanId
+    if (!stateRef.current.reportVisible) {
+      dispatch({ type: 'SET_REPORT_LOADING', reportLoading: true })
+    }
     try {
-      const result = await mcpCall('get move new downloads scan report', scanId ? { scanId } : {})
+      const result = await apiGet('/scans/current/report')
       if (!result || result.hint) {
         if (scanId) log(result?.hint || 'No scan report available', 'warn')
         dispatch({ type: 'SET_SCAN_ID', scanId: null })
@@ -143,6 +177,7 @@ export function AppStoreProvider({ children }) {
         return
       }
       if (result.progress) {
+        dispatch({ type: 'SET_REPORT_LOADING', reportLoading: false })
         log('Scan is still running — check progress first', 'warn')
         return
       }
@@ -151,28 +186,98 @@ export function AppStoreProvider({ children }) {
       renderReport(result)
       log('Report loaded — ' + (result.summary?.action_required || 0) + ' actions pending', 'good')
     } catch (e) {
+      if (handleApiError(e)) return
+      dispatch({ type: 'SET_REPORT_LOADING', reportLoading: false })
       log('Report error: ' + e.message, 'err')
       toast('Report error: ' + e.message, 'err')
     }
   }
 
+  // ---- auth helpers ----
+  function handleApiError(e) {
+    if (e.status === 401) {
+      setAuthToken('')
+      dispatch({ type: 'SET_AUTH', authRequired: true, authed: false })
+      dispatch({ type: 'SET_CONN', status: 'connected', message: 'login required' })
+      toast('Session expired — please log in', 'warn')
+      return true
+    }
+    return false
+  }
+
+  async function login(password) {
+    try {
+      const res = await apiPost('/login', { password })
+      setAuthToken(res.token)
+      dispatch({ type: 'SET_AUTH', authRequired: true, authed: true })
+      dispatch({ type: 'SET_CONN', status: 'connected', message: 'connected' })
+      toast(res.directLogin ? 'Logged in' : 'Login successful', 'good')
+      try {
+        await loadLibraries()
+      } catch (e) {
+        /* library load is best-effort; the panel still works */
+      }
+    } catch (e) {
+      setAuthToken('')
+      log('Login failed: ' + e.message, 'err')
+      toast('Login failed: ' + e.message, 'err')
+      throw e
+    }
+  }
+
+  async function logout() {
+    try {
+      await apiPost('/logout', {})
+    } catch (e) {
+      /* token may already be invalid */
+    }
+    setAuthToken('')
+    dispatch({ type: 'SET_AUTH', authRequired: true, authed: false })
+  }
+
+  async function loadLibraries() {
+    const libs = await apiGet('/libraries')
+    const libraries = libs.libraries || []
+    dispatch({ type: 'SET_LIBRARIES', libraries })
+    log('Loaded ' + libraries.length + ' libraries', 'good')
+    fetchReport()
+  }
+
   // ---- connection ----
   async function checkConnection() {
     try {
-      const tools = await mcpListTools()
-      if (tools.length) {
-        dispatch({ type: 'SET_CONN', status: 'connected', message: 'connected (' + tools.length + ' tools)' })
-        log('Connected — found ' + tools.length + ' MCP tools', 'good')
+      const st = await apiGet('/status')
+      const required = !!(st.auth?.required || st.auth_required)
+      if (required && !getAuthToken()) {
+        dispatch({ type: 'SET_AUTH', authRequired: true, authed: false })
+        dispatch({ type: 'SET_CONN', status: 'connected', message: 'login required' })
+        log('Login required to view the panel', 'warn')
+        return
+      }
+      if (required) {
+        // Token already stored (e.g. page reload) — validate it against a protected route.
         try {
-          const libs = await mcpCall('get available jellyfin libraries list')
-          const libraries = libs.libraries || []
-          dispatch({ type: 'SET_LIBRARIES', libraries })
-          log('Loaded ' + libraries.length + ' libraries', 'good')
+          const libs = await apiGet('/libraries')
+          dispatch({ type: 'SET_AUTH', authRequired: true, authed: true })
+          dispatch({ type: 'SET_LIBRARIES', libraries: libs.libraries || [] })
+          dispatch({ type: 'SET_CONN', status: 'connected', message: 'connected' })
           fetchReport()
+          return
         } catch (e) {
-          log('Could not load libraries: ' + e.message, 'warn')
+          if (e.status === 401) {
+            setAuthToken('')
+            dispatch({ type: 'SET_AUTH', authRequired: true, authed: false })
+            dispatch({ type: 'SET_CONN', status: 'connected', message: 'login required' })
+            log('Login required to view the panel', 'warn')
+            return
+          }
+          throw e
         }
       }
+      dispatch({ type: 'SET_AUTH', authRequired: false, authed: true })
+      dispatch({ type: 'SET_CONN', status: 'connected', message: 'connected' })
+      log('Connected to the JellySort API', 'good')
+      await loadLibraries()
     } catch (e) {
       dispatch({ type: 'SET_CONN', status: 'error', message: 'error: ' + e.message })
       log('Connection failed: ' + e.message, 'err')
@@ -184,7 +289,7 @@ export function AppStoreProvider({ children }) {
     log('Triggering Jellyfin library scan for: ' + name, 'info')
     toast('Scanning ' + name + '...', 'info')
     try {
-      const result = await mcpCall('trigger jellyfin library scan', { libraryName: name })
+      const result = await apiPost('/libraries/scan', { libraryName: name })
       log('Library scan triggered: ' + (result.message || ''), 'good')
       toast('Scan triggered for ' + name, 'good')
     } catch (e) {
@@ -199,6 +304,7 @@ export function AppStoreProvider({ children }) {
   async function startScan() {
     if (stateRef.current.scanRunning || stateRef.current.confirmActive) return
     dispatch({ type: 'SET_SCAN_RUNNING', scanRunning: true })
+    dispatch({ type: 'SET_REPORT_LOADING', reportLoading: false })
     log('Starting scan...', 'info')
     if (timers.current.scanPoll) clearTimeout(timers.current.scanPoll)
     dispatch({
@@ -210,7 +316,7 @@ export function AppStoreProvider({ children }) {
       },
     })
     try {
-      const result = await mcpCall('move new downloads scan')
+      const result = await apiPost('/scans', {})
       const scanId = result.scan_id || null
       dispatch({ type: 'SET_SCAN_ID', scanId })
       log('Scan started! ID: ' + scanId + ' — ' + (result.message || ''), 'good')
@@ -230,10 +336,7 @@ export function AppStoreProvider({ children }) {
 
   async function pollScanProgress() {
     try {
-      const result = await mcpCall(
-        'get move new downloads scan progress',
-        stateRef.current.scanId ? { scanId: stateRef.current.scanId } : {}
-      )
+      const result = await apiGet('/scans/current/progress')
       if (!result || result.hint) {
         log(result?.hint || 'No active scan found', 'warn')
         dispatch({ type: 'SET_SCAN_PROGRESS', progress: null })
@@ -250,6 +353,7 @@ export function AppStoreProvider({ children }) {
 
       if (result.status === 'completed') {
         dispatch({ type: 'SET_SCAN_RUNNING', scanRunning: false })
+        dispatch({ type: 'SET_REPORT_LOADING', reportLoading: true })
         toast('Scan completed — loading report...', 'good')
         dispatch({ type: 'SET_SCAN_PROGRESS', progress: null })
         setTimeout(fetchReport, 500)
@@ -259,31 +363,14 @@ export function AppStoreProvider({ children }) {
       }
     } catch (e) {
       log('Progress error: ' + e.message, 'err')
+      if (stateRef.current.scanRunning) {
+        if (timers.current.scanPoll) clearTimeout(timers.current.scanPoll)
+        timers.current.scanPoll = setTimeout(pollScanProgress, POLL_INTERVAL_MS)
+      }
     }
   }
 
   // ---- report controls ----
-  function setFilter(key) {
-    dispatch({ type: 'SET_FILTER', filter: key })
-  }
-
-  function setRowLimit(value) {
-    const items = stateRef.current.reportAll
-    const sliced = value > 0 ? items.slice(0, value) : items
-    const withLive = sliced.map((i) => ({ ...i, _liveTarget: i.targetPath }))
-    const groups = groupItems(withLive)
-    dispatch({
-      type: 'SET_REPORT',
-      payload: {
-        currentItems: withLive,
-        reportGroups: groups,
-        selectedIds: defaultSelection(withLive),
-        expandedGroups: groups.map((g, gi) => 'group-' + gi),
-        rowLimit: value,
-      },
-    })
-  }
-
   function toggleGroup(gid) {
     dispatch({ type: 'TOGGLE_GROUP', gid })
   }
@@ -373,7 +460,7 @@ export function AppStoreProvider({ children }) {
       return
     }
     try {
-      await mcpCall('update move new downloads scan', {
+      await apiPatch('/scans/current/items', {
         scanId: stateRef.current.scanId,
         items: updates,
       })
@@ -446,6 +533,15 @@ export function AppStoreProvider({ children }) {
     try {
       dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: true })
       if (timers.current.scanPoll) clearTimeout(timers.current.scanPoll)
+      Object.values(timers.current.transferRemoval || {}).forEach(clearTimeout)
+      timers.current.transferRemoval = {}
+      confirmStateRef.current = { completed: 0, failed: 0 }
+      const queue = buildTransferQueue(itemIds, stateRef.current.currentItems)
+      dispatch({ type: 'SET_TRANSFER_QUEUE', queue })
+      dispatch({
+        type: 'SET_TRANSFER_SUMMARY',
+        summary: { processed: 0, total: itemIds.length, status: 'running', counts: {} },
+      })
       dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm running...' })
       dispatch({
         type: 'SET_CONFIRM_MODAL',
@@ -457,7 +553,7 @@ export function AppStoreProvider({ children }) {
         },
       })
       log('Confirming ' + itemIds.length + ' item(s)...', 'info')
-      const result = await mcpCall('confirm move new downloads scan', {
+      const result = await apiPost('/scans/current/confirm', {
         scanId: stateRef.current.scanId,
         itemIds,
       })
@@ -473,6 +569,8 @@ export function AppStoreProvider({ children }) {
       toast('Confirm error: ' + e.message, 'err')
       dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
       dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
+      dispatch({ type: 'SET_TRANSFER_QUEUE', queue: [] })
+      dispatch({ type: 'SET_TRANSFER_SUMMARY', summary: null })
       closeConfirmModal()
     }
   }
@@ -480,10 +578,7 @@ export function AppStoreProvider({ children }) {
   async function pollConfirmProgress() {
     if (!stateRef.current.confirmActive) return
     try {
-      const result = await mcpCall(
-        'get move new downloads confirm progress',
-        stateRef.current.scanId ? { scanId: stateRef.current.scanId } : {}
-      )
+      const result = await apiGet('/scans/current/confirm-progress')
       const p = result.processed ?? 0
       const t = result.total ?? 0
       log('Confirm progress: ' + p + '/' + t + ' (' + (result.status || 'unknown') + ')', 'info')
@@ -491,6 +586,19 @@ export function AppStoreProvider({ children }) {
         type: 'SET_CONFIRM_MODAL',
         modal: { open: true, itemIds: stateRef.current.confirmModal.itemIds, label: '', progress: result },
       })
+      const derived = deriveTransferQueue(stateRef.current.transferQueue, result, confirmStateRef.current)
+      confirmStateRef.current = derived.state
+      dispatch({ type: 'SET_TRANSFER_QUEUE', queue: derived.queue })
+      dispatch({
+        type: 'SET_TRANSFER_SUMMARY',
+        summary: {
+          processed: result.processed ?? 0,
+          total: result.total ?? 0,
+          status: result.status,
+          counts: result.counts || {},
+        },
+      })
+      scheduleTransferRemovals(derived.queue)
 
       if (result.status === 'completed' || result.status === 'idle') {
         dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
@@ -530,13 +638,13 @@ export function AppStoreProvider({ children }) {
     }
     const source = item.sourcePath || item.sourceName || ''
     const ok = window.confirm(
-      'Delete the source download file permanently?\n\n' +
+      'Delete the source file permanently?\n\n' +
         source +
-        '\n\nThe file will be removed from your downloads and skipped from the move plan. This cannot be undone.'
+        '\n\nThe file will be removed and skipped from the move plan. This cannot be undone.'
     )
     if (!ok) return
     try {
-      await mcpCall('delete move new downloads scan items', {
+      await apiDelete('/scans/current/items', {
         scanId: stateRef.current.scanId,
         itemIds: [item.confirmId],
       })
@@ -564,7 +672,7 @@ export function AppStoreProvider({ children }) {
     const ok = window.confirm('Delete ' + ids.length + ' source file(s) permanently? This cannot be undone.')
     if (!ok) return
     try {
-      await mcpCall('delete move new downloads scan items', {
+      await apiDelete('/scans/current/items', {
         scanId: stateRef.current.scanId,
         itemIds: ids,
       })
@@ -584,20 +692,23 @@ export function AppStoreProvider({ children }) {
     return () => {
       if (timers.current.scanPoll) clearTimeout(timers.current.scanPoll)
       if (timers.current.confirmPoll) clearTimeout(timers.current.confirmPoll)
+      Object.values(timers.current.transferRemoval || {}).forEach(clearTimeout)
     }
   }, [])
 
   const actions = {
     toast,
     log,
+    toggleLogs,
     copyText,
     checkConnection,
+    login,
+    logout,
+    loadLibraries,
     triggerLibraryScan,
     startScan,
     pollScanProgress,
     fetchReport,
-    setFilter,
-    setRowLimit,
     toggleGroup,
     toggleAllGroups,
     selectItem,

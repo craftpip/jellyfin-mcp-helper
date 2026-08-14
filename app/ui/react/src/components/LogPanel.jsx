@@ -10,15 +10,15 @@ export default function LogPanel() {
   }, [state.logEntries.length])
 
   return (
-    <details className="panel log-panel">
-      <summary>Log</summary>
-      <div className="log" ref={ref} style={{ marginTop: '10px' }}>
+    <div className="panel log-panel">
+      <h2>Log</h2>
+      <div className="log" ref={ref}>
         {state.logEntries.map((e, i) => (
           <div key={i} className={e.type}>
             {e.msg}
           </div>
         ))}
       </div>
-    </details>
+    </div>
   )
 }
