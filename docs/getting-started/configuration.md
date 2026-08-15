@@ -71,8 +71,8 @@ container creation).
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `WEB_UI_ENABLED` | `false` | Serve the React web UI on `WEB_UI_PORT`. |
-| `WEB_UI_PORT` | `18329` | Port the web UI server listens on. |
+| `WEB_UI_ENABLED` | `false` | Enable the React web UI. It is mounted at `/` on the MCP app, so it shares the single port `18328`. |
+| `WEB_UI_PORT` | `18329` | Deprecated — unused. The web UI shares the MCP port. |
 
 ## Derived config structures
 

@@ -34,6 +34,18 @@ export function formatConfirmPhase(phase) {
   }[phase] || 'Running'
 }
 
+// ISO timestamp → local "YYYY-MM-DD HH:MM". Returns the raw input when it
+// cannot be parsed, and '' for null/undefined.
+export function formatDateTime(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  const pad = (n) => String(n).padStart(2, '0')
+  return (
+    d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+    ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes())
+  )
+}
 export function fileName(path) {
   return path ? path.split('/').pop() : ''
 }

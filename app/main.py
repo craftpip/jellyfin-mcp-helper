@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from uuid import uuid4
 
-import uvicorn
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
+from app.core.auth import MCPUnauthorizedError, require_mcp_auth
 from app.core.config import get_config, get_settings
 from app.core.logging import configure_logging
 from app.core.version import VERSION
@@ -124,6 +123,7 @@ def _format_mcp_activity_line(
     duration_ms: int,
     status_code: int,
     client_host: str,
+    user: str | None = None,
 ) -> str:
     request_payload = _mcp_request_body(request_body)
     response_payload = _mcp_response_body(response_body)
@@ -158,6 +158,8 @@ def _format_mcp_activity_line(
     suffix_parts.append(f"HTTP {status_code}")
     if client_host != "unknown":
         suffix_parts.append(f"from {client_host}")
+    if user:
+        suffix_parts.append(f"as {user}")
 
     return f"[{timestamp}] {message} — {', '.join(suffix_parts)}"
 
@@ -217,19 +219,6 @@ def _build_recent_file_items(files: list, series_title_aliases: dict[str, str]) 
     return items
 
 
-def _start_ui_server(scan_manager, release_tracker):
-    settings = get_settings()
-    if not settings.web_ui_enabled:
-        return
-    ui_port = settings.web_ui_port
-    ui_app = create_ui_app(scan_manager, release_tracker)
-    logger.info("Web UI server starting on port %s (sharing ScanManager/ReleaseTracker)", ui_port)
-    try:
-        uvicorn.run(ui_app, host="0.0.0.0", port=ui_port, log_level="info")
-    except OSError:
-        logger.warning("Web UI port %s already in use — skipping", ui_port)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
@@ -241,13 +230,12 @@ async def lifespan(app: FastAPI):
 
     settings = get_settings()
     if settings.web_ui_enabled:
-        thread = threading.Thread(
-            target=_start_ui_server,
-            args=(app.state.scan_manager, app.state.release_tracker),
-            daemon=True,
-        )
-        thread.start()
-        logger.info("Web UI thread started on port %s", settings.web_ui_port)
+        ui_app = create_ui_app(app.state.scan_manager, app.state.release_tracker)
+        ui_app.state.scan_manager = app.state.scan_manager
+        ui_app.state.release_tracker = app.state.release_tracker
+        app.state.ui_app = ui_app
+        app.mount("/", ui_app)
+        logger.info("Web UI mounted at / on the MCP app (single port, shares ScanManager/ReleaseTracker)")
 
     try:
         client = JellyfinClient.from_env()
@@ -264,6 +252,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="JellySort", version=VERSION, lifespan=lifespan)
+
+
+@app.exception_handler(MCPUnauthorizedError)
+async def mcp_unauthorized_handler(request: Request, exc: MCPUnauthorizedError) -> JSONResponse:
+    request_id = _mcp_request_body(await request.body()).get("id")
+    return JSONResponse(
+        {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32001, "message": "unauthorized"}},
+        status_code=401,
+    )
 
 
 @app.middleware("http")
@@ -296,7 +293,8 @@ async def log_requests(request: Request, call_next):
 
     if request.url.path == "/mcp":
         response_body = b"".join([chunk async for chunk in response.body_iterator])
-        logger.info(_format_mcp_activity_line(request_body, response_body, duration_ms, response.status_code, client_host))
+        mcp_user = getattr(request.state, "mcp_user", None)
+        logger.info(_format_mcp_activity_line(request_body, response_body, duration_ms, response.status_code, client_host, mcp_user))
         return Response(
             content=response_body,
             status_code=response.status_code,
@@ -733,7 +731,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
     ]
 
-@app.post("/mcp")
+@app.post("/mcp", dependencies=[Depends(require_mcp_auth)])
 async def mcp(request: dict) -> JSONResponse:
     method = request.get("method")
     request_id = request.get("id")

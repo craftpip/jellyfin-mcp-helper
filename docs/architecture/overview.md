@@ -12,8 +12,8 @@ exposes both a JSON-RPC (MCP) API and a REST API, plus an optional web UI.
   REST endpoints.
 - Holds the MCP tool registry (`_mcp_tools()`) and dispatch/handlers.
 - Owns the long-lived `ScanManager` and `ReleaseTracker` instances.
-- Optionally starts the web UI server thread in the lifespan when
-  `WEB_UI_ENABLED=true`.
+- Mounts the web UI app at `/` in the lifespan when `WEB_UI_ENABLED=true`, so UI
+  and MCP share the single port `18328`.
 
 ### Services layer — `app/services/`
 
@@ -45,17 +45,16 @@ The processing engine, split by responsibility:
 | Port | Purpose |
 | --- | --- |
 | `18327` | Backend (uvicorn `app.main:app`) — internal. |
-| `18328` | Host-mapped port for the backend (compose maps `18328:18327`). |
-| `18329` | Web UI server (React + `/api`). |
-| `5173` | React dev server (Vite), proxies `/api` and `/mcp` → `http://localhost:18329`. |
+| `18328` | Single host-mapped port (compose maps `18328:18327`). Serves MCP (`/mcp`), the Web UI at `/`, `/settings`, `/apikeys`, and the UI's `/api/*` routes. |
+| `5173` | React dev server (Vite), proxies `/api` → `http://localhost:18328`. |
 
 ## Client interfaces
 
 1. **MCP / JSON-RPC** — the primary interface for agents (claude, opencode, etc.).
-   POST `{jsonrpc,id,method:tools/list | tools/call}` to `/mcp`.
-2. **REST** — scan endpoints under `/scans` (backend, port 18328) and `/runs`
-   (legacy), plus the Web UI's native `/api` routes on port 18329.
-3. **Web UI** — React SPA talking to the `/api` routes on the UI server
+   POST `{jsonrpc,id,method:tools/list | tools/call}` to `/mcp` on port 18328.
+2. **REST** — scan endpoints under `/scans` (backend) and `/runs` (legacy),
+   plus the Web UI's native `/api` routes — all on port 18328.
+3. **Web UI** — React SPA talking to the `/api` routes on the same server
    (optionally behind `UI_PANEL_PASSWORD` auth).
 
 ## Runtime state on disk

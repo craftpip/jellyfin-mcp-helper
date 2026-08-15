@@ -221,17 +221,14 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems }) {
             <button className="danger small" style={{ marginLeft: '8px' }} onClick={() => actions.deleteSelectedSkipped(gi)}>
               Delete Selected
             </button>
+          ) : hasPathEdits ? (
+            <button className="primary small" style={{ marginLeft: '8px' }} onClick={() => actions.applyGroupTargetEdits(gi)}>
+              Update Paths
+            </button>
           ) : (
-            <>
-              {hasPathEdits && (
-                <button className="primary small" style={{ marginLeft: '8px' }} onClick={() => actions.applyGroupTargetEdits(gi)}>
-                  Update Paths
-                </button>
-              )}
-              <button className="warn small" onClick={() => actions.confirmGroup(gi)}>
-                Confirm
-              </button>
-            </>
+            <button className="warn small" onClick={() => actions.confirmGroup(gi)}>
+              Confirm
+            </button>
           )}
         </div>
         <table>

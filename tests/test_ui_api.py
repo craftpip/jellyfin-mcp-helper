@@ -208,3 +208,84 @@ class TestScanLifecycle:
 
             bad_scan = client.post("/api/libraries/scan", json={})
             assert bad_scan.status_code == 400
+
+
+class TestAdminEnvEndpoints:
+    def test_list_env_requires_auth(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("UI_PANEL_PASSWORD", "changeme")
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            assert client.get("/api/admin/env").status_code == 401
+            assert client.get("/api/admin/api-keys").status_code == 401
+
+    def test_list_env_returns_spec(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            res = client.get("/api/admin/env")
+            assert res.status_code == 200
+            body = res.json()
+            assert "spec" in body and "saved" in body and "effective" in body and "pending" in body
+            keys = {e["key"] for e in body["spec"]}
+            assert "MOVIE_ROOTS" in keys
+            assert "MCP_ALLOW_UNAUTHENTICATED" in keys
+
+    def test_update_env_rejects_unknown(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            res = client.post("/api/admin/env", json={"updates": {"NOPE": "x"}})
+            assert res.status_code == 400
+            assert "unknown setting" in res.json()["detail"]
+
+    def test_update_env_requires_updates(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            res = client.post("/api/admin/env", json={})
+            assert res.status_code == 400
+            assert "updates" in res.json()["detail"]
+
+
+class TestAdminApiKeyEndpoints:
+    def test_full_crud_flow(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MCP_KEYS_FILE", str(tmp_path / "keys.json"))
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            created = client.post("/api/admin/api-keys", json={"name": "test-agent"})
+            assert created.status_code == 200
+            body = created.json()
+            assert body["name"] == "test-agent"
+            assert body["key"].startswith("jsort_")
+            assert "key_hash" not in body
+            key_id = body["id"]
+
+            listed = client.get("/api/admin/api-keys").json()
+            assert [k["id"] for k in listed["keys"]] == [key_id]
+            assert "key_hash" not in listed["keys"][0]
+
+            toggled = client.patch(f"/api/admin/api-keys/{key_id}", json={"enabled": False})
+            assert toggled.status_code == 200
+            assert not client.get("/api/admin/api-keys").json()["keys"][0]["enabled"]
+
+            deleted = client.delete(f"/api/admin/api-keys/{key_id}")
+            assert deleted.status_code == 200
+            assert client.get("/api/admin/api-keys").json()["keys"] == []
+
+    def test_missing_name_rejected(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            res = client.post("/api/admin/api-keys", json={"name": "  "})
+            assert res.status_code == 400
+
+    def test_unknown_key_404(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            assert client.patch("/api/admin/api-keys/k_missing", json={"enabled": False}).status_code == 404
+            assert client.delete("/api/admin/api-keys/k_missing").status_code == 404
+
+    def test_toggle_requires_enabled(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MCP_KEYS_FILE", str(tmp_path / "keys.json"))
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            created = client.post("/api/admin/api-keys", json={"name": "a"}).json()
+            res = client.patch(f"/api/admin/api-keys/{created['id']}", json={})
+            assert res.status_code == 400
+            assert "enabled" in res.json()["detail"]

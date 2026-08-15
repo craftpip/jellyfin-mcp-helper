@@ -14,6 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import get_config, get_settings
 from app.core.version import VERSION
 from app.models.schemas import ScanPlan, ScanRequest
+from app.services.api_key_manager import ApiKeyManager
+from app.services.env_manager import list_env, update_env
 from app.services.jellyfin import JellyfinClient
 from app.services.presenters import (
     format_confirm_progress,
@@ -145,6 +147,12 @@ def create_ui_app(
     async def index():
         return _serve_react()
 
+    @ui_app.get("/scan")
+    @ui_app.get("/settings")
+    @ui_app.get("/apikeys")
+    async def spa_page():
+        return _serve_react()
+
     @ui_app.get("/react")
     async def react_redirect():
         return RedirectResponse(url="/", status_code=308)
@@ -179,6 +187,59 @@ def create_ui_app(
         if not token and x_panel_token:
             token = x_panel_token.strip()
         logout(token)
+        return {"ok": True}
+
+    # ── admin: environment settings (Part E) ────────────────────────
+    @ui_app.get("/api/admin/env", dependencies=[Depends(require_panel_auth)])
+    async def admin_env():
+        return list_env()
+
+    @ui_app.post("/api/admin/env", dependencies=[Depends(require_panel_auth)])
+    async def admin_env_update(payload: dict | None = None):
+        payload = payload or {}
+        updates = payload.get("updates")
+        if not isinstance(updates, dict):
+            raise HTTPException(status_code=400, detail="updates is required and must be an object")
+        try:
+            return update_env(updates)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    # ── admin: API keys (Part F) ────────────────────────────────────
+    @ui_app.get("/api/admin/api-keys", dependencies=[Depends(require_panel_auth)])
+    async def admin_api_keys():
+        return {"keys": ApiKeyManager().list_keys()}
+
+    @ui_app.post("/api/admin/api-keys", dependencies=[Depends(require_panel_auth)])
+    async def admin_api_key_create(payload: dict | None = None):
+        payload = payload or {}
+        name = payload.get("name")
+        if not name or not str(name).strip():
+            raise HTTPException(status_code=400, detail="name is required")
+        try:
+            return ApiKeyManager().create_key(
+                name=str(name),
+                user=payload.get("user") or "default",
+                scopes=payload.get("scopes"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @ui_app.patch("/api/admin/api-keys/{key_id}", dependencies=[Depends(require_panel_auth)])
+    async def admin_api_key_toggle(key_id: str, payload: dict | None = None):
+        payload = payload or {}
+        if "enabled" not in payload:
+            raise HTTPException(status_code=400, detail="enabled is required")
+        manager = ApiKeyManager()
+        if not manager.set_enabled(key_id, bool(payload["enabled"])):
+            raise HTTPException(status_code=404, detail="key not found")
+        return {"ok": True}
+
+    @ui_app.delete("/api/admin/api-keys/{key_id}", dependencies=[Depends(require_panel_auth)])
+    async def admin_api_key_delete(key_id: str):
+        manager = ApiKeyManager()
+        if not manager.delete_key(key_id):
+            raise HTTPException(status_code=404, detail="key not found")
         return {"ok": True}
 
     # ── Jellyfin libraries ─────────────────────────────────────────
@@ -385,4 +446,4 @@ def create_ui_app(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(create_ui_app(), host="0.0.0.0", port=18329)
+    uvicorn.run(create_ui_app(), host="0.0.0.0", port=18328)

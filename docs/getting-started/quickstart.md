@@ -63,8 +63,7 @@ Current compose example (see [deployment/docker.md](../deployment/docker.md)):
 services:
   jellysort:
     ports:
-      - "18328:18327"   # backend / MCP
-      - "18329:18329"   # web UI
+      - "18328:18327"   # single port: MCP (/mcp) + Web UI (/, /settings, /api/*)
     volumes:
       - /path/to/downloads1:/media1
       - /path/to/downloads2:/media2

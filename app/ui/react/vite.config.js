@@ -1,11 +1,10 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-export default defineConfig(({ command }) => ({
+export default defineConfig({
   plugins: [react()],
-  // Dev uses absolute asset URLs; the production build uses relative URLs so the
-  // bundle works both at /react (during migration) and / (final swap).
-  base: command === 'build' ? './' : '/',
+  // Absolute asset URLs so the bundle loads on any route (/ , /settings, /apikeys).
+  base: '/',
   build: {
     outDir: '../react-dist',
     emptyOutDir: true,
@@ -14,7 +13,7 @@ export default defineConfig(({ command }) => ({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:18329',
+        target: 'http://localhost:18328',
         changeOrigin: true,
       },
     },
@@ -25,4 +24,4 @@ export default defineConfig(({ command }) => ({
     setupFiles: './src/test/setup.js',
     include: ['src/**/*.{test,spec}.{js,jsx}'],
   },
-}))
+})

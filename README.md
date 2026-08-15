@@ -188,9 +188,11 @@ Legacy compatibility endpoints still exist under `/runs`, but new integrations s
 
 ## Web UI
 
-A React single-page app for the scan -> review -> confirm workflow, served by
-the UI server on port `18329` (`WEB_UI_ENABLED=true`). The UI talks to the
-backend through native `/api` REST routes on the UI server (no MCP round-trip):
+A React single-page app for the scan -> review -> confirm workflow, enabled via
+`WEB_UI_ENABLED=true`. The UI is mounted at `/` on the MCP app, so it is served
+on the **same port as MCP (`18328`)** — `http://host:18328/`, `/settings`,
+`/apikeys`, and the MCP endpoint `http://host:18328/mcp` all share one port.
+The UI talks to the backend through native `/api` REST routes (no MCP round-trip):
 
 - `GET /api/status` — service info + `auth.required`.
 - `GET /api/libraries` — Jellyfin library list.
@@ -332,8 +334,8 @@ Important variables from `.env.example`:
 | `DOWNLOAD_ROOTS` | Yes | Comma-separated download roots |
 | `MOVIE_ROOTS` | Yes | Comma-separated movie roots, optional `::description` |
 | `SERIES_ROOTS` | Yes | Comma-separated series roots, optional `::description` |
-| `WEB_UI_ENABLED` | No | Enable the web UI server on port 18329 |
-| `WEB_UI_PORT` | No | Web UI port (default `18329`) |
+| `WEB_UI_ENABLED` | No | Enable the web UI (served on the same port as MCP, 18328) |
+| `WEB_UI_PORT` | No | Deprecated — unused. The web UI shares the MCP port |
 | `UI_PANEL_PASSWORD` | No | Panel password; when set, the web UI requires login |
 
 ## Development

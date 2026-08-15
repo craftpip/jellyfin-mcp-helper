@@ -1,6 +1,6 @@
 *, *::before, *::after { box-sizing: border-box; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Noto Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   margin: 0 auto; padding: 20px; max-width: 1600px;
   background: #0d1117; color: #c9d1d9;
 }
@@ -15,6 +15,9 @@ h1 { margin: 0 0 4px 0; font-size: 1.4rem; }
 }
 .top-actions button {
   height: 28px; padding: 0 12px; display: inline-flex; align-items: center;
+}
+.top-actions button.active {
+  border-color: #f78166; color: #e6edf3;
 }
 .top-actions .dropdown-toggle .caret { font-size: 0.7rem; color: #8b949e; }
 .dropdown { position: relative; display: inline-block; }
@@ -360,7 +363,7 @@ td input[type="checkbox"] { accent-color: #238636; }
 }
 a.search-btn {
   font-size: 0.78rem; color: #58a6ff; text-decoration: underline; cursor: pointer;
-  white-space: nowrap; line-height: 1.4; flex-shrink: 0;
+  white-space: nowrap; line-height: 1.4; flex-shrink: 0; margin-right: 10px;
   display: inline-flex; align-items: center; gap: 4px;
 }
 a.search-btn:hover { color: #79c0ff; }
@@ -475,6 +478,102 @@ a.search-btn svg { flex: none; }
 
 .hidden { display: none !important; }
 .mt-8 { margin-top: 8px; }
+
+/* ---- admin pages (settings / api keys) ---- */
+.page-nav {
+  display: flex; gap: 4px; border-bottom: 1px solid #30363d;
+  margin: -8px 0 16px; padding: 0 2px;
+}
+.page-nav button {
+  background: none; border: none; border-bottom: 2px solid transparent;
+  border-radius: 0; padding: 8px 14px; color: #8b949e; font-size: 0.85rem;
+  cursor: pointer;
+}
+.page-nav button:hover { color: #e6edf3; }
+.page-nav button.active { color: #e6edf3; border-bottom-color: #f78166; }
+
+.admin-page { max-width: 1080px; }
+.admin-header { margin-bottom: 12px; }
+.admin-header h2 { margin: 0 0 4px 0; font-size: 1.2rem; color: #e6edf3; }
+.admin-header .hint { margin: 0; }
+
+.env-grid { display: flex; flex-direction: column; gap: 10px; }
+.env-row {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; padding: 8px 10px; background: #0d1117;
+  border: 1px solid #21262d; border-radius: 6px;
+}
+.env-meta { flex: 1; min-width: 0; }
+.env-key {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-family: monospace; font-size: 0.85rem; color: #e6edf3;
+}
+.env-desc { color: #8b949e; font-size: 0.78rem; margin-top: 2px; line-height: 1.4; }
+.env-input { flex: 0 1 320px; display: flex; align-items: center; }
+.env-input input[type="text"], .env-input input[type="password"], .env-input input[type="number"] { width: 100%; }
+.env-input input[type="checkbox"] { width: 18px; height: 18px; accent-color: #238636; }
+.env-badge {
+  font-family: 'Noto Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 0.68rem; padding: 1px 7px; border-radius: 10px; font-weight: 500;
+}
+.env-badge.live { background: #1b3827; color: #3fb950; }
+.env-badge.recreate { background: #3d2715; color: #d29922; }
+.env-badge.pending { background: #1f3a5f; color: #58a6ff; }
+.secret-field { display: flex; gap: 6px; align-items: center; width: 100%; }
+.secret-field input { flex: 1; }
+.secret-field button { flex: none; white-space: nowrap; }
+.admin-footer {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 12px 0 40px;
+}
+.code-block {
+  background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+  padding: 10px 12px; font-size: 0.78rem; color: #79c0ff;
+  overflow-x: auto; white-space: pre;
+}
+.key-display {
+  display: flex; align-items: center; gap: 10px;
+  background: #0d1117; border: 1px solid #238636; border-radius: 6px;
+  padding: 10px 12px; margin: 12px 0;
+}
+.key-display code {
+  flex: 1; min-width: 0; word-break: break-all; font-size: 0.85rem;
+  color: #3fb950;
+}
+.key-display button { flex: none; }
+.admin-page table th, .admin-page table td { padding: 6px 10px; }
+.admin-page .panel h2 { font-size: 0.95rem; }
+.keys-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.keys-header h2 { margin: 0; }
+.keys-list { display: flex; flex-direction: column; gap: 10px; }
+.keys-row {
+  display: flex; flex-direction: column; gap: 8px;
+  background: #0d1117; border: 1px solid #21262d; border-radius: 6px;
+  padding: 10px 12px;
+}
+.keys-row-top { display: flex; align-items: center; gap: 12px; }
+.keys-row-bottom { display: flex; align-items: center; gap: 12px; }
+.key-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #e6edf3; font-size: 0.85rem; font-weight: 600;
+}
+.key-created { color: #8b949e; font-size: 0.75rem; white-space: nowrap; }
+.key-masked {
+  flex: 1; min-width: 0; word-break: break-all;
+  font-family: monospace; font-size: 0.82rem; color: #79c0ff;
+  background: #161b22; border: 1px solid #21262d; border-radius: 4px;
+  padding: 4px 8px;
+}
+.key-used { color: #8b949e; font-size: 0.75rem; white-space: nowrap; }
+.key-used.never { color: #6e7681; font-style: italic; }
+.modal label { display: block; margin-bottom: 6px; color: #8b949e; font-size: 0.82rem; }
+.modal-sm { max-width: 380px; }
+.modal input[type="text"] {
+  width: 100%; box-sizing: border-box; padding: 8px 10px;
+  background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+  color: #e6edf3; font-size: 0.9rem;
+}
+.modal input[type="text"]:focus { outline: none; border-color: #58a6ff; }
 
 /* ---- login screen ---- */
 .login-screen {

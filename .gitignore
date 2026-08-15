@@ -27,3 +27,4 @@ htmlcov/
 *.swo
 tests/tests/
 ongoing_releases.json
+mcp_keys.json

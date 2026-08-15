@@ -64,7 +64,7 @@ This folder is the complete project documentation, written from the code.
 ## At a glance
 
 - **Language / runtime:** Python 3.12 (FastAPI + uvicorn), React 18 (Vite) for the UI.
-- **Ports:** backend/MCP on `18327` (internal) / `18328` (host-mapped), web UI on `18329`.
+- **Ports:** single port — MCP (`/mcp`) and Web UI (`/`, `/settings`, `/api/*`) both on `18327` (internal) / `18328` (host-mapped).
 - **Media classification:** [guessit](https://guessit.readthedocs.io/) plus regex
   fallbacks for SxxEyy patterns, bare episodes, extras, samples, and foreign
   language episodes; optional external LLM (Ollama or OpenRouter) as an

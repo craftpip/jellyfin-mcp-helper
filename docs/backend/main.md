@@ -11,8 +11,8 @@ The `lifespan` async context manager wires up singletons at startup:
   stored on `app.state.scan_manager`.
 - `ReleaseTracker` — the local next-release store, stored on
   `app.state.release_tracker`.
-- Optional web UI thread — started when `WEB_UI_ENABLED=true`, serving
-  `app/ui/server.py`'s app on `WEB_UI_PORT`.
+- Web UI — mounted at `/` on this app when `WEB_UI_ENABLED=true`, so UI and MCP
+  share the single port `18328` (`create_ui_app(...)` from `app/ui/server.py`).
 - Jellyfin library list — fetched once and cached to augment the
   `get available jellyfin libraries list` tool description.
 

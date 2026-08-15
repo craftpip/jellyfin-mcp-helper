@@ -3,16 +3,14 @@ from __future__ import annotations
 import os
 import re
 import logging
-from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
-import json
 from difflib import SequenceMatcher
 
 logger = logging.getLogger(__name__)
 
 from app.core.config import AppConfig
-from app.models.schemas import CandidateItem, ClassificationResult, ResolvedTarget, RunLogEntry, RunState
+from app.models.schemas import CandidateItem, ClassificationResult, ResolvedTarget
 from app.services.scanner import VIDEO_EXTENSIONS, list_target_paths
 
 
@@ -310,13 +308,6 @@ class PathResolver:
             target_paths=target_paths,
             desired_name=desired_name,
         )
-        await self._log_resolution_shortlist(
-            media_kind=media_kind,
-            title=title,
-            total_candidates=len(target_paths),
-            shortlisted_count=len(shortlisted_paths),
-            shortlisted_paths=shortlisted_paths,
-        )
         if not shortlisted_paths:
             return None
 
@@ -536,41 +527,3 @@ class PathResolver:
         if classification.year:
             return f"{title} ({classification.year})"
         return title
-
-    async def _log_resolution_shortlist(
-        self,
-        media_kind: str,
-        title: str,
-        total_candidates: int,
-        shortlisted_count: int,
-        shortlisted_paths: list[str],
-    ) -> None:
-        return None
-
-    def bind_run_state(self, run_state: RunState) -> None:
-        async def shortlist_logger(
-            media_kind: str,
-            title: str,
-            total_candidates: int,
-            shortlisted_count: int,
-            shortlisted_paths: list[str],
-        ) -> None:
-            entry = RunLogEntry(
-                timestamp=datetime.now(UTC),
-                level="info",
-                event=f"ai.resolve.{media_kind}.shortlist",
-                message=f"Shortlisted {shortlisted_count} of {total_candidates} {media_kind} paths for {title}",
-                item_path=title,
-                details={
-                    "totalCandidates": total_candidates,
-                    "shortlistedCount": shortlisted_count,
-                    "shortlistedPaths": shortlisted_paths,
-                },
-            )
-            run_state.logs.append(entry)
-            run_state.updated_at = entry.timestamp
-            if run_state.log_path:
-                with Path(run_state.log_path).open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps(entry.model_dump(mode="json")) + "\n")
-
-        self._log_resolution_shortlist = shortlist_logger

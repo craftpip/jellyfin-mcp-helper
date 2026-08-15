@@ -12,16 +12,19 @@ No jellysort skill is installed in this environment yet — do not try to load o
 
 - Test: python3 -m pytest tests/
 - Rebuild after source changes: docker compose build && docker compose restart
-- Web UI: enabled via WEB_UI_ENABLED=true in .env, served on port 18329
-- MCP API: port 18328 (external), 18327 (internal)
+- Web UI: enabled via WEB_UI_ENABLED=true in .env, served on the MCP port (single port)
+- MCP API: port 18328 (external), 18327 (internal). The Web UI is mounted at `/` on the same server, so UI (``/``, `/settings`, `/apikeys`, `/api/*`) and MCP (`/mcp`) all share port 18328.
 
 ## Project Structure
 
 - app/core/config.py: settings and config models
 - app/core/logging.py: logging setup
+- app/core/auth.py: MCP auth dependency (require_mcp_auth, ADMIN_UI_TOKEN as admin key)
 - app/models/schemas.py: Pydantic models
+- app/services/api_key_manager.py: hashed MCP API-key store (state in config/mcp_keys.json)
 - app/services/classifier.py: guessit-based and regex media classification
 - app/services/download_client.py: qBittorrent MCP client
+- app/services/env_manager.py: ENV_SPEC manifest + .env read/write/reload (settings page backend)
 - app/services/jellyfin.py: Jellyfin API client
 - app/services/normalizer.py: file and folder renaming
 - app/services/ollama.py: Ollama LLM client
@@ -33,16 +36,16 @@ No jellysort skill is installed in this environment yet — do not try to load o
 - app/services/scan_manager.py: scan-plan workflow, scan then confirm
 - app/services/scanner.py: filesystem scanner
 - app/main.py: FastAPI entry point and MCP handlers
-- app/ui/server.py: Web UI FastAPI server (serves React bundle, native `/api` routes, legacy MCP proxy, panel auth)
+- app/ui/server.py: Web UI FastAPI server (serves React bundle, native `/api` routes, panel auth, `/api/admin/*` env+key endpoints); mounted at `/` on the MCP app in `main.py` so UI and MCP share one port
 - app/ui/react/: React.js web UI (Vite build, source)
 - app/ui/react-dist/: built React bundle served at `/` (`/react` and `/react/assets` are backward-compat mounts that 308-redirect/re-serve)
 - app/ui/react/src/store/AppStore.jsx: Context + useReducer store
 - app/ui/react/src/api/apiClient.js: REST API client (apiGet/Post/Patch/Delete, auth token)
-- app/ui/react/src/components/: React components (ReportPanel, ConfirmModal, PathPills, LoginScreen, etc.)
+- app/ui/react/src/components/: React components (ReportPanel, ConfirmModal, PathPills, LoginScreen, SettingsPage, ApiKeysPage, etc.)
 - app/ui/react/src/utils/report.js: pure helpers (item mapping, grouping, filters, smart path sync)
 - plans/: project plans and roadmap documents (markdown)
 - tests/: pytest test suite
-- config/: config files plus runtime state (`current_scan.json`, `ongoing_releases.json`)
+- config/: config files plus runtime state (`current_scan.json`, `ongoing_releases.json`, `mcp_keys.json`)
 - logs/: runtime logs
 - reports/: generated reports
 - .env: active configuration
@@ -56,8 +59,8 @@ No jellysort skill is installed in this environment yet — do not try to load o
 Current state: **the React app is the main UI at `/`**. Old `/react` bookmarks 308-redirect to `/`. The legacy HTML panel (`app/ui/index.html`, served at `/legacy`) has been deleted.
 
 - React source lives in `app/ui/react/` (Vite, JavaScript, no TS). `npm run build` outputs to `app/ui/react-dist/`.
-- `server.py` serves `react-dist/` as static files under `/assets` (plus backward-compat `/react/assets`) and routes `GET /` to the built `index.html`; `GET /react` redirects to `/` (308).
-- The React client calls native `/api` REST routes on the UI server (`app/ui/server.py`), which share the backend `ScanManager`/`ReleaseTracker`. The old `/mcp` JSON-RPC proxy has been **removed** — the panel is fully independent of the MCP server. Dev: `npm run dev` in `app/ui/react` with a Vite proxy to `http://localhost:18329` (`/api`).
+- `server.py` serves `react-dist/` as static files under `/assets` (plus backward-compat `/react/assets`) and routes `GET /` to the built `index.html`; `GET /react` redirects to `/` (308). `main.py` mounts this UI app at `/` on the MCP app, so UI and MCP share the single port 18328.
+- The React client calls native `/api` REST routes on the UI server (`app/ui/server.py`), which share the backend `ScanManager`/`ReleaseTracker`. The old `/mcp` JSON-RPC proxy has been **removed** — the panel is fully independent of the MCP server. Dev: `npm run dev` in `app/ui/react` with a Vite proxy to `http://localhost:18328` (`/api`).
 - Panel auth: `UI_PANEL_PASSWORD` in `.env`. When set, `/api` routes except `/api/status`, `/api/login`, and static assets require a Bearer token from `POST /api/login`; the React app shows `LoginScreen` and stores the token in `localStorage`. When empty, `GET /api/status` reports `auth.required: false` and the panel is open.
 - Frontend tests: `npm test` from `app/ui/react` (Vitest + React Testing Library, jsdom). **Run vitest via `npm test` in `app/ui/react`, never via `npx vitest` from the repo root** — the root install has no jsdom/vite config and fails confusingly.
 - After any React source change: `npm run build` in `app/ui/react`, then `docker restart jellysort` (the compose file bind-mounts `.` into `/app`, so the built `react-dist/` and edited `server.py` are picked up on restart).
@@ -428,15 +431,16 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 `fetchReport` uses a `finally` block to re-enable the "Get Report" button so it never stays disabled on error.
 
-### React UI routes: root swap, /react redirects
+### React UI routes: path-based SPA routing
 
-**Problem:** The Vite production build uses relative asset URLs (`./assets/...`). At `/` they resolve to `/assets/...`; at `/react/` (no trailing slash) they would resolve to the origin root and 404.
+**Problem:** The app used hash routing (`/#/settings`). Direct links to `/settings` returned FastAPI's `{"detail": "Not Found"}`. Relative build asset URLs (`./assets/...`) also break on nested paths.
 
-**Fix (current):** The React app is the **main UI at `/`**. In `app/ui/server.py`:
-- `/assets` and `/react/assets` both mount `react-dist/assets` (backward compat for old bookmarks).
-- `GET /` serves `react-dist/index.html`; `GET /react` and `GET /react/` 308-redirect to `/`.
+**Fix (current):** Path-based routing. The React app is the **main UI at `/`**:
+- `app/ui/react/src/store/AppStore.jsx` reads `window.location.pathname` (`pageFromPath`) and navigates with `window.history.pushState` + a `popstate` listener (no server round-trip on nav).
+- `vite.config.js` builds with `base: '/'` (absolute asset URLs) so the bundle loads on any route.
+- `app/ui/server.py`: `GET /` serves `react-dist/index.html`, and `/scan`, `/settings`, `/apikeys` serve the same SPA page (deep-link refresh). `/assets` and `/react/assets` both mount `react-dist/assets` (backward compat); `GET /react` and `GET /react/` 308-redirect to `/`.
 
-**Verification:** `curl -s -o /dev/null -w '%{http_code}' http://host:18329/react` returns 308 → `/`; `/` returns 200; `/assets/<hash>.js` returns 200.
+**Verification:** `curl -s -o /dev/null -w '%{http_code}' http://host:18328/settings` returns 200 with the React HTML; `http://host:18328/react` returns 308 → `/`; frontend tests assert `window.location.pathname` (`/apikeys`, `/`) after navigation.
 
 ### React UI tests must run via npm test in app/ui/react
 
@@ -453,6 +457,25 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 **Fix:** After making changes and before relying on them, re-verify the file content (e.g. `grep`/`cat`), rebuild React (`npm run build`), and restart the container. Keep changes small and re-appliable; re-check critical files after each `docker restart jellysort`.
 
 **Verification:** After a restart, confirm `grep react_redirect app/ui/server.py` and `grep -c 'rel="icon"' app/ui/react/index.html` still match.
+
+### MCP auth + admin pages (plan 03)
+
+**Design:** `MCP_ALLOW_UNAUTHENTICATED` defaults to `true`. When `false`, `/mcp` requests must present a valid API key (`Authorization: Bearer` or `X-API-Key`) or `ADMIN_UI_TOKEN`; the activity log line appends `as <user>`. Keys live hashed in `config/mcp_keys.json` (gitignored); the full key is returned exactly once at creation. Unauthenticated rejections are HTTP 401 with a JSON-RPC body `{code: -32001, message: "unauthorized"}` keeping the request `id`.
+
+**Key code locations:**
+- `app/core/auth.py` — `require_mcp_auth` dependency + `MCPUnauthorizedError`; handler in `app/main.py:273`.
+- `app/services/api_key_manager.py` — hashed store, atomic writes, `threading.Lock`.
+- `app/services/env_manager.py` — `ENV_SPEC` manifest drives the Settings page. `apply` classification: Jellyfin/download/MCP-UI vars are `live` (read from `os.environ` per call); model/paths/`WEB_UI_*` vars are `restart` (baked into the `ScanManager` snapshot). `update_env` validates via `Settings(**merged)`, rewrites `.env` preserving comments, and returns `{appliedLive, needsRecreate}`.
+- `app/ui/server.py` — `/api/admin/env` + `/api/admin/api-keys` (CRUD). **Routes are under `/api/admin/*`, not `/admin/*`**, because the React apiClient prepends `/api`. All admin routes use `require_panel_auth` (the UI login), not a separate token.
+- React: `TopBar.jsx` nav (Scan & Move / Settings / API Keys), `SettingsPage.jsx`, `ApiKeysPage.jsx`, page switching in `App.jsx` via `state.page`.
+
+**Live config reload:** `.env` is bind-mounted into `/app`, so Settings saves take effect on disk instantly. `reload_settings()` patches `os.environ` from `.env`, resets `_settings`, and clears `get_config` — this is what makes `live` vars work without a restart. `restart` vars need `docker compose up -d --force-recreate`.
+
+**Verification:** `python3 -m pytest tests/` (184 tests incl. `test_api_key_manager.py`, `test_mcp_auth.py`, `test_env_manager.py`, admin endpoint tests in `test_ui_api.py`). Frontend: `npm test` in `app/ui/react` (56 tests incl. `AdminPages.test.jsx`).
+
+### Test suite counts
+
+Backend `python3 -m pytest tests/` runs **184 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **56 tests**. Keep both green after changes.
 
 ## Plans
 

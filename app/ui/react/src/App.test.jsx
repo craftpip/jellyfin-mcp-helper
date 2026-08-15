@@ -41,6 +41,7 @@ const REPORT = {
 }
 
 beforeEach(() => {
+  window.history.pushState({}, '', '/')
   vi.stubGlobal(
     'fetch',
     vi.fn((url, opts) => {
@@ -131,6 +132,26 @@ describe('App integration', () => {
     expect(modal).toBeInTheDocument()
     expect(screen.getByText(/Confirm Move/)).toBeInTheDocument()
     expect(modal.closest('#confirmModal').querySelectorAll('.confirm-row').length).toBeGreaterThan(0)
+  })
+
+  it('hides the group Confirm while a path is edited and restores it after Update Paths', async () => {
+    renderApp()
+    await screen.findAllByText('Movie (2024)')
+
+    expect(screen.getAllByText('Confirm').length).toBe(2)
+
+    const input = screen.getByDisplayValue('/media1/series/Show Name (2020)/Season 01/Show Name S01E01.mkv')
+    await userEvent.clear(input)
+    await userEvent.type(input, '/media1/series/Show Name (2020)/Season 01/Show Name S01E01v2.mkv')
+
+    expect(screen.getAllByText('Confirm').length).toBe(1)
+    const updatePaths = screen.getByText('Update Paths')
+    expect(updatePaths).toBeInTheDocument()
+
+    await userEvent.click(updatePaths)
+
+    expect((await screen.findAllByText('Confirm')).length).toBe(2)
+    expect(screen.queryByText('Update Paths')).not.toBeInTheDocument()
   })
 
   it('does not flash the Start Scan button between scan completion and report load', async () => {

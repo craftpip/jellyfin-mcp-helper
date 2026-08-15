@@ -1,8 +1,10 @@
 # MCP Protocol
 
-The service speaks MCP over JSON-RPC 2.0 on `POST /mcp` (backend port `18327`,
-host-mapped to `18328`; the web UI proxies `/mcp` on `18329` to the backend).
-It is compatible with MCP clients such as Claude and opencode.
+The service speaks MCP over JSON-RPC 2.0 on `POST /mcp`. The app listens on port
+`18327` inside the container, host-mapped to `18328`. The web UI is mounted at
+`/` on the same app, so MCP (`/mcp`) and the UI (`/`, `/settings`, `/api/*`) all
+share the single port `18328`. Compatible with MCP clients such as Claude and
+opencode.
 
 ## Request/response shape
 

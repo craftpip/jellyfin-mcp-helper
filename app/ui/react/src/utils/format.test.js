@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatBytes, formatDuration, formatConfirmPhase, fileName, driveRoot, isCrossDrive, splitDrive } from './format.js'
+import { formatBytes, formatDateTime, formatDuration, formatConfirmPhase, fileName, driveRoot, isCrossDrive, splitDrive } from './format.js'
 
 describe('formatBytes', () => {
   it('formats bytes with units', () => {
@@ -36,6 +36,21 @@ describe('formatConfirmPhase', () => {
     expect(formatConfirmPhase('deleting_source')).toBe('Removing source')
     expect(formatConfirmPhase('completed')).toBe('Completed')
     expect(formatConfirmPhase('mystery')).toBe('Running')
+  })
+})
+
+describe('formatDateTime', () => {
+  it('formats ISO timestamps as local YYYY-MM-DD HH:MM', () => {
+    const iso = '2026-08-10T22:11:00+00:00'
+    const out = formatDateTime(iso)
+    expect(out).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/)
+    expect(new Date(out).getTime()).toBe(new Date(iso).getTime())
+  })
+
+  it('handles null and unparseable input', () => {
+    expect(formatDateTime(null)).toBe('')
+    expect(formatDateTime(undefined)).toBe('')
+    expect(formatDateTime('not-a-date')).toBe('not-a-date')
   })
 })
 

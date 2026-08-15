@@ -6,7 +6,8 @@
 - Installs the pinned runtime deps via pip (no cache): `uvicorn[standard]`,
   `fastapi`, `httpx`, `pydantic`, `pydantic-settings`, `guessit` (see
   `requirements.txt` for the exact pins; the Dockerfile pins are kept in sync).
-- `WORKDIR /app`; exposes `18327` (backend) and `18329` (web UI).
+- `WORKDIR /app`; exposes `18327` (the single backend port that serves both MCP
+  and the mounted web UI).
 - `CMD uvicorn app.main:app --host 0.0.0.0 --port 18327`.
 
 Note: the source is **not** copied into the image — the compose file bind-mounts
@@ -23,8 +24,7 @@ services:
     container_name: jellysort
     restart: unless-stopped
     ports:
-      - "18328:18327"   # backend / MCP
-      - "18329:18329"   # web UI
+      - "18328:18327"   # single port: MCP (/mcp) + Web UI (/, /settings, /api/*)
     env_file:
       - .env
     extra_hosts:
@@ -38,8 +38,9 @@ services:
 
 ## Key facts
 
-- **Ports:** the backend listens on `18327` inside the container and is exposed
-  on `18328`. The web UI runs on `18329` (both inside and exposed).
+- **Ports:** the app listens on `18327` inside the container and is exposed on
+  `18328`. That single port serves both MCP (`/mcp`) and the Web UI (`/`,
+  `/settings`, `/apikeys`, `/api/*`).
 - **`.env`:** passed via `env_file`, so changes require a `docker compose`
   recreate (`docker compose up -d`) rather than a plain `docker restart`.
 - **Media mounts:** each host download/library path is bind-mounted at a

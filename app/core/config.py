@@ -15,8 +15,6 @@ REPORT_DIR = BASE_DIR / "reports"
 
 
 class Settings(BaseSettings):
-    openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
-    
     # Integration toggles
     enable_download_client_check: bool = Field(default=True, alias="ENABLE_DOWNLOAD_CLIENT_CHECK")
     enable_jellyfin_integration: bool = Field(default=True, alias="ENABLE_JELLYFIN_INTEGRATION")
@@ -32,23 +30,26 @@ class Settings(BaseSettings):
     jellyfin_movie_library_name: str = Field(default="Movies", alias="JELLYFIN_MOVIE_LIBRARY_NAME")
     jellyfin_series_library_name: str = Field(default="Shows", alias="JELLYFIN_SERIES_LIBRARY_NAME")
 
-    # Model settings
-    model_provider: str = Field(default="ollama", alias="MODEL_PROVIDER")
-    model_mode: str = Field(default="external-classifier", alias="MODEL_MODE")
-    model_base_url: str | None = Field(default=None, alias="MODEL_BASE_URL")
-    model_name: str = Field(default="llama3.2:1b", alias="MODEL_NAME")
-    model_temperature: float = Field(default=0.0, alias="MODEL_TEMPERATURE")
+    # Classification / path-resolution confidence thresholds
     model_classify_confidence_threshold: float = Field(default=0.65, alias="MODEL_CLASSIFY_CONFIDENCE_THRESHOLD")
     model_path_confidence_threshold: float = Field(default=0.6, alias="MODEL_PATH_CONFIDENCE_THRESHOLD")
-    model_request_timeout_seconds: float = Field(default=120.0, alias="MODEL_REQUEST_TIMEOUT_SECONDS")
-    model_retry_attempts: int = Field(default=2, alias="MODEL_RETRY_ATTEMPTS")
 
-    # Web UI settings
+    # Web UI settings. The UI is mounted at / on the MCP app, so it shares the
+    # single MCP port. WEB_UI_PORT is deprecated/unused (kept for compat).
     web_ui_enabled: bool = Field(default=False, alias="WEB_UI_ENABLED")
     web_ui_port: int = Field(default=18329, alias="WEB_UI_PORT")
 
     # Web UI panel auth. Empty (default) = direct login, no password prompt.
     ui_panel_password: str = Field(default="", alias="UI_PANEL_PASSWORD")
+
+    # MCP access control. When true (default), all unauthenticated MCP requests
+    # pass through. When false, /mcp requests must present a valid API key from
+    # MCP_KEYS_FILE (or ADMIN_UI_TOKEN).
+    mcp_allow_unauthenticated: bool = Field(default=True, alias="MCP_ALLOW_UNAUTHENTICATED")
+    # Path to the JSON file holding hashed API keys for MCP access.
+    mcp_keys_file: str = Field(default="config/mcp_keys.json", alias="MCP_KEYS_FILE")
+    # Optional master token accepted as a valid MCP key for the "admin" user.
+    admin_ui_token: str | None = Field(default=None, alias="ADMIN_UI_TOKEN")
 
     # Paths settings
     download_roots: str = Field(default="", alias="DOWNLOAD_ROOTS")
@@ -151,42 +152,17 @@ class PathsConfig(BaseModel):
         )
 
 
-class PromptPolicy(BaseModel):
-    classify_as: list[str] = Field(default_factory=lambda: ["movie", "series", "skip"], alias="classifyAs")
-    extract_fields: list[str] = Field(
-        default_factory=lambda: ["title", "year", "season", "episode", "confidence", "reason"],
-        alias="extractFields",
-    )
-
-    model_config = {"populate_by_name": True}
-
-
 class ModelConfig(BaseModel):
-    provider: str = "ollama"
-    mode: str = "external-classifier"
-    base_url: str | None = None
-    model: str = "llama3.2:1b"
-    temperature: float = 0.0
-    prompt_policy: PromptPolicy = Field(default_factory=PromptPolicy)
     classify_confidence_threshold: float = 0.65
     path_confidence_threshold: float = 0.6
-    request_timeout_seconds: float = 120.0
-    retry_attempts: int = 2
 
     model_config = {"populate_by_name": True}
 
     @classmethod
     def from_env(cls, settings: Settings) -> "ModelConfig":
         return cls(
-            provider=settings.model_provider,
-            mode=settings.model_mode,
-            base_url=settings.model_base_url,
-            model=settings.model_name,
-            temperature=settings.model_temperature,
             classify_confidence_threshold=settings.model_classify_confidence_threshold,
             path_confidence_threshold=settings.model_path_confidence_threshold,
-            request_timeout_seconds=settings.model_request_timeout_seconds,
-            retry_attempts=settings.model_retry_attempts,
         )
 
 
@@ -218,6 +194,18 @@ def get_settings() -> Settings:
     if _settings is None:
         _settings = Settings()
     return _settings
+
+
+def reset_settings() -> None:
+    """Drop the cached settings/config so the next read re-parses .env.
+
+    Called by the env manager after live-applied variables are written to
+    os.environ, so per-request consumers (auth, JellyfinClient, model clients)
+    pick up the new values without a restart.
+    """
+    global _settings
+    _settings = None
+    get_config.cache_clear()
 
 
 @lru_cache(maxsize=1)

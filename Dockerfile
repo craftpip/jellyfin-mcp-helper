@@ -8,6 +8,5 @@ RUN pip install --no-cache-dir uvicorn[standard]==0.35.0 fastapi==0.116.1 httpx=
 WORKDIR /app
 
 EXPOSE 18327
-EXPOSE 18329
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18327"]

@@ -3,8 +3,9 @@
 ## Serving
 
 `app/ui/server.py` (`create_ui_app(scan_manager=None)`) is a small FastAPI app
-started in a thread by the backend when `WEB_UI_ENABLED=true`. It shares the
-backend `ScanManager`/`ReleaseTracker` instances:
+mounted at `/` on the MCP app in `app/main.py` when `WEB_UI_ENABLED=true`, so the
+UI and MCP share the single port `18328`. It shares the backend
+`ScanManager`/`ReleaseTracker` instances:
 
 - `GET /` → serves the built React `index.html` from `app/ui/react-dist/`
   (404 with a "React UI not built yet. Run `npm run build` in app/ui/react/."
@@ -32,7 +33,7 @@ When `UI_PANEL_PASSWORD` is non-empty, the `/api` routes (except `/api/status`,
 
 ## REST routes
 
-All are mounted under `/api` on port 18329. Requests use JSON bodies and respond
+All are mounted under `/api` on port 18328. Requests use JSON bodies and respond
 with JSON (204 for body-less success).
 
 | Method | Path | Purpose |
@@ -66,11 +67,11 @@ with JSON (204 for body-less success).
 
 `vite.config.js`:
 
-- `base: './'` for builds (relative asset URLs, so the bundle works at `/`),
-  `'/'` in dev.
+- `base: '/'` for builds (absolute asset URLs, so the bundle works at `/`,
+  `/settings`, `/apikeys`), `'/'` in dev.
 - `build.outDir: '../react-dist'`, `emptyOutDir: true`.
 - Dev server port `5173` with `/api` proxied to
-  `http://localhost:18329`.
+  `http://localhost:18328`.
 - Vitest: jsdom environment, `globals: true`, setup file `./src/test/setup.js`,
   tests co-located as `src/**/*.{test,spec}.{js,jsx}`.
 
@@ -79,7 +80,7 @@ with JSON (204 for body-less success).
 ```bash
 cd app/ui/react
 npm install
-npm run dev      # Vite dev server on :5173, /api proxied to :18329
+npm run dev      # Vite dev server on :5173, /api proxied to :18328
 npm test         # Vitest (jsdom)
 npm run build    # outputs to ../react-dist
 ```

@@ -8,11 +8,22 @@ const AppStoreContext = createContext(null)
 const POLL_INTERVAL_MS = 2000
 const LOG_LIMIT = 1000
 
+function pageFromPath() {
+  if (typeof window === 'undefined') return 'scan'
+  const match = window.location.pathname.match(/^\/(scan|settings|apikeys)(?:\/|$)/)
+  return match ? match[1] : 'scan'
+}
+
+function pathForPage(page) {
+  return page === 'scan' ? '/' : '/' + page
+}
+
 const initialState = {
   connStatus: 'connecting',
   connMessage: 'connecting...',
   authRequired: false,
   authed: false,
+  page: 'scan',
   jellyfinLibraries: [],
   libraryScanning: null,
   scanId: null,
@@ -34,6 +45,10 @@ const initialState = {
   toasts: [],
   transferQueue: [],
   transferSummary: null,
+  adminEnv: null,
+  adminEnvPending: [],
+  adminKeys: [],
+  adminLoading: false,
 }
 
 function toggleInList(list, value) {
@@ -88,6 +103,14 @@ function reducer(state, action) {
       return { ...state, transferSummary: action.summary }
     case 'REMOVE_TRANSFER_ITEM':
       return { ...state, transferQueue: state.transferQueue.filter((t) => t.id !== action.id) }
+    case 'SET_PAGE':
+      return { ...state, page: action.page }
+    case 'SET_ADMIN_ENV':
+      return { ...state, adminEnv: action.env, adminEnvPending: action.env?.pending || [] }
+    case 'SET_ADMIN_KEYS':
+      return { ...state, adminKeys: action.keys || [] }
+    case 'SET_ADMIN_LOADING':
+      return { ...state, adminLoading: action.loading }
     default:
       return state
   }
@@ -96,7 +119,7 @@ function reducer(state, action) {
 let toastSeq = 0
 
 export function AppStoreProvider({ children }) {
-  const [state, dispatch] = useReducer(reducer, initialState)
+  const [state, dispatch] = useReducer(reducer, initialState, (base) => ({ ...base, page: pageFromPath() }))
   const stateRef = useRef(state)
   stateRef.current = state
   const timers = useRef({ scanPoll: null, confirmPoll: null, paste: null, transferRemoval: {} })
@@ -120,7 +143,28 @@ export function AppStoreProvider({ children }) {
 
   async function copyText(text) {
     try {
-      await navigator.clipboard.writeText(text)
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text)
+        toast('Copied: ' + text, 'good')
+        return
+      }
+    } catch (e) {
+      /* fall through to legacy fallback below */
+    }
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.setAttribute('readonly', '')
+      ta.style.position = 'fixed'
+      ta.style.top = '0'
+      ta.style.left = '0'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.focus()
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      if (!ok) throw new Error('copy command failed')
       toast('Copied: ' + text, 'good')
     } catch (e) {
       toast('Failed to copy', 'err')
@@ -543,15 +587,7 @@ export function AppStoreProvider({ children }) {
         summary: { processed: 0, total: itemIds.length, status: 'running', counts: {} },
       })
       dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm running...' })
-      dispatch({
-        type: 'SET_CONFIRM_MODAL',
-        modal: {
-          open: true,
-          itemIds,
-          label: 'selected items',
-          progress: { status: 'running', phase: 'preparing', processed: 0, total: itemIds.length },
-        },
-      })
+      dispatch({ type: 'SET_CONFIRM_MODAL', modal: { open: false, itemIds: [], label: '', progress: null } })
       log('Confirming ' + itemIds.length + ' item(s)...', 'info')
       const result = await apiPost('/scans/current/confirm', {
         scanId: stateRef.current.scanId,
@@ -559,10 +595,6 @@ export function AppStoreProvider({ children }) {
       })
       log('Confirm started! ID: ' + stateRef.current.scanId, 'good')
       toast('Confirm started in background', 'good')
-      dispatch({
-        type: 'SET_CONFIRM_MODAL',
-        modal: { open: true, itemIds, label: 'selected items', progress: result },
-      })
       pollConfirmProgress()
     } catch (e) {
       log('Confirm error: ' + e.message, 'err')
@@ -582,10 +614,6 @@ export function AppStoreProvider({ children }) {
       const p = result.processed ?? 0
       const t = result.total ?? 0
       log('Confirm progress: ' + p + '/' + t + ' (' + (result.status || 'unknown') + ')', 'info')
-      dispatch({
-        type: 'SET_CONFIRM_MODAL',
-        modal: { open: true, itemIds: stateRef.current.confirmModal.itemIds, label: '', progress: result },
-      })
       const derived = deriveTransferQueue(stateRef.current.transferQueue, result, confirmStateRef.current)
       confirmStateRef.current = derived.state
       dispatch({ type: 'SET_TRANSFER_QUEUE', queue: derived.queue })
@@ -685,6 +713,116 @@ export function AppStoreProvider({ children }) {
     }
   }
 
+  // ---- admin: page navigation ----
+  function setPage(page) {
+    if (page !== 'scan' && page !== 'settings' && page !== 'apikeys') page = 'scan'
+    const target = pathForPage(page)
+    if (window.location.pathname !== target) window.history.pushState({}, '', target)
+    dispatch({ type: 'SET_PAGE', page })
+    if (page === 'settings' && !stateRef.current.adminEnv) loadEnv()
+    if (page === 'apikeys' && !stateRef.current.adminKeys.length && !stateRef.current.adminLoading) loadApiKeys()
+  }
+
+  // ---- admin: environment settings ----
+  async function loadEnv() {
+    dispatch({ type: 'SET_ADMIN_LOADING', loading: true })
+    try {
+      const env = await apiGet('/admin/env')
+      dispatch({ type: 'SET_ADMIN_ENV', env })
+    } catch (e) {
+      if (handleApiError(e)) return
+      log('Failed to load settings: ' + e.message, 'err')
+      toast('Failed to load settings: ' + e.message, 'err')
+    } finally {
+      dispatch({ type: 'SET_ADMIN_LOADING', loading: false })
+    }
+  }
+
+  async function saveEnv(updates) {
+    dispatch({ type: 'SET_ADMIN_LOADING', loading: true })
+    try {
+      const result = await apiPost('/admin/env', { updates })
+      await loadEnv()
+      return result
+    } catch (e) {
+      if (handleApiError(e)) return
+      log('Failed to save settings: ' + e.message, 'err')
+      toast('Failed to save settings: ' + e.message, 'err')
+      throw e
+    } finally {
+      dispatch({ type: 'SET_ADMIN_LOADING', loading: false })
+    }
+  }
+
+  // ---- admin: API keys ----
+  async function loadApiKeys() {
+    dispatch({ type: 'SET_ADMIN_LOADING', loading: true })
+    try {
+      const res = await apiGet('/admin/api-keys')
+      dispatch({ type: 'SET_ADMIN_KEYS', keys: res.keys || [] })
+    } catch (e) {
+      if (handleApiError(e)) return
+      log('Failed to load API keys: ' + e.message, 'err')
+      toast('Failed to load API keys: ' + e.message, 'err')
+    } finally {
+      dispatch({ type: 'SET_ADMIN_LOADING', loading: false })
+    }
+  }
+
+  async function createApiKey(payload) {
+    dispatch({ type: 'SET_ADMIN_LOADING', loading: true })
+    try {
+      const result = await apiPost('/admin/api-keys', payload)
+      await loadApiKeys()
+      return result
+    } catch (e) {
+      if (handleApiError(e)) return
+      log('Failed to create API key: ' + e.message, 'err')
+      toast('Failed to create API key: ' + e.message, 'err')
+      throw e
+    } finally {
+      dispatch({ type: 'SET_ADMIN_LOADING', loading: false })
+    }
+  }
+
+  async function toggleApiKey(id, enabled) {
+    try {
+      await apiPatch('/admin/api-keys/' + id, { enabled })
+      await loadApiKeys()
+    } catch (e) {
+      if (handleApiError(e)) return
+      log('Failed to update API key: ' + e.message, 'err')
+      toast('Failed to update API key: ' + e.message, 'err')
+    }
+  }
+
+  async function deleteApiKey(id) {
+    try {
+      await apiDelete('/admin/api-keys/' + id)
+      dispatch({ type: 'SET_ADMIN_KEYS', keys: stateRef.current.adminKeys.filter((k) => k.id !== id) })
+      toast('API key deleted', 'good')
+    } catch (e) {
+      if (handleApiError(e)) return
+      log('Failed to delete API key: ' + e.message, 'err')
+      toast('Failed to delete API key: ' + e.message, 'err')
+    }
+  }
+
+  useEffect(() => {
+    const onPopState = () => {
+      const page = pageFromPath()
+      if (page !== stateRef.current.page) dispatch({ type: 'SET_PAGE', page })
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  useEffect(() => {
+    if (!state.authed) return
+    if (state.page === 'settings' && !stateRef.current.adminEnv) loadEnv()
+    if (state.page === 'apikeys' && !stateRef.current.adminKeys.length && !stateRef.current.adminLoading) loadApiKeys()
+  }, [state.authed, state.page])
+
   useEffect(() => {
     if (didInit.current) return
     didInit.current = true
@@ -724,6 +862,13 @@ export function AppStoreProvider({ children }) {
     pollConfirmProgress,
     deleteSourceItem,
     deleteSelectedSkipped,
+    setPage,
+    loadEnv,
+    saveEnv,
+    loadApiKeys,
+    createApiKey,
+    toggleApiKey,
+    deleteApiKey,
   }
 
   return <AppStoreContext.Provider value={{ state, actions }}>{children}</AppStoreContext.Provider>

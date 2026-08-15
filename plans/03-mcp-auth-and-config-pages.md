@@ -1,9 +1,33 @@
 # MCP Auth + Configuration & API-Key Pages
 
+> **Status: COMPLETE (v0.0.4).** Implemented Aug 2026. Deviations from the plan
+> below are noted inline and supersede the original text.
+
 Owner request: add multiple pages to the Web UI — one to manage all environment
 variables and one to manage API keys that are used to access this MCP server.
 Add a flag `MCP_ALLOW_UNAUTHENTICATED` that lets all unauthenticated MCP
 requests through; when disabled, requests must present a valid API key.
+
+## Implemented deviations
+
+- **Part G target changed:** the legacy single-file SPA (`app/ui/index.html`)
+  was deleted by plan 04; the React UI (`app/ui/react/`) is now the main UI at
+  `/`. Part G was implemented as React components (`SettingsPage.jsx`,
+  `ApiKeysPage.jsx`, nav tabs in `TopBar.jsx`, page switch in `App.jsx`).
+- **Part D (proxy header passthrough) skipped:** plan 04 removed the UI→MCP
+  `/mcp` proxy entirely, so there is no proxy to pass headers through.
+- **Admin gate:** all `/api/admin/*` endpoints use `require_panel_auth`
+  (the UI_PANEL_PASSWORD login), not a separate `ADMIN_UI_TOKEN` gate (owner
+  decision). `ADMIN_UI_TOKEN` remains only as an MCP master key for user
+  "admin".
+- **Admin routes live under `/api/admin/*`** (not `/admin/*`) because the
+  React apiClient prepends `/api`.
+- **Model vars are `apply: "restart"`** (deviation from the table below,
+  matching the plan's own "verify against call sites" rule): no modern code
+  path builds model clients from env per call in the classify/resolve flow —
+  `ScanManager` holds the `AppConfig` snapshot, presenters use the cached
+  `get_config()`.
+- Version bumped to 0.0.4.
 
 ## Current state (verified)
 

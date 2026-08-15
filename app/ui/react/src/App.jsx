@@ -8,6 +8,8 @@ import ReportLoadingPanel from './components/ReportLoadingPanel.jsx'
 import ReportPanel from './components/ReportPanel.jsx'
 import ConfirmModal from './components/ConfirmModal.jsx'
 import LoginScreen from './components/LoginScreen.jsx'
+import SettingsPage from './components/SettingsPage.jsx'
+import ApiKeysPage from './components/ApiKeysPage.jsx'
 
 export default function App() {
   const { state } = useAppStore()
@@ -25,13 +27,19 @@ export default function App() {
     <>
       <TopBar />
 
-      {!state.scanRunning && !state.reportLoading && !state.reportVisible && <ActionsPanel />}
-      <ScanProgressPanel progress={state.scanProgress} />
-      {state.reportLoading && <ReportLoadingPanel />}
-      {!state.scanRunning && !state.reportLoading && <ReportPanel />}
-      {state.logsVisible && <LogPanel />}
+      {state.page === 'scan' && (
+        <>
+          {!state.scanRunning && !state.reportLoading && !state.reportVisible && <ActionsPanel />}
+          <ScanProgressPanel progress={state.scanProgress} />
+          {state.reportLoading && <ReportLoadingPanel />}
+          {!state.scanRunning && !state.reportLoading && <ReportPanel />}
+          <ConfirmModal />
+        </>
+      )}
+      {state.page === 'settings' && <SettingsPage />}
+      {state.page === 'apikeys' && <ApiKeysPage />}
 
-      <ConfirmModal />
+      {state.logsVisible && <LogPanel />}
       <Toasts />
     </>
   )
