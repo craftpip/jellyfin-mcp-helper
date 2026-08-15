@@ -101,6 +101,27 @@ describe('Toasts transfer queue', () => {
     render(<Toasts />)
     expect(screen.getByText('Confirm failed')).toBeInTheDocument()
   })
+
+  it('shows the queued-batch count while a move is running', () => {
+    mockStore = {
+      ...mockStore,
+      transferQueue: QUEUE,
+      transferSummary: { ...SUMMARY, queueLength: 2, queueItems: 5 },
+    }
+    render(<Toasts />)
+    expect(screen.getByText(/2 batches queued/)).toBeInTheDocument()
+    expect(screen.queryByText(/1 batch queued/)).not.toBeInTheDocument()
+  })
+
+  it('uses singular wording for a single queued batch', () => {
+    mockStore = {
+      ...mockStore,
+      transferQueue: QUEUE,
+      transferSummary: { ...SUMMARY, queueLength: 1, queueItems: 2 },
+    }
+    render(<Toasts />)
+    expect(screen.getByText(/1 batch queued/)).toBeInTheDocument()
+  })
 })
 
 describe('Toasts bottom-right consolidation', () => {

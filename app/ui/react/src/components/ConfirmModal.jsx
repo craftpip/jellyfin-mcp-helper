@@ -25,6 +25,15 @@ function PreflightView({ itemIds, label }) {
     <div className="modal-overlay" id="confirmModal">
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle">
         <h3 id="confirmModalTitle">Confirm Move — {label || items.length + ' item(s)'}</h3>
+        {state.confirmActive && (
+          <div className="warn-box" id="confirmQueueWarn">
+            <strong>A move is already running</strong>
+            <div id="confirmQueueWarnText">
+              This batch will be added to the queue and start automatically when the current move
+              finishes.
+            </div>
+          </div>
+        )}
         <div className="summary-strip">
           {[
             ['Items', items.length],

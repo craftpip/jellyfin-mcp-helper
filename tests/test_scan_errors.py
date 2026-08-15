@@ -526,6 +526,74 @@ def test_confirm_stops_seeding_once_for_selected_items(tmp_path, monkeypatch) ->
     asyncio.run(run_test())
 
 
+def test_confirm_queues_batch_behind_running_move(tmp_path, monkeypatch) -> None:
+    sources = []
+    targets = []
+    for i in range(1, 4):
+        src = tmp_path / f"download-{i}.mkv"
+        src.write_bytes(f"video-{i}".encode())
+        sources.append(src)
+        targets.append(tmp_path / "library" / f"download-{i}.mkv")
+
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(downloadRoots=[]),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+
+    async def run_test() -> None:
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        scan.items = [
+            ScannedItem(
+                confirmId=f"c{i}",
+                sourcePath=str(sources[i - 1]),
+                name=sources[i - 1].name,
+                item_type="movie",
+                confidence=1.0,
+                reason="test",
+                target_path=str(targets[i - 1]),
+                action="move",
+            )
+            for i in range(1, 4)
+        ]
+        scan.counts.movies = 3
+
+        async def fake_stop_seeding(items) -> None:
+            return None
+
+        async def fake_trigger_jellyfin(updated_paths) -> None:
+            return None
+
+        monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
+        monkeypatch.setattr(manager, "_trigger_jellyfin_scans", fake_trigger_jellyfin)
+
+        # First confirm: only c1. This batch starts immediately.
+        await manager.confirm_scan(scan.scan_id, item_ids=["c1"])
+        assert scan.confirm_status == "running"
+
+        # A second confirm while the first is still running must be queued, not rejected.
+        queued = await manager.confirm_scan(scan.scan_id, item_ids=["c2", "c3"])
+        assert queued.confirm_queue_length == 1
+        assert queued.confirm_queue_items == 2
+
+        # Wait for both batches to run to completion (the queued one starts automatically).
+        while scan.confirm_status == "running":
+            await asyncio.sleep(0)
+
+        assert scan.confirm_status == "completed"
+        assert scan.confirm_queue_length == 0
+        assert scan.counts.moved == 3
+        assert all(item.confirmed for item in scan.items)
+        assert all(target.exists() for target in targets)
+
+    asyncio.run(run_test())
+
+
 def test_delete_items_removes_source_and_updates_counts(tmp_path, monkeypatch) -> None:
     source = tmp_path / "downloads" / "Unwanted.Movie.2026.mkv"
     source.parent.mkdir(parents=True)

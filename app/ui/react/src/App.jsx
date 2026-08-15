@@ -7,6 +7,7 @@ import ScanProgressPanel from './components/ScanProgressPanel.jsx'
 import ReportLoadingPanel from './components/ReportLoadingPanel.jsx'
 import ReportPanel from './components/ReportPanel.jsx'
 import ConfirmModal from './components/ConfirmModal.jsx'
+import BrowseModal from './components/BrowseModal.jsx'
 import LoginScreen from './components/LoginScreen.jsx'
 import SettingsPage from './components/SettingsPage.jsx'
 import ApiKeysPage from './components/ApiKeysPage.jsx'
@@ -34,6 +35,7 @@ export default function App() {
           {state.reportLoading && <ReportLoadingPanel />}
           {!state.scanRunning && !state.reportLoading && <ReportPanel />}
           <ConfirmModal />
+          <BrowseModal />
         </>
       )}
       {state.page === 'settings' && <SettingsPage />}

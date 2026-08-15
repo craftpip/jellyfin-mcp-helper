@@ -34,6 +34,11 @@ class ScannedItem(BaseModel):
     file_exists: bool = Field(default=False, alias="fileExists")
     file_size: int | None = Field(default=None, alias="fileSize")
     cross_drive: bool = Field(default=False, alias="crossDrive")
+    suspect: bool = False
+    flags: list[str] = Field(default_factory=list)
+    corrected: bool = False
+    correction_note: str | None = None
+    candidate_targets: list[CandidateTarget] = Field(default_factory=list, alias="candidateTargets")
 
     model_config = {"populate_by_name": True}
 
@@ -91,6 +96,8 @@ class ScanPlan(BaseModel):
     confirm_cross_drive: bool | None = None
     confirm_note: str | None = None
     confirm_last_update_at: datetime | None = None
+    confirm_queue_length: int = 0
+    confirm_queue_items: int = 0
 
 
 class ScanLogEntry(BaseModel):
@@ -116,6 +123,14 @@ class ClassificationResult(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class CandidateTarget(BaseModel):
+    path: str
+    label: str
+    evidence: str
+    source: str = "folder"
+    reclassify_as_movie: bool = False
+
+
 class ResolvedTarget(BaseModel):
     root_key: str
     target_dir: str
@@ -125,6 +140,14 @@ class ResolvedTarget(BaseModel):
     existing_match: str | None = None
     show_folder_exists: bool = False
     season_folder_exists: bool = False
+    phantom_show_folder: bool = False
+    has_previous_season: bool = False
+    max_existing_season: int | None = None
+    has_previous_episode: bool = False
+    series_key: str | None = None
+    season_number: int | None = None
+    episode_number: int | None = None
+    candidate_targets: list[CandidateTarget] = Field(default_factory=list)
 
 
 class CandidateItem(BaseModel):

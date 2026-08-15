@@ -25,6 +25,24 @@ def format_path_exists(item: ScannedItem) -> str:
         )
 
 
+def _candidates_md(item: ScannedItem) -> list[str]:
+    if not item.candidate_targets:
+        return []
+    if item.item_type == "series":
+        current_show = str(Path(item.target_path).parent.parent)
+    else:
+        current_show = str(Path(item.target_path).parent)
+    lines = []
+    for idx, ct in enumerate(item.candidate_targets, 1):
+        if ct.reclassify_as_movie:
+            lines.append("   %d. [as movie] `%s` (%s)" % (idx, ct.path, ct.evidence))
+        elif ct.path == current_show:
+            lines.append("   %d. [current] `%s` (%s)" % (idx, ct.path, ct.evidence))
+        else:
+            lines.append("   %d. [alt] `%s` (%s)" % (idx, ct.path, ct.evidence))
+    return lines
+
+
 def format_report_md(
     items_by_action: dict[str, list[ScannedItem]],
     movie_roots_info: list[dict],
@@ -43,6 +61,17 @@ def format_report_md(
             source = item.source_path
             lines.append("| %s | %s | %s | %s | `%s` |" % (item.confirm_id, title, source, format_path_exists(item), item.target_path))
         lines.append("")
+        movie_candidate_blocks: list[tuple[str, tuple[str, ...], list[str]]] = []
+        for item in movies:
+            blocks = _candidates_md(item)
+            if blocks:
+                key = (Path(item.target_path).parent.name, tuple(ct.path for ct in item.candidate_targets))
+                if key not in {b[1] for b in movie_candidate_blocks}:
+                    movie_candidate_blocks.append((key[0], key[1], blocks))
+        for title, _, blocks in movie_candidate_blocks:
+            lines.append("### %s candidates" % title)
+            lines.extend(blocks)
+            lines.append("")
 
     if series:
         lines.append("## Series (%d)" % len(series))
@@ -57,6 +86,17 @@ def format_report_md(
             source = item.source_path
             lines.append("| %s | %s | %s | %s | %s | %s | `%s` |" % (item.confirm_id, show, season, ep, source, format_path_exists(item), item.target_path))
         lines.append("")
+        series_candidate_blocks: list[tuple[str, tuple[str, ...], list[str]]] = []
+        for item in series:
+            blocks = _candidates_md(item)
+            if blocks:
+                key = (Path(item.target_path).parent.parent.name, tuple(ct.path for ct in item.candidate_targets))
+                if key not in {b[1] for b in series_candidate_blocks}:
+                    series_candidate_blocks.append((key[0], key[1], blocks))
+        for title, _, blocks in series_candidate_blocks:
+            lines.append("### %s candidates" % title)
+            lines.extend(blocks)
+            lines.append("")
 
     if items_by_action["skip"]:
         by_reason: dict[str, list[str]] = {}
@@ -95,6 +135,20 @@ def format_report_items(scan: ScanPlan, items_by_action: dict[str, list[ScannedI
             "crossDrive": item.cross_drive,
             "reason": item.reason,
             "error": item.error,
+            "suspect": item.suspect,
+            "flags": item.flags,
+            "corrected": item.corrected,
+            "correctionNote": item.correction_note,
+            "candidateTargets": [
+                {
+                    "path": ct.path,
+                    "label": ct.label,
+                    "evidence": ct.evidence,
+                    "source": ct.source,
+                    "reclassifyAsMovie": ct.reclassify_as_movie,
+                }
+                for ct in item.candidate_targets
+            ],
         })
     for item in items_by_action.get("skip", []):
         result.append({
@@ -125,6 +179,25 @@ def report_llm_instructions(scan: ScanPlan, movie_roots_info: list[dict], series
         "pathExists shows granular path status: Show/Movie ✓/✗, Season ✓/✗, File ✓/✗",
         "showFolderExists/seasonFolderExists/fileExists give individual booleans",
     ]
+
+    suspect_count = len([i for i in scan.items if i.suspect])
+    corrected_count = len([i for i in scan.items if i.corrected])
+    if suspect_count:
+        instructions.append(
+            f"{suspect_count} item(s) are flagged suspect (flags: phantom_show_folder, season_gap, episode_gap). "
+            "Review their targets: a suspect item may point at a newly created show folder when an existing "
+            "continuation folder already exists."
+        )
+    if corrected_count:
+        instructions.append(
+            f"{corrected_count} item(s) were auto-corrected during the scan. Verify the correction made sense "
+            "before confirming."
+        )
+    instructions.append(
+        "Each actionable item exposes candidateTargets (existing folders with evidence, a new-folder default, "
+        "and optionally an 'as movie' option). If the assigned target is wrong, pick a candidate directory "
+        "via the retarget endpoint instead of hand-building a path."
+    )
 
     if roots:
         instructions.append("Available roots:\n" + "\n".join(roots))
@@ -215,6 +288,12 @@ def format_confirm_progress(scan: ScanPlan) -> dict:
     next_step = "Confirm finished. Call 'get move new downloads scan report' to see results."
     if scan.confirm_status == "running":
         next_step = "Confirm is running. Call 'get move new downloads confirm progress' again later."
+        if scan.confirm_queue_length:
+            next_step = (
+                f"Confirm is running. {scan.confirm_queue_length} more confirm(s) "
+                f"({scan.confirm_queue_items} item(s)) are queued and will start "
+                "automatically when the current move finishes."
+            )
     elif scan.confirm_status == "idle":
         next_step = "No confirm has been started. Use 'confirm move new downloads scan' first."
 
@@ -241,6 +320,8 @@ def format_confirm_progress(scan: ScanPlan) -> dict:
         "current_eta": format_duration(file_eta_seconds),
         "cross_drive": scan.confirm_cross_drive,
         "note": scan.confirm_note,
+        "queue_length": scan.confirm_queue_length,
+        "queue_items": scan.confirm_queue_items,
         "last_update_at": scan.confirm_last_update_at.isoformat() if scan.confirm_last_update_at else None,
         "counts": {
             "moved": scan.counts.moved - scan.confirm_start_moved,

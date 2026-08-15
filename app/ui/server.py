@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -24,6 +25,7 @@ from app.services.presenters import (
     is_cross_drive_transfer,
 )
 from app.services.release_tracker import ReleaseTracker
+from app.services.resolver import PathResolver, normalize_text
 from app.services.scan_manager import ScanManager
 from app.ui.auth import login, logout, require_panel_auth
 
@@ -32,6 +34,193 @@ logger = logging.getLogger(__name__)
 HERE = Path(__file__).resolve().parent
 REACT_INDEX_HTML = HERE / "react-dist" / "index.html"
 REACT_ASSETS_DIR = HERE / "react-dist" / "assets"
+
+BROWSE_VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv")
+BROWSE_IGNORED_DIR_NAMES = {".trickplay", ".thumbs", ".thumbnails", ".stfolder", "extrafanart", "extrathumbs"}
+BROWSE_VIDEO_COUNT_CAP = 500
+BROWSE_SEARCH_RESULT_CAP = 50
+BROWSE_SEARCH_CHILD_CAP = 600
+BROWSE_IGNORED_NAME_PARTS = (
+    "trickplay",
+    "extras",
+    "featurettes",
+    "behind the scenes",
+    "deleted scenes",
+    "deleted scene",
+    "sample",
+    "bonus",
+    "trailers",
+    "thumbs",
+    "scraped",
+    "chapter",
+)
+
+
+def _browse_root_configs(config) -> list[dict]:
+    roots = []
+    for key, path in config.paths.movie_roots.items():
+        roots.append({
+            "key": key,
+            "path": str(path),
+            "kind": "movie",
+            "description": config.paths.movie_root_descriptions.get(key, ""),
+        })
+    for key, path in config.paths.series_roots.items():
+        roots.append({
+            "key": key,
+            "path": str(path),
+            "kind": "series",
+            "description": config.paths.series_root_descriptions.get(key, ""),
+        })
+    return roots
+
+
+def _browse_root_for(path: Path, config) -> Path | None:
+    for root in list(config.paths.movie_roots.values()) + list(config.paths.series_roots.values()):
+        root_path = Path(root).resolve(strict=False)
+        try:
+            path.resolve(strict=False).relative_to(root_path)
+            return root_path
+        except ValueError:
+            continue
+    return None
+
+
+def _browse_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def _browse_video_count(dir_path: Path) -> int:
+    if not dir_path.is_dir():
+        return 0
+    count = 0
+    try:
+        for entry in dir_path.iterdir():
+            if count >= BROWSE_VIDEO_COUNT_CAP:
+                return count
+            if entry.is_file() and entry.suffix.lower() in BROWSE_VIDEO_EXTENSIONS:
+                count += 1
+    except OSError:
+        return count
+    return count
+
+
+def _browse_subdir_count(dir_path: Path) -> int:
+    count = 0
+    try:
+        for entry in dir_path.iterdir():
+            if count >= BROWSE_VIDEO_COUNT_CAP:
+                return count
+            if entry.is_dir():
+                count += 1
+    except OSError:
+        return count
+    return count
+
+
+def _browse_search_root(root_path: Path, query_norm: str, query_tokens: set[str], seen: set, results: list[dict], kind: str, cap: int) -> int:
+    # Main-folder search only: the top-level show/movie folders directly under
+    # each root. Season folders are not search targets — the user picks a show
+    # (or movie) folder and the target resolves the season. Scanning only one
+    # level is cheap (no walk), unlike the old depth-3 walk which also matched
+    # "Season 01"-style folders inside shows.
+    try:
+        it = os.scandir(root_path)
+    except OSError:
+        return 0
+    scanned = 0
+    with it:
+        for entry in it:
+            if scanned >= BROWSE_SEARCH_CHILD_CAP:
+                break
+            scanned += 1
+            name = entry.name
+            if name.startswith(".") or name.lower() in BROWSE_IGNORED_DIR_NAMES:
+                continue
+            if any(junk in name.lower() for junk in BROWSE_IGNORED_NAME_PARTS):
+                continue
+            try:
+                if not entry.is_dir(follow_symlinks=True):
+                    continue
+            except OSError:
+                continue
+            child = Path(entry.path)
+            if child in seen:
+                continue
+            seen.add(child)
+            name_norm = normalize_text(name)
+            if query_tokens <= set(name_norm.split()) or query_norm in name_norm:
+                results.append({
+                    "name": name,
+                    "path": str(child),
+                    "root": str(root_path),
+                    "kind": kind,
+                    "seasonNumber": None,
+                    "depth": 1,
+                })
+                if len(results) >= cap:
+                    return cap
+    return len(results)
+
+
+def _browse_entries(dir_path: Path, root: Path) -> dict:
+    entries = []
+    for child in sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+        if not child.is_dir():
+            continue
+        name = child.name
+        if name.startswith(".") or name.lower() in BROWSE_IGNORED_DIR_NAMES:
+            continue
+        try:
+            resolved = child.resolve(strict=False)
+            if not _browse_is_within(resolved, root):
+                continue
+        except OSError:
+            continue
+        season_number = PathResolver._season_number_from_name(name)
+        has_subdirs = False
+        has_videos = False
+        try:
+            for entry in child.iterdir():
+                if entry.is_dir():
+                    has_subdirs = True
+                    break
+                if entry.is_file() and entry.suffix.lower() in BROWSE_VIDEO_EXTENSIONS:
+                    has_videos = True
+                    break
+        except OSError:
+            pass
+        recursive = has_subdirs and not has_videos and season_number is None
+        if recursive:
+            # Show folder: no direct videos, seasons live in subdirectories.
+            # Report the number of season subfolders (bounded, cheap) instead of
+            # walking the whole tree — deep recursive walks hang on large series.
+            video_count = _browse_subdir_count(child)
+        else:
+            video_count = _browse_video_count(child)
+        entries.append({
+            "name": name,
+            "path": str(child),
+            "isDir": True,
+            "videoCount": video_count,
+            "seasonNumber": season_number,
+        })
+
+    def sort_key(entry: dict):
+        season = entry.get("seasonNumber")
+        return (0 if season is not None else 1, season if season is not None else 0, entry["name"].lower())
+
+    entries.sort(key=sort_key)
+    return {
+        "path": str(dir_path),
+        "parent": str(dir_path.parent) if dir_path != root and _browse_is_within(dir_path.parent, root) else None,
+        "root": str(root),
+        "entries": entries,
+    }
 
 
 def _scan_started_response(scan: ScanPlan) -> dict:
@@ -68,6 +257,40 @@ def _scan_started_response(scan: ScanPlan) -> dict:
 
 def _confirm_started_response(scan: ScanPlan) -> dict:
     response = format_confirm_progress(scan)
+    queued = scan.confirm_queue_length > 0
+    if queued:
+        response["message"] = (
+            f"A move is already running. This confirm was added to the queue "
+            f"({scan.confirm_queue_items} item(s) behind the current move) and will "
+            "start automatically when it finishes."
+        )
+        response["tool_purpose"] = "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. A move was already running, so this confirm was queued and will start automatically when the current move finishes."
+        response["what_happens_now"] = [
+            "The confirm was added to the queue behind the currently running move.",
+            "It will start automatically when the current move finishes, without further action.",
+            "Each planned item in the queued batch is then moved or replaced.",
+        ]
+        response["available_now"] = [
+            "scan_id",
+            "status",
+            "queue_length (number of queued confirms behind the running move)",
+            "queue_items (total item count across queued confirms)",
+            "processed/total counters for the running move",
+        ]
+        instructions = [
+            "Tell the user the confirm was queued behind the running move and will start automatically when it finishes.",
+            "The user does not need to do anything else — do not call the confirm tool again.",
+            "Ask the user if they want to check progress. Do not call any tool automatically.",
+            "If the user says yes, call 'get move new downloads confirm progress' with this scanId once.",
+            "If still running, tell the user and ask if they want to check again later.",
+            "After the queued confirm is done, call 'get move new downloads scan report' to see the results.",
+        ]
+        if is_cross_drive_transfer():
+            instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer. Warn the user about this.")
+        response["llm_instructions"] = instructions
+        response["next"] = "Tell the user the confirm was queued and will start automatically."
+        return response
+
     response["message"] = "Confirm started in the background. This tool returns immediately. No files were moved yet."
     response["tool_purpose"] = "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. It returns immediately and processes in the background. Use the confirm progress tool to track progress."
     response["what_happens_now"] = [
@@ -403,6 +626,74 @@ def create_ui_app(
         manager: ScanManager = request.app.state.scan_manager
         scan = await manager.delete_items(scan_id, item_ids)
         return format_scan_report(scan)
+
+    # ── folder browse + retarget (smart correction UI) ────────────
+    @ui_app.get("/api/browse/roots", dependencies=[Depends(require_panel_auth)])
+    async def api_browse_roots(request: Request):
+        manager: ScanManager = request.app.state.scan_manager
+        return {"roots": _browse_root_configs(manager._config)}
+
+    @ui_app.get("/api/browse", dependencies=[Depends(require_panel_auth)])
+    async def api_browse(request: Request, path: str = ""):
+        manager: ScanManager = request.app.state.scan_manager
+        config = manager._config
+        dir_path = Path(path)
+        if not dir_path.is_absolute():
+            raise HTTPException(status_code=400, detail="path must be absolute")
+        root = _browse_root_for(dir_path, config)
+        if not root:
+            raise HTTPException(status_code=400, detail=f"Path '{path}' is not under any configured movie or series root")
+        if not dir_path.is_dir():
+            raise HTTPException(status_code=400, detail=f"Path '{path}' is not a directory")
+        return _browse_entries(dir_path, root)
+
+    @ui_app.get("/api/browse/search", dependencies=[Depends(require_panel_auth)])
+    async def api_browse_search(request: Request, q: str = ""):
+        q = (q or "").strip()
+        if not q:
+            return {"results": []}
+        manager: ScanManager = request.app.state.scan_manager
+        config = manager._config
+        query_norm = normalize_text(q)
+        query_tokens = set(query_norm.split())
+        results = []
+        seen = set()
+        for kind in ("movie", "series"):
+            root_key_name = "movie_roots" if kind == "movie" else "series_roots"
+            for key, root in getattr(config.paths, root_key_name).items():
+                root_path = Path(root).resolve(strict=False)
+                if not root_path.is_dir():
+                    continue
+                if _browse_search_root(root_path, query_norm, query_tokens, seen, results, kind, BROWSE_SEARCH_RESULT_CAP) >= BROWSE_SEARCH_RESULT_CAP:
+                    break
+        results.sort(key=lambda r: (r.get("depth", 9), r["kind"], r["name"].lower()))
+        return {"results": results}
+
+    @ui_app.post("/api/scans/current/items/retarget", dependencies=[Depends(require_panel_auth)])
+    async def api_retarget_current_item(request: Request, payload: dict | None = None):
+        return _retarget_payload(request, _current_scan_id(request), payload or {})
+
+    @ui_app.post("/api/scans/{scan_id}/items/retarget", dependencies=[Depends(require_panel_auth)])
+    async def api_retarget_item(request: Request, scan_id: str, payload: dict | None = None):
+        return _retarget_payload(request, scan_id, payload or {})
+
+    def _retarget_payload(request: Request, scan_id: str, payload: dict):
+        confirm_id = payload.get("confirmId")
+        directory = payload.get("directory")
+        if not confirm_id or not directory:
+            raise HTTPException(status_code=400, detail="confirmId and directory are required")
+        manager: ScanManager = request.app.state.scan_manager
+        try:
+            updated = manager.retarget_item(
+                scan_id,
+                str(confirm_id),
+                str(directory),
+                apply_to_group=bool(payload.get("applyToGroup")),
+                reclassify_as_movie=bool(payload.get("reclassifyAsMovie")),
+            )
+        except HTTPException as exc:
+            raise exc
+        return format_scan_report(updated)
 
     # ── request logging (D9) ───────────────────────────────────────
     @ui_app.middleware("http")

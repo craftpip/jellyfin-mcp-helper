@@ -9,7 +9,7 @@ from guessit import guessit
 from app.models.schemas import CandidateItem, ClassificationResult
 
 
-EXTRA_MARKERS = re.compile(r"\b(ncop\d*|nced\d*|op\d*|ed\d*|sp\d*|ova|ona|special|extras?|bonus|recap|trailer)\b", re.IGNORECASE)
+EXTRA_MARKERS = re.compile(r"\b(ncop\d*|nced\d*|op\d*|ed\d*|sp\d*|ova|ona|special|extras?|featurettes?|bonus|recap|trailer)\b", re.IGNORECASE)
 SAMPLE_MARKERS = re.compile(r"\bsample\b", re.IGNORECASE)
 SAMPLE_SIZE_THRESHOLD = 150 * 1024 * 1024  # 150MB
 SEASON_EPISODE_RE = re.compile(r"s\d{1,2}e\d{1,3}", re.IGNORECASE)
@@ -34,6 +34,8 @@ CONTAINED_BARE_EPISODE_RE = re.compile(
     r"^(?P<episode>\d{1,3})(?:v\d+)?\s*(?:[-_ ]|\.(?!\d))\s*(?P<title>\S.*)$",
     re.IGNORECASE,
 )
+MOVIE_MARKER_RE = re.compile(r"\bmovie[\s_.-]*\d{1,3}\b", re.IGNORECASE)
+FRANCHISE_MOVIE_MARKER_RE = re.compile(r"\bs\d{1,2}m\d{1,2}\b", re.IGNORECASE)
 
 FOREIGN_EPISODE_RE = re.compile(
     r"(?:^|[^a-z0-9])(?:episodio|episode|capitulo|capitolo|capítulo|chapitre|épisode|kapitel)\s*(\d{1,3})(?:v\d+)?(?:[^a-z0-9]|$)",
@@ -114,6 +116,19 @@ def classify_candidate(candidate: CandidateItem, series_title_aliases: dict[str,
         has_explicit_episode = True
 
     kind, confidence, reason = _infer_kind(label, parsed, season, episode, has_explicit_episode)
+    if (
+        not has_explicit_episode
+        and kind in ("series", "movie")
+        and _candidate_has_movie_marker(candidate)
+    ):
+        movie_marker_title = _extract_movie_marker_title(candidate, title)
+        if movie_marker_title:
+            title = movie_marker_title
+            season = None
+            episode = None
+            kind = "movie"
+            confidence = max(confidence, 0.85)
+            reason = "Detected franchise movie marker"
     if _looks_like_extra(label, parsed) and kind in ("series", "movie"):
         kind = "skip"
         confidence = max(confidence, 0.75)
@@ -145,6 +160,46 @@ def _candidate_label(candidate: CandidateItem) -> str:
     if candidate.relative_path:
         return candidate.relative_path
     return candidate.name
+
+
+def _has_movie_marker(value: str) -> bool:
+    return bool(MOVIE_MARKER_RE.search(value) or FRANCHISE_MOVIE_MARKER_RE.search(value))
+
+
+def _candidate_has_movie_marker(candidate: CandidateItem) -> bool:
+    if _has_movie_marker(_candidate_label(candidate)):
+        return True
+    if candidate.container_path and _has_movie_marker(Path(candidate.container_path).name):
+        return True
+    return False
+
+
+def _extract_movie_marker_number_text(value: str) -> str | None:
+    match = MOVIE_MARKER_RE.search(value)
+    if match:
+        digits = re.search(r"\d{1,3}", match.group(0))
+        return digits.group(0) if digits else None
+    match = FRANCHISE_MOVIE_MARKER_RE.search(value)
+    if match:
+        digits = re.search(r"m\d{1,2}", match.group(0), re.IGNORECASE)
+        return digits.group(0)[1:] if digits else None
+    return None
+
+
+def _extract_movie_marker_title(candidate: CandidateItem, title: str | None) -> str | None:
+    container = candidate.container_path
+    if container:
+        container_name = Path(container).name
+        if container_name and container_name != Path(candidate.source_root).name and _has_movie_marker(container_name):
+            return _clean_source_folder_name(container_name) or title
+    if not title:
+        return None
+    if re.search(r"\d", title):
+        return title
+    number = _extract_movie_marker_number_text(_candidate_label(candidate))
+    if number is not None:
+        return f"{title} {number}".strip()
+    return title
 
 
 def _parse_guessit(label: str) -> dict[str, Any]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import logging
+import unicodedata
 from functools import cache
 from pathlib import Path
 from difflib import SequenceMatcher
@@ -10,15 +11,20 @@ from difflib import SequenceMatcher
 logger = logging.getLogger(__name__)
 
 from app.core.config import AppConfig
-from app.models.schemas import CandidateItem, ClassificationResult, ResolvedTarget
+from app.models.schemas import CandidateItem, CandidateTarget, ClassificationResult, ResolvedTarget
+from app.services.classifier import _candidate_has_movie_marker
 from app.services.scanner import VIDEO_EXTENSIONS, list_target_paths
 
 
 INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*]')
 WORD_RE = re.compile(r"[a-z0-9]+")
 MAX_AI_PATH_CHOICES = 20
+MAX_CANDIDATE_TARGETS = 5
 EPISODE_TAG_RE = re.compile(r"\bs\d{1,2}e\d{1,3}\b.*$", re.IGNORECASE)
 TRAILING_YEAR_RE = re.compile(r"\s+\d{4}$")
+POST_NUMBER_TITLE_RE = re.compile(r"\d{2,4}\s*[-–—:]\s*(.+)$", re.IGNORECASE)
+ARC_FILLER_WORDS = {"the", "and", "of", "a", "an"}
+_SEASON_ARC_MARKER_RE = re.compile(r"\b(?:s\d{1,2}|season\s*\d{1,2})\b\s*[-–—._]?\s*", re.IGNORECASE)
 
 
 def sanitize_name(value: str) -> str:
@@ -27,8 +33,14 @@ def sanitize_name(value: str) -> str:
     return cleaned or "Unknown"
 
 
+def fold_diacritics(value: str) -> str:
+    decomposed = unicodedata.normalize("NFD", value)
+    return "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
+
+
 def normalize_text(value: str) -> str:
     value = value.replace("'", "")
+    value = fold_diacritics(value)
     return " ".join(WORD_RE.findall(value.lower()))
 
 
@@ -37,7 +49,36 @@ def normalize_series_text(value: str) -> str:
 
 
 def tokenize(value: str) -> set[str]:
-    return set(WORD_RE.findall(value.lower()))
+    return set(WORD_RE.findall(fold_diacritics(value).lower()))
+
+
+def _normalize_arc_text(value: str) -> str:
+    value = fold_diacritics(value).lower().replace("&", " and ")
+    tokens = [t for t in WORD_RE.findall(value) if t not in ARC_FILLER_WORDS]
+    return " ".join(tokens)
+
+
+def season_arc_text(value: str) -> str:
+    """Release-side season-arc text after the Sxx / Season xx marker.
+
+    'Nimbus S21 Sun & Moon Ultra Adventures' -> 'sun moon ultra adventures'.
+    """
+    match = _SEASON_ARC_MARKER_RE.search(value)
+    if not match:
+        return ""
+    return _normalize_arc_text(value[match.end():])
+
+
+def season_dir_arc(season_dir_name: str) -> str:
+    """Library-side season-arc text from a season dir name.
+
+    's21 - Sun and Moon Ultra Adventures' -> 'sun moon ultra adventures'.
+    """
+    stripped = season_dir_name.strip()
+    match = _SEASON_ARC_MARKER_RE.match(stripped)
+    if not match:
+        return _normalize_arc_text(stripped)
+    return _normalize_arc_text(stripped[match.end():])
 
 
 def series_lookup_key(title: str, year: int | None = None) -> str:
@@ -63,6 +104,11 @@ def series_aliases(path: str) -> set[str]:
             cleaned = EPISODE_TAG_RE.sub("", file_path.stem).strip(" -._")
             if cleaned:
                 aliases.add(cleaned)
+            post_number = POST_NUMBER_TITLE_RE.search(cleaned)
+            if post_number:
+                ep_title = post_number.group(1).strip(" -._")
+                if ep_title and ep_title != cleaned:
+                    aliases.add(ep_title)
             sample_count += 1
         if sample_count >= 12:
             break
@@ -103,10 +149,31 @@ class PathResolver:
         self._config = config
         self._series_path_memory: dict[str, str] = {}
         self._series_alias_seasons: dict[tuple[str, str], int] = {}
+        self._scan_prepared = False
+        self._movie_existing_paths: list[str] = []
+        self._series_existing_paths: list[str] = []
 
     def reset_runtime_state(self) -> None:
         self._series_path_memory.clear()
         self._series_alias_seasons.clear()
+        self._scan_prepared = False
+        self._movie_existing_paths = []
+        self._series_existing_paths = []
+
+    def prepare_scan(self, movie_roots: list[str], series_roots: list[str]) -> None:
+        """List existing target folders once per scan instead of per candidate."""
+        self._movie_existing_paths = []
+        self._series_existing_paths = []
+        for root in movie_roots:
+            self._movie_existing_paths.extend(list_target_paths(root))
+        for root in series_roots:
+            self._series_existing_paths.extend(list_target_paths(root))
+        self._scan_prepared = True
+        logger.info(
+            "[resolver] prepared scan index: %d movie folders, %d series folders",
+            len(self._movie_existing_paths),
+            len(self._series_existing_paths),
+        )
 
     async def resolve(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
         if classification.kind == "movie":
@@ -118,9 +185,10 @@ class PathResolver:
         movie_roots_list = list(self._config.paths.movie_roots.values())
         movie_root = self._pick_drive_root(candidate.source_path, movie_roots_list, index)
         
-        all_existing_paths = []
-        for root in movie_roots_list:
-            all_existing_paths.extend(list_target_paths(root))
+        all_existing_paths = list(self._movie_existing_paths)
+        if not self._scan_prepared:
+            for root in movie_roots_list:
+                all_existing_paths.extend(list_target_paths(root))
         folder_name = self._movie_folder_name(classification)
         best_match = await self._pick_existing_path(
             media_kind="movie",
@@ -138,6 +206,14 @@ class PathResolver:
             logger.info("  [resolver] matched existing movie folder: %s", best_match)
         else:
             logger.info("  [resolver] new movie folder: %s", folder_name)
+        candidates = self._build_movie_candidates(
+            title=classification.title or candidate.name,
+            year=classification.year,
+            all_existing_paths=all_existing_paths,
+            chosen_dir=target_dir,
+            movie_root=movie_root,
+            folder_name=folder_name,
+        )
         return ResolvedTarget(
             root_key=candidate.source_root_key,
             target_dir=str(target_dir),
@@ -146,6 +222,7 @@ class PathResolver:
             existing_match=best_match,
             show_folder_exists=best_match is not None,
             season_folder_exists=target_dir.exists(),
+            candidate_targets=candidates,
         )
 
     @staticmethod
@@ -176,9 +253,10 @@ class PathResolver:
         series_roots_list = list(self._config.paths.series_roots.values())
         series_root = self._pick_drive_root(candidate.source_path, series_roots_list, index)
         
-        all_existing_paths = []
-        for root in series_roots_list:
-            all_existing_paths.extend(list_target_paths(root))
+        all_existing_paths = list(self._series_existing_paths)
+        if not self._scan_prepared:
+            for root in series_roots_list:
+                all_existing_paths.extend(list_target_paths(root))
         show_name = sanitize_name(classification.title or candidate.name)
         show_name = re.sub(r"([^a-zA-Z0-9])\1+$", r"\1", show_name)
         series_key = series_lookup_key(show_name, classification.year)
@@ -242,6 +320,23 @@ class PathResolver:
         self._remember_series_alias_season(series_key, classification.series_alias, season_number)
         if classification.series_alias and season_number:
             logger.info("  [resolver] remembered alias \"%s\" → season %d", classification.series_alias, season_number)
+
+        existing_seasons = self._existing_seasons(show_dir)
+        has_previous_season = bool(season_number > 1 and (season_number - 1) in existing_seasons)
+        existing_episodes = self._existing_episodes_in_season(season_dir)
+        has_previous_episode = bool(episode_number > 1 and (episode_number - 1) in existing_episodes)
+        phantom_show_folder = bool(not show_dir.exists() and best_match is None)
+        is_continuation_suspect = phantom_show_folder or (season_number > 1 and not has_previous_season)
+        candidates = self._build_series_candidates(
+            candidate=candidate,
+            classification=classification,
+            all_existing_paths=all_existing_paths,
+            chosen_show_dir=show_dir,
+            series_root=series_root,
+            show_name=show_name,
+            is_suspect=is_continuation_suspect,
+        )
+
         return ResolvedTarget(
             root_key=candidate.source_root_key,
             target_dir=str(season_dir),
@@ -250,7 +345,132 @@ class PathResolver:
             existing_match=best_match,
             show_folder_exists=show_dir.exists(),
             season_folder_exists=season_dir.exists(),
+            phantom_show_folder=phantom_show_folder,
+            has_previous_season=has_previous_season,
+            max_existing_season=max(existing_seasons) if existing_seasons else None,
+            has_previous_episode=has_previous_episode,
+            series_key=series_key,
+            season_number=season_number,
+            episode_number=episode_number,
+            candidate_targets=candidates,
         )
+
+    def find_continuation_show(
+        self,
+        title: str,
+        year: int | None,
+        season: int,
+        episode: int,
+        episode_title: str | None,
+        series_roots: list[str] | None = None,
+    ) -> str | None:
+        """Deep re-search for a real continuation folder when resolution produced a phantom.
+
+        Recall tier: no token-overlap gate. Auto-pick tier: a strong signal
+        (season-arc, episode-title alias, name equality/subset) plus continuity
+        evidence (a season dir at or just below the target season).
+        """
+        if series_roots is None:
+            series_roots = list(self._config.paths.series_roots.values())
+        paths = list(self._series_existing_paths)
+        if not self._scan_prepared:
+            paths = []
+            for root in series_roots:
+                paths.extend(list_target_paths(root))
+        if not paths:
+            return None
+
+        title_norm = normalize_series_text(title)
+        title_tokens = tokenize(title)
+        year_text = str(year) if year else ""
+        target_arc = season_arc_text(title)
+        ep_title_norm = normalize_series_text(episode_title) if episode_title else ""
+        logger.info(
+            "[resolver] continuation search: title=%r year=%s season=%d ep_title=%r across %d folders",
+            title, year, season, episode_title, len(paths),
+        )
+
+        scored: list[tuple[float, bool, str]] = []
+        for path in paths:
+            folder = Path(path)
+            folder_name = folder.name
+            folder_norm = normalize_series_text(folder_name)
+            folder_tokens = tokenize(folder_name)
+            seasons = self._existing_seasons(folder)
+            prev_season_in = (season - 1) in seasons
+            season_in_target = season in seasons
+            year_match = bool(year_text and year_text in folder_name)
+            if prev_season_in:
+                continuity_bonus = 2.0
+            elif seasons and max(seasons) < season:
+                continuity_bonus = 1.0
+            else:
+                continuity_bonus = 0.0
+
+            arc_match = False
+            if target_arc and folder.is_dir():
+                for child in folder.iterdir():
+                    if not child.is_dir():
+                        continue
+                    arc = season_dir_arc(child.name)
+                    if arc and (arc == target_arc or target_arc in arc or arc in target_arc):
+                        arc_match = True
+                        break
+
+            alias_match = False
+            cheap_gate = bool(
+                (title_tokens & folder_tokens)
+                or year_match
+                or prev_season_in
+                or season_in_target
+                or arc_match
+            )
+            if ep_title_norm and cheap_gate:
+                for alias in series_aliases(path):
+                    alias_norm = normalize_series_text(alias)
+                    if alias_norm and (alias_norm == ep_title_norm or ep_title_norm in alias_norm or alias_norm in ep_title_norm):
+                        alias_match = True
+                        break
+
+            name_equal = bool(folder_norm and title_norm and folder_norm == title_norm)
+            name_subset = bool(title_tokens and title_tokens <= folder_tokens)
+            name_contains = bool(
+                title_norm and (folder_norm.startswith(title_norm) or title_norm in folder_norm)
+            )
+            if not (arc_match or alias_match or name_equal or name_subset or name_contains or year_match):
+                continue
+
+            score = 0.0
+            if arc_match:
+                score += 5.0
+            if alias_match:
+                score += 4.0
+            if name_equal:
+                score += 3.0
+            elif name_subset:
+                score += 2.5
+            elif name_contains:
+                score += 2.0
+            if year_match:
+                score += 1.0
+            if season_in_target:
+                score += 0.5
+            score += continuity_bonus
+            strong = bool(arc_match or alias_match or name_equal or name_subset)
+            has_continuity = bool(continuity_bonus > 0.0)
+            scored.append((score, bool(strong and has_continuity), path))
+
+        if not scored:
+            return None
+        scored.sort(key=lambda item: (-item[0], item[1], item[2]))
+        for score, eligible, path in scored:
+            if eligible:
+                logger.info(
+                    "[resolver] continuation match for %r: %s (score=%.2f)",
+                    title, path, score,
+                )
+                return path
+        return None
 
     def _lookup_series_path(self, series_key: str) -> str | None:
         remembered_path = self._series_path_memory.get(series_key)
@@ -514,13 +734,260 @@ class PathResolver:
             return None
 
         valid_names = season_dir_candidates(season_number)
+        prefix_match: Path | None = None
         for child in sorted(show_dir.iterdir()):
             if not child.is_dir():
                 continue
             child_name = normalize_text(child.name)
             if child_name in valid_names:
                 return child
-        return None
+            if prefix_match is None and any(child_name.startswith(name + " ") for name in valid_names):
+                prefix_match = child
+        return prefix_match
+
+    @staticmethod
+    def _season_number_from_name(name: str) -> int | None:
+        norm = normalize_text(name)
+        match = re.match(r"^(?:season\s*(\d{1,2})|s(\d{1,2}))(?=\s|$)", norm)
+        if not match:
+            return None
+        return int(match.group(1) or match.group(2))
+
+    def _existing_seasons(self, show_dir: Path) -> set[int]:
+        if not show_dir.exists() or not show_dir.is_dir():
+            return set()
+        seasons = set()
+        for child in show_dir.iterdir():
+            if not child.is_dir():
+                continue
+            season_number = self._season_number_from_name(child.name)
+            if season_number is not None:
+                seasons.add(season_number)
+        return seasons
+
+    def _existing_episodes_in_season(self, season_dir: Path) -> set[int]:
+        if not season_dir.exists() or not season_dir.is_dir():
+            return set()
+        episodes = set()
+        for f in season_dir.iterdir():
+            if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS:
+                match = re.search(r"\bs\d{1,2}e(\d{1,3})\b", f.stem.lower())
+                if match:
+                    episodes.add(int(match.group(1)))
+        return episodes
+
+    def _build_series_candidates(
+        self,
+        candidate: CandidateItem,
+        classification: ClassificationResult,
+        all_existing_paths: list[str],
+        chosen_show_dir: Path,
+        series_root: str,
+        show_name: str,
+        is_suspect: bool,
+    ) -> list[CandidateTarget]:
+        title = classification.title or show_name
+        season_number = classification.season or 1
+        year = classification.year
+        episode_title = classification.episode_title
+        arc_text = season_arc_text(Path(candidate.name or "").stem)
+
+        if is_suspect:
+            recall = list(all_existing_paths)
+        else:
+            recall = self._shortlist_target_paths(
+                media_kind="series",
+                title=title,
+                year=year,
+                target_paths=all_existing_paths,
+                desired_name=show_name,
+            )
+
+        candidates: list[CandidateTarget] = []
+        seen: set[str] = set()
+
+        def add(path: str, label: str, evidence: str, source: str = "folder", reclassify: bool = False) -> None:
+            if not path or path in seen:
+                return
+            seen.add(path)
+            candidates.append(CandidateTarget(
+                path=path,
+                label=label,
+                evidence=evidence,
+                source=source,
+                reclassify_as_movie=reclassify,
+            ))
+
+        chosen_path = str(chosen_show_dir)
+        add(
+            chosen_path,
+            chosen_show_dir.name,
+            "Current selection",
+            source="new" if not chosen_show_dir.exists() else "folder",
+        )
+
+        scored: list[tuple[float, str, str]] = []
+        for path in recall:
+            if path == chosen_path:
+                continue
+            score, evidence = self._score_series_candidate(
+                path, title, year, season_number, episode_title, arc_text,
+            )
+            if score > 0:
+                scored.append((score, evidence, path))
+
+        scored.sort(key=lambda item: (-item[0], item[2]))
+        for score, evidence, path in scored:
+            if len(candidates) >= MAX_CANDIDATE_TARGETS:
+                break
+            add(path, Path(path).name, evidence)
+
+        if len(candidates) < MAX_CANDIDATE_TARGETS:
+            default_new = str(Path(series_root) / show_name)
+            if default_new != chosen_path:
+                add(default_new, f"New folder: {show_name}", "New folder", source="new")
+
+        if _candidate_has_movie_marker(candidate) and len(candidates) < MAX_CANDIDATE_TARGETS:
+            movie_folder = self._movie_folder_name(classification)
+            movie_roots_list = list(self._config.paths.movie_roots.values())
+            index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0
+            movie_root = self._pick_drive_root(candidate.source_path, movie_roots_list, index)
+            add(
+                str(Path(movie_root) / movie_folder),
+                f"As movie: {movie_folder}",
+                "Movie marker present — classify as movie",
+                source="movie",
+                reclassify=True,
+            )
+        return candidates
+
+    def _score_series_candidate(
+        self,
+        path: str,
+        title: str,
+        year: int | None,
+        season_number: int,
+        episode_title: str | None,
+        arc_text: str,
+    ) -> tuple[float, str]:
+        folder_name = Path(path).name
+        title_norm = normalize_series_text(title)
+        folder_norm = normalize_series_text(folder_name)
+        evidence: list[str] = []
+        score = 0.0
+
+        if folder_norm and folder_norm == title_norm:
+            score += 3.0
+            evidence.append("name match")
+        score += len(tokenize(title) & tokenize(folder_name)) * 1.5
+
+        year_text = str(year) if year else ""
+        if year_text and year_text in folder_name:
+            score += 1.0
+            evidence.append(f"year {year_text}")
+
+        seasons = self._existing_seasons(Path(path))
+        if seasons:
+            if (season_number - 1) in seasons:
+                score += 2.0
+                evidence.append(f"season {season_number - 1} present")
+            elif any(s < season_number for s in seasons):
+                score += 1.0
+                evidence.append(f"seasons {min(seasons)}-{max(seasons)}")
+
+        if arc_text:
+            arc_tokens = set(arc_text.split())
+            for child in Path(path).iterdir():
+                if not child.is_dir():
+                    continue
+                dir_arc_tokens = set(season_dir_arc(child.name).split())
+                if arc_tokens and (arc_tokens <= dir_arc_tokens or dir_arc_tokens <= arc_tokens):
+                    score += 4.0
+                    evidence.append(f"arc '{child.name}'")
+                    break
+
+        if episode_title:
+            ep_norm = normalize_series_text(episode_title)
+            if ep_norm and ep_norm in normalize_text(folder_name):
+                score += 2.0
+                evidence.append("episode title match")
+
+        if not evidence:
+            evidence.append("similar name")
+        return score, "; ".join(evidence)
+
+    def _build_movie_candidates(
+        self,
+        title: str,
+        year: int | None,
+        all_existing_paths: list[str],
+        chosen_dir: Path,
+        movie_root: str,
+        folder_name: str,
+    ) -> list[CandidateTarget]:
+        recall = self._shortlist_target_paths(
+            media_kind="movie",
+            title=title,
+            year=year,
+            target_paths=all_existing_paths,
+            desired_name=folder_name,
+        )
+
+        candidates: list[CandidateTarget] = []
+        seen: set[str] = set()
+
+        def add(path: str, label: str, evidence: str, source: str = "folder") -> None:
+            if not path or path in seen:
+                return
+            seen.add(path)
+            candidates.append(CandidateTarget(
+                path=path,
+                label=label,
+                evidence=evidence,
+                source=source,
+            ))
+
+        chosen_path = str(chosen_dir)
+        add(
+            chosen_path,
+            Path(chosen_path).name,
+            "Current selection",
+            source="new" if not chosen_dir.exists() else "folder",
+        )
+
+        title_norm = normalize_text(title)
+        scored: list[tuple[float, str, str]] = []
+        for path in recall:
+            if path == chosen_path:
+                continue
+            folder_name_at = Path(path).name
+            folder_norm = normalize_text(folder_name_at)
+            score = 0.0
+            evidence_parts: list[str] = []
+            if folder_norm and folder_norm == title_norm:
+                score += 3.0
+                evidence_parts.append("name match")
+            score += len(tokenize(title) & tokenize(folder_name_at)) * 1.5
+            year_text = str(year) if year else ""
+            if year_text and year_text in folder_name_at:
+                score += 1.0
+                evidence_parts.append(f"year {year_text}")
+            if not evidence_parts:
+                evidence_parts.append("similar name")
+            if score > 0:
+                scored.append((score, "; ".join(evidence_parts), path))
+
+        scored.sort(key=lambda item: (-item[0], item[2]))
+        for score, evidence, path in scored:
+            if len(candidates) >= MAX_CANDIDATE_TARGETS:
+                break
+            add(path, Path(path).name, evidence)
+
+        if len(candidates) < MAX_CANDIDATE_TARGETS:
+            default_new = str(Path(movie_root) / folder_name)
+            if default_new != chosen_path:
+                add(default_new, f"New folder: {folder_name}", "New folder", source="new")
+        return candidates
 
     def _movie_folder_name(self, classification: ClassificationResult) -> str:
         title = sanitize_name(classification.title or "Unknown Movie")

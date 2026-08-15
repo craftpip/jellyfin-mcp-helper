@@ -264,6 +264,28 @@ def test_bonus_recap_is_skipped() -> None:
     assert result.kind == "skip"
 
 
+def test_featurette_is_skipped() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="Neutral Show - Featurettes - Behind the Scenes.mkv",
+            container_path="/data/torrents/Neutral Show [1080p;H265] (2002)",
+            relative_path="Neutral Show - Featurettes - Behind the Scenes.mkv",
+        )
+    )
+    assert result.kind == "skip"
+
+
+def test_featurette_in_folder_is_skipped() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="Behind the Scenes [Featurettes].mkv",
+            container_path="/data/torrents/Neutral Show - Featurettes (2002)",
+            relative_path="Neutral Show - Featurettes/Behind the Scenes [Featurettes].mkv",
+        )
+    )
+    assert result.kind == "skip"
+
+
 def test_sp_decimal_episode_is_skipped() -> None:
     result = classify_candidate(
         _candidate(

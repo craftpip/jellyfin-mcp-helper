@@ -239,7 +239,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems }) {
               {isSeries && <th style={{ width: '90px' }}>Episode</th>}
               <th colSpan={2}>Source → Target Path</th>
               <th style={{ width: '90px', textAlign: 'right' }}>Size</th>
-              <th style={{ width: '70px', textAlign: 'right' }}>Actions</th>
+              <th style={{ width: '70px', textAlign: 'right' }}></th>
             </tr>
           </thead>
           <tbody>
@@ -318,6 +318,16 @@ function ReportRow({ item, isSeries }) {
               Cross-drive
             </span>
           )}
+          {item.suspect && (
+            <span className="suspect-badge" title={item.correctionNote || 'Suspect classification — double-check the target'}>
+              Suspect
+            </span>
+          )}
+          {item.corrected && (
+            <span className="corrected-badge" title={item.correctionNote || 'Reclassified after review'}>
+              Corrected
+            </span>
+          )}
           <span className="path-status">
             <PathPills item={item} />
           </span>
@@ -342,6 +352,11 @@ function ReportRow({ item, isSeries }) {
               }
             }}
           />
+          <div className="target-tools">
+            <button className="small browse-btn" onClick={() => actions.openBrowse(item.confirmId)}>
+              Browse…
+            </button>
+          </div>
         </div>
       </td>
       <td style={{ whiteSpace: 'nowrap', textAlign: 'right', color: '#9aa4ab', fontSize: '0.8rem' }}>

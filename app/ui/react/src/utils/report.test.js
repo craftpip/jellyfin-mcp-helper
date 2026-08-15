@@ -22,6 +22,23 @@ const REPORT = {
       fileExists: false,
       fileSize: 1073741824,
       crossDrive: true,
+      suspect: true,
+      flags: ['phantom_show_folder', 'season_gap'],
+      correctionNote: 'Likely continuation of an existing franchise',
+      candidateTargets: [
+        {
+          path: '/media1/series/Franchise Show/Season 20/Franchise Show S20E01.mkv',
+          label: 'Franchise Show',
+          evidence: 'season 20 present; arc matches',
+          reclassify_as_movie: true,
+        },
+        {
+          path: '/media1/series/Show Name (2020)/Season 01/Show Name S01E01.mkv',
+          label: 'New folder: Show Name (2020)',
+          evidence: '',
+          reclassify_as_movie: false,
+        },
+      ],
     },
     {
       confirmId: 'c2',
@@ -75,6 +92,27 @@ describe('mapReportItems', () => {
     const skip = items.find((i) => i.action === 'skip')
     expect(skip.reason).toBe('No season folder found')
     expect(skip.title).toBe('Skipped items')
+  })
+
+  it('passes through smart-correction fields (flags, suspect, candidates)', () => {
+    const [series] = buildItems()
+    expect(series.suspect).toBe(true)
+    expect(series.flags).toEqual(['phantom_show_folder', 'season_gap'])
+    expect(series.correctionNote).toBe('Likely continuation of an existing franchise')
+    expect(series.candidateTargets).toHaveLength(2)
+    expect(series.candidateTargets[0].path).toBe('/media1/series/Franchise Show/Season 20/Franchise Show S20E01.mkv')
+    expect(series.candidateTargets[0].label).toBe('Franchise Show')
+    expect(series.candidateTargets[0].evidence).toContain('season 20 present')
+    expect(series.candidateTargets[0].reclassify_as_movie).toBe(true)
+  })
+
+  it('defaults candidates/flags to empty when absent', () => {
+    const items = buildItems()
+    const movie = items.find((i) => i.action === 'replace')
+    expect(movie.candidateTargets).toEqual([])
+    expect(movie.flags).toEqual([])
+    expect(movie.suspect).toBe(false)
+    expect(movie.corrected).toBe(false)
   })
 })
 

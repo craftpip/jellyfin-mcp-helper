@@ -890,6 +890,53 @@ async def mcp(request: dict) -> JSONResponse:
                 scan = await manager.confirm_scan(scan_id, item_ids, source_paths, source_prefixes)
                 logger.info("TOOL <<< %s (scan_id=%s)", name, scan_id)
                 response = _format_confirm_progress(scan)
+                queued = response.get("queue_length", 0) > 0
+                if queued:
+                    response["message"] = (
+                        f"A move is already running. This confirm was added to the queue "
+                        f"({response.get('queue_items', 0)} item(s) behind the current move) and will "
+                        "start automatically when the current move finishes."
+                    )
+                    response["tool_purpose"] = "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. A move was already running, so this confirm was queued and will start automatically when the current move finishes."
+                    response["what_happens_now"] = [
+                        "The confirm was added to the queue behind the currently running move.",
+                        "It will start automatically when the current move finishes, without further action.",
+                        "Each planned item in the queued batch is then moved or replaced.",
+                    ]
+                    response["available_now"] = [
+                        "scan_id",
+                        "status",
+                        "queue_length (number of queued confirms behind the running move)",
+                        "queue_items (total item count across queued confirms)",
+                        "processed/total counters for the running move",
+                    ]
+                    instructions = [
+                        "Tell the user the confirm was queued behind the running move and will start automatically when it finishes.",
+                        "The user does not need to do anything else — do not call the confirm tool again.",
+                        "Ask the user if they want to check progress. Do not call any tool automatically.",
+                        "If the user says yes, call 'get move new downloads confirm progress' with this scanId once.",
+                        "If still running, tell the user and ask if they want to check again later.",
+                        "After the queued confirm is done, call 'get move new downloads scan report' to see the results.",
+                    ]
+                    if _is_cross_drive_transfer():
+                        instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer. Warn the user about this.")
+                    response["llm_instructions"] = instructions
+                    response["next"] = "Tell the user the confirm was queued and will start automatically."
+                    return JSONResponse(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": request_id,
+                            "result": {
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": json.dumps(response),
+                                    }
+                                ],
+                                "isError": False,
+                            },
+                        }
+                    )
                 response["message"] = "Confirm started in the background. This tool returns immediately. No files were moved yet."
                 response["tool_purpose"] = "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. It returns immediately and processes in the background. Use the confirm progress tool to track progress."
                 response["what_happens_now"] = [

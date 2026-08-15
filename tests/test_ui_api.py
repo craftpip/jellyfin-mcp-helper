@@ -289,3 +289,137 @@ class TestAdminApiKeyEndpoints:
             res = client.patch(f"/api/admin/api-keys/{created['id']}", json={})
             assert res.status_code == 400
             assert "enabled" in res.json()["detail"]
+
+
+
+class TestBrowseAndRetarget:
+    def _run_scan(self, client, tmp_path, files):
+        downloads = tmp_path / "downloads"
+        downloads.mkdir(exist_ok=True)
+        for name in files:
+            with (downloads / name).open("wb") as fh:
+                fh.truncate(160 * 1024 * 1024)
+        started = client.post("/api/scans", json={"replaceExisting": True})
+        assert started.status_code == 200
+        scan_id = started.json()["scan_id"]
+        for _ in range(200):
+            prog = client.get(f"/api/scans/{scan_id}/progress").json()
+            if prog["status"] in ("completed", "failed"):
+                break
+            import time
+
+            time.sleep(0.02)
+        assert prog["status"] == "completed"
+        return scan_id
+
+    def test_browse_roots_and_listing(self, tmp_path, monkeypatch):
+        series = tmp_path / "series" / "Existing Show"
+        (series / "Season 05").mkdir(parents=True)
+        with (series / "Season 05" / "Existing Show - S05E01.mkv").open("wb") as fh:
+            fh.truncate(1024)
+        (series / "Season 04").mkdir()
+
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            roots = client.get("/api/browse/roots")
+            assert roots.status_code == 200
+            body = roots.json()
+            paths = [r["path"] for r in body["roots"]]
+            assert str(tmp_path / "series") in paths
+            assert str(tmp_path / "movies") in paths
+
+            listing = client.get("/api/browse", params={"path": str(tmp_path / "series")})
+            assert listing.status_code == 200
+            entries = listing.json()["entries"]
+            assert any(e["name"] == "Existing Show" for e in entries)
+
+            show = client.get("/api/browse", params={"path": str(series)})
+            assert show.status_code == 200
+            names = {e["name"]: e for e in show.json()["entries"]}
+            assert "Season 05" in names
+            assert names["Season 05"]["seasonNumber"] == 5
+            assert names["Season 05"]["videoCount"] >= 1
+            assert names["Season 04"]["seasonNumber"] == 4
+            assert show.json()["parent"] == str(tmp_path / "series")
+
+    def test_browse_rejects_non_root_and_missing_dir(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            outside = client.get("/api/browse", params={"path": "/tmp"})
+            assert outside.status_code == 400
+            missing = client.get("/api/browse", params={"path": str(tmp_path / "series" / "nope")})
+            assert missing.status_code == 400
+
+    def test_browse_search(self, tmp_path, monkeypatch):
+        (tmp_path / "series" / "Crumpled Staircase" / "Season 01").mkdir(parents=True)
+        (tmp_path / "series" / "Other Show" / "Season 01").mkdir(parents=True)
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            res = client.get("/api/browse/search", params={"q": "crumpled"})
+            assert res.status_code == 200
+            results = res.json()["results"]
+            assert any(r["name"] == "Crumpled Staircase" for r in results)
+            assert not any(r["name"] == "Other Show" for r in results)
+            empty = client.get("/api/browse/search", params={"q": ""})
+            assert empty.json()["results"] == []
+
+    def test_browse_search_matches_main_folders_only(self, tmp_path, monkeypatch):
+        (tmp_path / "series" / "Crumpled Staircase" / "Season 01").mkdir(parents=True)
+        (tmp_path / "series" / "Crumpled Staircase" / "Season 02").mkdir(parents=True)
+        (tmp_path / "movies" / "Crumpled House").mkdir(parents=True)
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            res = client.get("/api/browse/search", params={"q": "crumpled"})
+            assert res.status_code == 200
+            results = res.json()["results"]
+            names = {r["name"] for r in results}
+            assert "Crumpled Staircase" in names
+            assert "Crumpled House" in names
+            assert not any(n.startswith("Season") for n in names)
+            assert all(r["seasonNumber"] is None for r in results)
+
+    def test_retarget_movie_item(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            scan_id = self._run_scan(client, tmp_path, ["Test Movie (2023).mkv"])
+            report = client.get(f"/api/scans/{scan_id}/report").json()
+            actionable = [i for i in report["items"] if i["action"] in ("move", "replace")]
+            assert actionable
+            item = actionable[0]
+            assert item["itemType"] == "movie"
+
+            new_dir = str(tmp_path / "movies" / "My Choice (2023)")
+            res = client.post(
+                f"/api/scans/{scan_id}/items/retarget",
+                json={"confirmId": item["confirmId"], "directory": new_dir},
+            )
+            assert res.status_code == 200
+            updated_items = res.json()["items"]
+            moved = next(i for i in updated_items if i["confirmId"] == item["confirmId"])
+            assert moved["targetPath"].startswith(new_dir)
+            assert moved["action"] == "move"
+            assert moved["sourcePath"] == item["sourcePath"]
+
+    def test_retarget_validation(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            scan_id = self._run_scan(client, tmp_path, ["Test Movie (2023).mkv"])
+            report = client.get(f"/api/scans/{scan_id}/report").json()
+            confirm_id = [i for i in report["items"] if i["action"] in ("move", "replace")][0]["confirmId"]
+
+            missing = client.post(
+                f"/api/scans/{scan_id}/items/retarget", json={"directory": "/tmp"}
+            )
+            assert missing.status_code == 400
+
+            outside = client.post(
+                f"/api/scans/{scan_id}/items/retarget",
+                json={"confirmId": confirm_id, "directory": "/etc"},
+            )
+            assert outside.status_code == 400
+
+            bad_combo = client.post(
+                f"/api/scans/{scan_id}/items/retarget",
+                json={"confirmId": confirm_id, "directory": str(tmp_path / "movies"), "applyToGroup": True, "reclassifyAsMovie": True},
+            )
+            assert bad_combo.status_code == 400

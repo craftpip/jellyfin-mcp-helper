@@ -41,6 +41,11 @@ export function mapReportItems(report) {
       crossDrive: item.crossDrive || false,
       season,
       episode,
+      candidateTargets: item.candidateTargets || [],
+      flags: item.flags || [],
+      suspect: item.suspect || false,
+      corrected: item.corrected || false,
+      correctionNote: item.correctionNote || '',
     }
   })
 

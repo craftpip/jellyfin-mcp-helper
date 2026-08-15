@@ -1,14 +1,18 @@
 import { useAppStore } from '../store/AppStore.jsx'
 import LibraryScanDropdown from './LibraryScanDropdown.jsx'
+import logoUrl from '../assets/jellysort-logo.png'
 
 export default function TopBar() {
   const { state, actions } = useAppStore()
   return (
     <>
       <div className="top-bar">
-        <div>
-          <h1>JellySort</h1>
-          <div className="subtitle">Move your new files to the dedicated library folders where they belong</div>
+        <div className="brand">
+          <img className="brand-logo" src={logoUrl} alt="JellySort logo" />
+          <div>
+            <h1>JellySort</h1>
+            <div className="subtitle">Move your new files to the dedicated library folders where they belong</div>
+          </div>
         </div>
         <div className="top-actions">
           {state.page !== 'scan' && (

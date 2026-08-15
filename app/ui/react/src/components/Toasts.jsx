@@ -33,11 +33,19 @@ function TransferToasts({ queue, summary }) {
   const failed = summary?.status === 'failed'
 
   const title = done ? 'Move completed' : failed ? 'Confirm failed' : 'Moving ' + processed + ' of ' + total
+  const queueLength = summary?.queueLength || 0
 
   return (
     <>
       <div className="transfer-header">
-        <div className="transfer-title">{title}</div>
+        <div className="transfer-title">
+          {title}
+          {!done && !failed && queueLength > 0 && (
+            <span className="transfer-queued">
+              {' · ' + queueLength + (queueLength === 1 ? ' batch' : ' batches') + ' queued'}
+            </span>
+          )}
+        </div>
         <div className="transfer-progress">
           <div className="fill" style={{ width: Math.min(percent, 100) + '%' }} />
         </div>

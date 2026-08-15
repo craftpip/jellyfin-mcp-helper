@@ -475,7 +475,41 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 ### Test suite counts
 
-Backend `python3 -m pytest tests/` runs **184 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **64 tests**. Keep both green after changes.
+Backend `python3 -m pytest tests/` runs **189 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **68 tests**. Keep both green after changes.
+
+### Browse + retarget (smart correction UI, plan 06 Part G)
+
+**Feature:** The report UI lets a user pick a different target folder for a planned item. Each report item carries `candidateTargets` (scored alternatives incl. `reclassify_as_movie` and "New folder" options) plus `suspect`/`corrected`/`flags`/`correctionNote`. Rows show a "Browse…" button that opens the browse modal (no per-row dropdown — the "Suggested targets" select was removed as useless; browse/search is the correction path).
+
+- Backend routes (all in `app/ui/server.py`, panel-auth protected): `GET /api/browse/roots`, `GET /api/browse?path=`, `GET /api/browse/search?q=`, `POST /api/scans/current/items/retarget` + `/api/scans/{scan_id}/items/retarget`.
+- `ScanManager.retarget_item(scan_id, confirm_id, directory, apply_to_group, reclassify_as_movie)` recomputes the target: series → show dir + existing season dir (via `_pick_existing_season_dir`) or `Season {ss:02d}`; movie → `directory / basename`; reclassify → `item_type="movie"` + `directory / directory.name + ext`. 400s: confirmed/running scan, skip item, reclassify+applyToGroup combo, non-root dir, multi-season group with a season-level pick.
+- Frontend: `BrowseModal.jsx` opens on a **combined "All libraries" view** — no root/kind chips to pick first (the user may not know which library the show belongs to). All media roots are listed as folder rows; clicking one browses into it, and the breadcrumb/`..` return to the combined view. Search (`/api/browse/search`) already searches every movie + series root. `AppStore.retargetItem`, `ReportPanel` Browse/Suspect/Corrected badges, `report.js` passthrough of `candidateTargets`/`flags`/`suspect`/`corrected`/`correctionNote`.
+
+**Browse/search must be cheap — never walk the whole tree.** Media roots have 130+ series folders, some with thousands of files per season:
+- `_browse_entries` counts videos by direct `iterdir()` only. Show folders (subdirs, no direct videos, no season number) report the count of season subfolders instead of a recursive video count. Recursive `rglob` counting hung the listing (same root cause as the resolver hang).
+- `_browse_search_root` is a depth-limited walk (root → show → season, max depth 3) using `os.scandir` (d_type, no stat) with a per-dir child cap (`BROWSE_SEARCH_CHILD_CAP`), junk-name pruning (`BROWSE_IGNORED_NAME_PARTS`: trickplay/extras/sample/…), and results sorted by depth. A full `os.walk` over the roots took ~18s; the depth-limited scandir walk takes ~0.3s.
+- Browse/search read roots from `request.app.state.scan_manager._config`, **not** `get_config()` — the global settings read the real `.env` media roots and must not be trusted for UI listing.
+
+**Verification:** backend `tests/test_ui_api.py::TestBrowseAndRetarget` (5 tests: listing/season numbers, out-of-root + missing-dir 400s, search, movie retarget, retarget validation); frontend `BrowseModal.test.jsx` (drill-down + retarget POST body, search hit) and `report.test.js` (candidate passthrough). Live check via `docker exec jellysort python3 -c "urllib.request...localhost:18327/api/browse/..."` — series-root listing 60 entries in ~0.07s, search ~0.3s.
+
+### Confirms are queued, not rejected, when a move is already running
+
+**Problem:** Clicking Confirm/Start Move while a move was running showed "A move is already running — wait for it to finish" and dropped the request.
+
+**Fix (backend queue is the source of truth, frontend mirrors it):**
+
+- `ScanManager` gains `self._confirm_queue` (list of dicts: scan_id, item_ids, source_paths, source_prefixes, total). `confirm_scan` no longer raises 409 when `confirm_status == "running"` — it computes the total, appends to the queue, and returns the scan immediately.
+- `_start_confirm(...)` is the extracted "start a batch" helper (resets `confirm_processed`/baselines, sets `confirm_status="running"`, creates the task). `_run_confirm_task` ends with `finally: self._start_queued_confirms(scan_id)`, which pops the next queued batch and starts it synchronously — so the frontend never observes a `completed` state while batches remain queued (the backend flips straight back to `running`).
+- `_run_confirm_task` recomputes `scan.confirm_total = len(selected_items)` so queued batches whose items were confirmed by an earlier batch show accurate totals.
+- `ScanPlan` gained `confirm_queue_length`/`confirm_queue_items`, refreshed by `_update_confirm_state`. `format_confirm_progress` exposes `queue_length`/`queue_items` and mentions the queue in `next`. UI server `_confirm_started_response` and the MCP `confirm move new downloads scan` handler return a "was queued" message when `queue_length > 0`.
+
+**Frontend** (`app/store/AppStore.jsx`):
+- The three `confirmActive` toast-blocks in `openConfirmModal`/`confirmSelected`/`confirmGroup` were removed — the modal opens and Start Move always POSTs.
+- `runConfirm` reads `result.queue_length`: when `> 0` it pushes `{ itemIds }` to `pendingBatchesRef`, toasts "Added to queue — will start after the current move finishes", and does NOT rebuild the transfer queue (the running batch's toast queue stays intact). When `0` it starts immediately as before.
+- `pollConfirmProgress` detects a queued batch starting via `result.status === 'running' && p < confirmStateRef.current.completed` (processed reset = new batch), pops `pendingBatchesRef`, rebuilds the transfer queue, resets `confirmStateRef`, and toasts "Queued move started". The button/label and transfer header append "· N queued".
+- `ConfirmModal` shows a warn box ("A move is already running — this batch will be added to the queue…") when `confirmActive`.
+
+**Verification:** backend `tests/test_scan_errors.py::test_confirm_queues_batch_behind_running_move` (two confirms, first runs, second queued, both complete, moved=3); frontend `App.test.jsx` "queues a confirm batch instead of blocking…" and `Toasts.test.jsx` queued-batch header cases. Backend suite is 190 tests, frontend 71.
 
 ## Plans
 

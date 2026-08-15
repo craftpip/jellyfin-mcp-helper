@@ -189,6 +189,113 @@ describe('App integration', () => {
     expect(screen.queryByText('Loading report...')).not.toBeInTheDocument()
   })
 
+  it('queues a confirm batch instead of blocking when a move is already running', async () => {
+    let confirmPosts = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, opts) => {
+        const method = (opts?.method || 'GET').toUpperCase()
+        const path = String(url)
+        let payload = {}
+        if (method === 'GET' && path === '/api/status') {
+          payload = { auth: { required: false } }
+        } else if (method === 'GET' && path === '/api/libraries') {
+          payload = { libraries: [] }
+        } else if (method === 'GET' && path === '/api/scans/current/report') {
+          payload = REPORT
+        } else if (method === 'POST' && path === '/api/scans/current/confirm') {
+          confirmPosts += 1
+          payload = {
+            scan_id: 'scan1',
+            status: 'running',
+            processed: 1,
+            total: 4,
+            queue_length: confirmPosts,
+            queue_items: 2,
+            counts: { moved: 1, replaced: 0, failed: 0 },
+          }
+        } else if (method === 'GET' && path === '/api/scans/current/confirm-progress') {
+          payload = {
+            scan_id: 'scan1',
+            status: 'running',
+            processed: 1,
+            total: 4,
+            queue_length: confirmPosts,
+            queue_items: 2,
+            counts: { moved: 1, replaced: 0, failed: 0 },
+            current_file: '/media1/downloads/Show.S01E01.mkv',
+          }
+        }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+      })
+    )
+    renderApp()
+    await screen.findAllByText('Movie (2024)')
+
+    // First batch: queued behind the running move instead of being blocked.
+    await userEvent.click(screen.getAllByText('Confirm')[0])
+    await userEvent.click(await screen.findByText('Start Move'))
+    expect(await screen.findByText('Added to queue — will start after the current move finishes')).toBeInTheDocument()
+
+    // A second batch: the modal warns it will be queued, and Start Move queues it too.
+    await userEvent.click(screen.getAllByText('Confirm')[1])
+    expect(await screen.findByText('A move is already running')).toBeInTheDocument()
+    expect(screen.getByText(/will be added to the queue/)).toBeInTheDocument()
+
+    await userEvent.click(screen.getByText('Start Move'))
+    const queuedToasts = await screen.findAllByText('Added to queue — will start after the current move finishes')
+    expect(queuedToasts.length).toBeGreaterThanOrEqual(2)
+    expect(confirmPosts).toBe(2)
+  })
+
+  it('starts polling confirm progress and closes the transfer toast when the move completes', async () => {
+    let confirmPosts = 0
+    let progressGets = 0
+    let done = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, opts) => {
+        const method = (opts?.method || 'GET').toUpperCase()
+        const path = String(url)
+        let payload = {}
+        if (method === 'GET' && path === '/api/status') {
+          payload = { auth: { required: false } }
+        } else if (method === 'GET' && path === '/api/libraries') {
+          payload = { libraries: [] }
+        } else if (method === 'GET' && path === '/api/scans/current/report') {
+          payload = REPORT
+        } else if (method === 'POST' && path === '/api/scans/current/confirm') {
+          confirmPosts += 1
+          payload = { scan_id: 'scan1', status: 'running', processed: 0, total: 1, queue_length: 0 }
+        } else if (method === 'GET' && path === '/api/scans/current/confirm-progress') {
+          progressGets += 1
+          if (progressGets >= 2) done = true
+          payload = done
+            ? {
+                scan_id: 'scan1',
+                status: 'completed',
+                processed: 1,
+                total: 1,
+                queue_length: 0,
+                counts: { moved: 1, replaced: 0, failed: 0 },
+              }
+            : { scan_id: 'scan1', status: 'running', processed: 1, total: 1, queue_length: 0 }
+        }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+      })
+    )
+    renderApp()
+    await screen.findAllByText('Movie (2024)')
+
+    await userEvent.click(screen.getAllByText('Confirm')[0])
+    await userEvent.click(await screen.findByText('Start Move'))
+    expect(await screen.findByText('Confirm started in background')).toBeInTheDocument()
+
+    expect(await screen.findByText(/Confirm completed! Moved: 1/, {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(progressGets).toBeGreaterThanOrEqual(2)
+    expect(confirmPosts).toBe(1)
+  })
+
   it('shows scan progress after page load when a scan is already running', async () => {
     vi.stubGlobal(
       'fetch',

@@ -45,6 +45,7 @@ const initialState = {
   toasts: [],
   transferQueue: [],
   transferSummary: null,
+  browseModal: null,
   adminEnv: null,
   adminEnvPending: [],
   adminKeys: [],
@@ -103,6 +104,8 @@ function reducer(state, action) {
       return { ...state, transferSummary: action.summary }
     case 'REMOVE_TRANSFER_ITEM':
       return { ...state, transferQueue: state.transferQueue.filter((t) => t.id !== action.id) }
+    case 'SET_BROWSE':
+      return { ...state, browseModal: action.browse }
     case 'SET_PAGE':
       return { ...state, page: action.page }
     case 'SET_ADMIN_ENV':
@@ -124,6 +127,8 @@ export function AppStoreProvider({ children }) {
   stateRef.current = state
   const timers = useRef({ scanPoll: null, confirmPoll: null, paste: null, transferRemoval: {} })
   const confirmStateRef = useRef({ completed: 0, failed: 0 })
+  const confirmActiveRef = useRef(false)
+  const pendingBatchesRef = useRef([])
   const didInit = useRef(false)
 
   // ---- feedback primitives ----
@@ -532,10 +537,6 @@ export function AppStoreProvider({ children }) {
 
   // ---- confirm ----
   function openConfirmModal(itemIds, label) {
-    if (stateRef.current.confirmActive) {
-      toast('A move is already running — wait for it to finish', 'info')
-      return
-    }
     dispatch({ type: 'SET_CONFIRM_MODAL', modal: { open: true, itemIds, label, progress: null } })
   }
 
@@ -550,10 +551,6 @@ export function AppStoreProvider({ children }) {
     })
     if (!ids.length) {
       toast('No move/replace items selected (skipped items are not movable)', 'info')
-      return
-    }
-    if (stateRef.current.confirmActive) {
-      toast('A move is already running — wait for it to finish', 'info')
       return
     }
     openConfirmModal(ids, 'selected items')
@@ -571,15 +568,34 @@ export function AppStoreProvider({ children }) {
       toast('Select at least one item in this group', 'info')
       return
     }
-    if (stateRef.current.confirmActive) {
-      toast('A move is already running — wait for it to finish', 'info')
-      return
-    }
     openConfirmModal(ids, '"' + group.title + '"')
   }
 
   async function runConfirm(itemIds) {
+    log('Confirming ' + itemIds.length + ' item(s)...', 'info')
     try {
+      const result = await apiPost('/scans/current/confirm', {
+        scanId: stateRef.current.scanId,
+        itemIds,
+      })
+      const queued = (result.queue_length || 0) > 0
+      if (queued) {
+        // A move is running on the backend: this batch is queued and will start
+        // automatically when the current move finishes. Keep the running batch's
+        // transfer queue intact; pollConfirmProgress rebuilds it for this batch
+        // once the backend actually starts it.
+        pendingBatchesRef.current.push({ itemIds })
+        confirmActiveRef.current = true
+        dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: true })
+        dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm running...' })
+        dispatch({ type: 'SET_CONFIRM_MODAL', modal: { open: false, itemIds: [], label: '', progress: null } })
+        log('Confirm queued — ' + itemIds.length + ' item(s) behind the current move', 'info')
+        toast('Added to queue — will start after the current move finishes', 'good')
+        if (timers.current.confirmPoll) clearTimeout(timers.current.confirmPoll)
+        pollConfirmProgress()
+        return
+      }
+      confirmActiveRef.current = true
       dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: true })
       if (timers.current.scanPoll) clearTimeout(timers.current.scanPoll)
       Object.values(timers.current.transferRemoval || {}).forEach(clearTimeout)
@@ -593,17 +609,13 @@ export function AppStoreProvider({ children }) {
       })
       dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm running...' })
       dispatch({ type: 'SET_CONFIRM_MODAL', modal: { open: false, itemIds: [], label: '', progress: null } })
-      log('Confirming ' + itemIds.length + ' item(s)...', 'info')
-      const result = await apiPost('/scans/current/confirm', {
-        scanId: stateRef.current.scanId,
-        itemIds,
-      })
       log('Confirm started! ID: ' + stateRef.current.scanId, 'good')
       toast('Confirm started in background', 'good')
       pollConfirmProgress()
     } catch (e) {
       log('Confirm error: ' + e.message, 'err')
       toast('Confirm error: ' + e.message, 'err')
+      confirmActiveRef.current = false
       dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
       dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
       dispatch({ type: 'SET_TRANSFER_QUEUE', queue: [] })
@@ -613,12 +625,31 @@ export function AppStoreProvider({ children }) {
   }
 
   async function pollConfirmProgress() {
-    if (!stateRef.current.confirmActive) return
+    if (!confirmActiveRef.current) return
     try {
       const result = await apiGet('/scans/current/confirm-progress')
       const p = result.processed ?? 0
       const t = result.total ?? 0
-      log('Confirm progress: ' + p + '/' + t + ' (' + (result.status || 'unknown') + ')', 'info')
+      const queueLength = result.queue_length || 0
+      log(
+        'Confirm progress: ' + p + '/' + t + ' (' + (result.status || 'unknown') + ')' +
+          (queueLength > 0 ? ' · ' + queueLength + ' queued' : ''),
+        'info'
+      )
+
+      if (result.status === 'running' && p < confirmStateRef.current.completed) {
+        // A queued confirm batch just started: the backend reset the per-batch
+        // counters, so this tab must swap its transfer queue to the new batch.
+        log('Queued confirm batch started — ' + queueLength + ' still behind', 'info')
+        const next = pendingBatchesRef.current.shift()
+        if (next) {
+          const queue = buildTransferQueue(next.itemIds, stateRef.current.currentItems)
+          dispatch({ type: 'SET_TRANSFER_QUEUE', queue })
+        }
+        confirmStateRef.current = { completed: 0, failed: 0 }
+        toast('Queued move started', 'good')
+      }
+
       const derived = deriveTransferQueue(stateRef.current.transferQueue, result, confirmStateRef.current)
       confirmStateRef.current = derived.state
       dispatch({ type: 'SET_TRANSFER_QUEUE', queue: derived.queue })
@@ -629,33 +660,46 @@ export function AppStoreProvider({ children }) {
           total: result.total ?? 0,
           status: result.status,
           counts: result.counts || {},
+          queueLength,
+          queueItems: result.queue_items || 0,
         },
       })
       scheduleTransferRemovals(derived.queue)
 
       if (result.status === 'completed' || result.status === 'idle') {
-        dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
-        dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
-        const moved = result.counts?.moved || 0
-        const replaced = result.counts?.replaced || 0
-        const failed = result.counts?.failed || 0
-        log('Confirm completed. Moved: ' + moved + ', Replaced: ' + replaced + ', Failed: ' + failed, 'good')
-        toast('Confirm completed! Moved: ' + moved + ', Replaced: ' + replaced + ', Failed: ' + failed, 'good')
-        setTimeout(fetchReport, 800)
-        return
+        if (queueLength === 0) {
+          confirmActiveRef.current = false
+          dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
+          dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
+          const moved = result.counts?.moved || 0
+          const replaced = result.counts?.replaced || 0
+          const failed = result.counts?.failed || 0
+          log('Confirm completed. Moved: ' + moved + ', Replaced: ' + replaced + ', Failed: ' + failed, 'good')
+          toast('Confirm completed! Moved: ' + moved + ', Replaced: ' + replaced + ', Failed: ' + failed, 'good')
+          setTimeout(fetchReport, 800)
+          return
+        }
+        // Defensive: a queued batch remains and the backend starts it right after
+        // marking this one complete, so keep confirmActive and keep polling.
       }
       if (result.status === 'failed') {
-        dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
-        dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
-        return
+        if (queueLength === 0) {
+          confirmActiveRef.current = false
+          dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
+          dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
+          return
+        }
+        // Defensive: queued batches remain and the backend starts the next one
+        // right after the failure, so keep confirmActive and keep polling.
       }
       if (result.status === 'running') {
-        dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Moving ' + p + '/' + t + '...' })
+        const label = 'Moving ' + p + '/' + t + '...' + (queueLength > 0 ? ' · ' + queueLength + ' queued' : '')
+        dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label })
       }
     } catch (e) {
       log('Confirm progress error: ' + e.message, 'err')
     }
-    if (stateRef.current.confirmActive) {
+    if (confirmActiveRef.current) {
       if (timers.current.confirmPoll) clearTimeout(timers.current.confirmPoll)
       timers.current.confirmPoll = setTimeout(pollConfirmProgress, POLL_INTERVAL_MS)
     }
@@ -715,6 +759,44 @@ export function AppStoreProvider({ children }) {
     } catch (e) {
       log('Delete error: ' + e.message, 'err')
       toast('Delete error: ' + e.message, 'err')
+    }
+  }
+
+  // ---- browse + retarget (smart correction) ----
+  function openBrowse(confirmId) {
+    dispatch({ type: 'SET_BROWSE', browse: { open: true, confirmId } })
+  }
+
+  function closeBrowse() {
+    dispatch({ type: 'SET_BROWSE', browse: null })
+  }
+
+  async function retargetItem(confirmId, directory, applyToGroup = false, reclassifyAsMovie = false) {
+    if (stateRef.current.confirmActive) {
+      toast('Wait for the current move to finish first', 'info')
+      return
+    }
+    const item = stateRef.current.currentItems.find((i) => i.confirmId === confirmId)
+    if (!item) return
+    try {
+      await apiPost('/scans/current/items/retarget', {
+        scanId: stateRef.current.scanId,
+        confirmId,
+        directory,
+        applyToGroup,
+        reclassifyAsMovie,
+      })
+      const label = item.title || 'item'
+      log(
+        'Retargeted "' + label + '" to ' + directory +
+          (applyToGroup ? ' (group)' : '') + (reclassifyAsMovie ? ' as movie' : ''),
+        'good'
+      )
+      toast('Target updated for "' + label + '"', 'good')
+      fetchReport()
+    } catch (e) {
+      log('Retarget error: ' + e.message, 'err')
+      toast('Retarget error: ' + e.message, 'err')
     }
   }
 
@@ -867,6 +949,9 @@ export function AppStoreProvider({ children }) {
     pollConfirmProgress,
     deleteSourceItem,
     deleteSelectedSkipped,
+    openBrowse,
+    closeBrowse,
+    retargetItem,
     setPage,
     loadEnv,
     saveEnv,
