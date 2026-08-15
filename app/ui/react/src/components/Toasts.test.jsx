@@ -102,3 +102,24 @@ describe('Toasts transfer queue', () => {
     expect(screen.getByText('Confirm failed')).toBeInTheDocument()
   })
 })
+
+describe('Toasts bottom-right consolidation', () => {
+  it('shows status toasts like delete confirmations in the same container', () => {
+    mockStore = {
+      ...mockStore,
+      toasts: [
+        { id: 't1', type: 'good', msg: 'Deleted: alpha.mkv' },
+        { id: 't2', type: 'err', msg: 'Delete error: no such file' },
+      ],
+    }
+    const { container } = render(<Toasts />)
+    expect(container.querySelector('.transfer-toasts')).toBeTruthy()
+    expect(container.querySelector('.transfer-toast.toast-good').textContent).toBe('Deleted: alpha.mkv')
+    expect(container.querySelector('.transfer-toast.toast-err').textContent).toBe('Delete error: no such file')
+  })
+
+  it('renders nothing when there are no toasts and no activity', () => {
+    const { container } = render(<Toasts />)
+    expect(container.querySelector('.transfer-toasts')).toBeNull()
+  })
+})

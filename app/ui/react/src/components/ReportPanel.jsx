@@ -69,8 +69,8 @@ export default function ReportPanel() {
         {[
           ['Movies', summary.movies ?? 0, ''],
           ['Series', summary.series ?? 0, ''],
-          ['Skipped', summary.skipped ?? 0, '#8b949e'],
-          ['Actions Needed', summary.action_required ?? 0, '#d29922'],
+          ['Skipped', summary.skipped ?? 0, '#9aa4ab'],
+          ['Actions Needed', summary.action_required ?? 0, '#e8b34b'],
         ].map(([label, value, color]) => (
           <div className="summary-pill" key={label} style={color ? { color } : undefined}>
             <strong>{value}</strong> {label}
@@ -82,8 +82,8 @@ export default function ReportPanel() {
               onClick={() => actions.copyText(summary.scan_id)}
               style={{
                 cursor: 'pointer',
-                borderBottom: '1px dashed #8b949e',
-                color: '#8b949e',
+                borderBottom: '1px dashed #9aa4ab',
+                color: '#9aa4ab',
                 fontSize: '0.8rem',
               }}
               title="Click to copy"
@@ -147,7 +147,7 @@ export default function ReportPanel() {
 
       <div id="reportItems">
         {reportGroups.length === 0 && (
-          <div style={{ color: '#8b949e' }}>No items to review.</div>
+          <div style={{ color: '#9aa4ab' }}>No items to review.</div>
         )}
         {reportGroups.map((group, gi) => {
           const gid = 'group-' + gi
@@ -238,8 +238,8 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems }) {
               <th style={{ width: '150px' }}>Action</th>
               {isSeries && <th style={{ width: '90px' }}>Episode</th>}
               <th colSpan={2}>Source → Target Path</th>
-              <th style={{ width: '90px' }}>Size</th>
-              <th style={{ width: '110px' }}>Actions</th>
+              <th style={{ width: '90px', textAlign: 'right' }}>Size</th>
+              <th style={{ width: '70px', textAlign: 'right' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -283,7 +283,7 @@ function ReportRow({ item, isSeries }) {
             <span className="skip-reason">{item.reason || ''}</span>
           </div>
         </td>
-        <td style={{ whiteSpace: 'nowrap', color: '#8b949e', fontSize: '0.8rem' }}>
+        <td style={{ whiteSpace: 'nowrap', textAlign: 'right', color: '#9aa4ab', fontSize: '0.8rem' }}>
           {item.fileSize ? formatBytes(item.fileSize) : ''}
         </td>
         <td style={{ textAlign: 'right' }}>
@@ -344,7 +344,7 @@ function ReportRow({ item, isSeries }) {
           />
         </div>
       </td>
-      <td style={{ whiteSpace: 'nowrap', color: '#8b949e', fontSize: '0.8rem' }}>
+      <td style={{ whiteSpace: 'nowrap', textAlign: 'right', color: '#9aa4ab', fontSize: '0.8rem' }}>
         {item.fileSize ? formatBytes(item.fileSize) : ''}
       </td>
       <td style={{ textAlign: 'right' }}>

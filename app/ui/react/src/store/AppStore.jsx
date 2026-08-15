@@ -222,7 +222,12 @@ export function AppStoreProvider({ children }) {
       }
       if (result.progress) {
         dispatch({ type: 'SET_REPORT_LOADING', reportLoading: false })
-        log('Scan is still running — check progress first', 'warn')
+        log('Scan is still running — showing live progress', 'info')
+        dispatch({ type: 'SET_SCAN_RUNNING', scanRunning: true })
+        dispatch({ type: 'SET_SCAN_PROGRESS', progress: result.progress })
+        if (result.progress.scan_id) dispatch({ type: 'SET_SCAN_ID', scanId: result.progress.scan_id })
+        if (result.summary?.scan_id) dispatch({ type: 'SET_SCAN_ID', scanId: result.summary.scan_id })
+        pollScanProgress()
         return
       }
       dispatch({ type: 'SET_SCAN_RUNNING', scanRunning: false })

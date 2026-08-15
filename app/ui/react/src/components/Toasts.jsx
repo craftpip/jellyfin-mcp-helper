@@ -5,17 +5,20 @@ const MAX_VISIBLE_QUEUE = 12
 
 export default function Toasts() {
   const { state } = useAppStore()
+  const showTransfer = state.transferQueue.length > 0
+  const hasAny = showTransfer || state.toasts.length > 0
+
+  if (!hasAny) return null
+
   return (
-    <>
+    <div className="transfer-toasts" id="transferToasts" role="status" aria-live="polite">
       {state.toasts.map((t) => (
-        <div key={t.id} className={'toast ' + t.type} role="status">
+        <div key={t.id} className={'transfer-toast toast-' + t.type} role="status">
           {t.msg}
         </div>
       ))}
-      {state.transferQueue.length > 0 && (
-        <TransferToasts queue={state.transferQueue} summary={state.transferSummary} />
-      )}
-    </>
+      {showTransfer && <TransferToasts queue={state.transferQueue} summary={state.transferSummary} />}
+    </div>
   )
 }
 
@@ -32,7 +35,7 @@ function TransferToasts({ queue, summary }) {
   const title = done ? 'Move completed' : failed ? 'Confirm failed' : 'Moving ' + processed + ' of ' + total
 
   return (
-    <div className="transfer-toasts" id="transferToasts" role="status" aria-live="polite">
+    <>
       <div className="transfer-header">
         <div className="transfer-title">{title}</div>
         <div className="transfer-progress">
@@ -76,6 +79,6 @@ function TransferToasts({ queue, summary }) {
         ))}
         {extra > 0 && <div className="transfer-extra">+{extra} more in queue</div>}
       </div>
-    </div>
+    </>
   )
 }

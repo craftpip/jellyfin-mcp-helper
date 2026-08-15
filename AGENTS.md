@@ -475,7 +475,7 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 ### Test suite counts
 
-Backend `python3 -m pytest tests/` runs **184 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **56 tests**. Keep both green after changes.
+Backend `python3 -m pytest tests/` runs **184 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **64 tests**. Keep both green after changes.
 
 ## Plans
 

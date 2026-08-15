@@ -189,6 +189,51 @@ describe('App integration', () => {
     expect(screen.queryByText('Loading report...')).not.toBeInTheDocument()
   })
 
+  it('shows scan progress after page load when a scan is already running', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, opts) => {
+        const method = (opts?.method || 'GET').toUpperCase()
+        const path = String(url)
+        let payload = {}
+        if (method === 'GET' && path === '/api/status') {
+          payload = { auth: { required: false } }
+        } else if (method === 'GET' && path === '/api/libraries') {
+          payload = { libraries: [] }
+        } else if (method === 'GET' && path === '/api/scans/current/report') {
+          payload = {
+            summary: { scan_id: 's1', status: 'running' },
+            progress: {
+              scan_id: 's1',
+              status: 'running',
+              processed: 3,
+              total: 10,
+              percent: 30,
+              current_file: '/media1/downloads/Show.mkv',
+            },
+          }
+        } else if (method === 'GET' && path === '/api/scans/current/progress') {
+          payload = {
+            scan_id: 's1',
+            status: 'running',
+            processed: 3,
+            total: 10,
+            percent: 30,
+            current_file: '/media1/downloads/Show.mkv',
+          }
+        }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+      })
+    )
+    renderApp()
+
+    expect(await screen.findByText('Scanning...', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.getByText('30%')).toBeInTheDocument()
+    expect(screen.getByText('3/10')).toBeInTheDocument()
+    expect(screen.getByText('/media1/downloads/Show.mkv')).toBeInTheDocument()
+    expect(screen.queryByText('Start Scan')).not.toBeInTheDocument()
+  })
+
   it('keeps Start Scan visible when logs are shown and no report exists', async () => {
     vi.stubGlobal(
       'fetch',

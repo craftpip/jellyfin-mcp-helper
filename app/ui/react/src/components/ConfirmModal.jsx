@@ -30,7 +30,7 @@ function PreflightView({ itemIds, label }) {
             ['Items', items.length],
             ['Move', moveCount],
             ['Replace', replaceCount],
-            crossCount > 0 && ['Cross-drive', crossCount, '#d29922'],
+            crossCount > 0 && ['Cross-drive', crossCount, '#e8b34b'],
             ['Total size', totalSize ? formatBytes(totalSize) : '—'],
           ]
             .filter(Boolean)
@@ -85,7 +85,7 @@ function PreflightView({ itemIds, label }) {
             )
           })}
           {items.length > 8 && (
-            <div className="confirm-row" style={{ color: '#8b949e', alignItems: 'center' }}>
+            <div className="confirm-row" style={{ color: '#9aa4ab', alignItems: 'center' }}>
               +{items.length - 8} more
             </div>
           )}

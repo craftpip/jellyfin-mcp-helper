@@ -69,23 +69,19 @@ export default function ApiKeysPage() {
           <div className="keys-list">
             {keys.map((key) => (
               <div className="keys-row" key={key.id}>
-                <div className="keys-row-top">
-                  <span className="key-name">{key.name}</span>
-                  <span className="key-created">Created {formatDateTime(key.created_at)}</span>
-                  <button type="button" className="small danger" onClick={() => onDelete(key)}>
-                    Delete
-                  </button>
-                </div>
-                <div className="keys-row-bottom">
-                  <code className="key-masked" title="Only the start and end of the key are shown">
-                    {key.key_prefix}
-                    {'*'.repeat(6)}
-                    {key.key_suffix || ''}
-                  </code>
-                  <span className={'key-used' + (key.last_used_at ? '' : ' never')}>
-                    {key.last_used_at ? 'Last used ' + formatDateTime(key.last_used_at) : 'Never used'}
-                  </span>
-                </div>
+                <span className="key-name">{key.name}</span>
+                <span className="key-created">Created {formatDateTime(key.created_at)}</span>
+                <code className="key-masked" title="Only the start and end of the key are shown">
+                  {key.key_prefix}
+                  {'*'.repeat(6)}
+                  {key.key_suffix || ''}
+                </code>
+                <span className={'key-used' + (key.last_used_at ? '' : ' never')}>
+                  {key.last_used_at ? 'Last used ' + formatDateTime(key.last_used_at) : 'Never used'}
+                </span>
+                <button type="button" className="small danger" onClick={() => onDelete(key)}>
+                  Delete
+                </button>
               </div>
             ))}
           </div>
