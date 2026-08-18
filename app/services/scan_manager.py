@@ -340,7 +340,11 @@ class ScanManager:
                 flags: list[str] = []
                 if classification.kind == "series" and resolved.season_number and resolved.episode_number:
                     series_key = resolved.series_key or ""
-                    if resolved.phantom_show_folder and (resolved.season_number > 1 or resolved.episode_number > 1):
+                    if (
+                        resolved.phantom_show_folder
+                        and (resolved.season_number > 1 or resolved.episode_number > 1)
+                        and series_key not in planned_seasons
+                    ):
                         flags.append("phantom_show_folder")
                     if (
                         resolved.season_number > 1
