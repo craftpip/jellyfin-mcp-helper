@@ -2,6 +2,17 @@
 
 An API service and MCP server for organizing downloaded media into a Jellyfin library. It scans download folders, classifies items, plans target paths, lets you review or edit the plan, then confirms the move and optionally refreshes Jellyfin.
 
+## Documentation Sync
+
+The docs in this repo (`README.md`, `docs/`, `AGENTS.md`) describe the code
+at a specific commit, kept in sync by the recursive plan
+`plans/07-code-doc-sync.md` (never deleted, run repeatedly).
+
+- **Last synced commit:** `02befd2` (2026-08-18)
+
+To sync: review `git log --oneline 02befd2..HEAD`, update the docs for every
+commit in that range, then set this line to the new HEAD.
+
 ## Features
 
 - **Scan -> review -> confirm workflow**: build a move plan before writing anything.
@@ -11,16 +22,13 @@ An API service and MCP server for organizing downloaded media into a Jellyfin li
 - **Jellyfin tools**: list libraries, browse items, inspect ongoing series, and trigger targeted scans.
 - **Release Tracker**: store and query locally tracked next-release dates for ongoing series.
 - **qBittorrent integration**: can stop active downloads before moving files.
-- **Model-backed classification**: supports `ollama` or `openrouter`.
+- **Guessit + regex classification**: local, pattern-based (no external model required).
 
 ## Requirements
 
 1. Python 3.11+ or Docker.
-2. A model provider for classification:
-   - `ollama` (default), or
-   - `openrouter` with `OPENROUTER_API_KEY`.
-3. Optional qBittorrent MCP server for download-state checks and pre-move handling.
-4. Optional Jellyfin server + API key for library refresh and Jellyfin MCP tools.
+2. Optional qBittorrent MCP server for download-state checks and pre-move handling.
+3. Optional Jellyfin server + API key for library refresh and Jellyfin MCP tools.
 
 ## Quick Start
 
@@ -35,15 +43,6 @@ cp .env.example .env
 Common settings:
 
 ```env
-# Model provider
-MODEL_PROVIDER=ollama
-MODEL_BASE_URL=http://localhost:11434
-MODEL_NAME=llama3.2:1b
-
-# Or use OpenRouter instead
-# MODEL_PROVIDER=openrouter
-# OPENROUTER_API_KEY=your-key
-
 # Optional qBittorrent integration
 ENABLE_DOWNLOAD_CLIENT_CHECK=true
 DOWNLOAD_CLIENT=qbittorrent
@@ -86,17 +85,14 @@ Current compose example:
 
 ```yaml
 services:
-  organizer:
+  jellysort:
     ports:
       - "18328:18327"
     volumes:
       - /path/to/downloads1:/media1
       - /path/to/downloads2:/media2
       - /path/to/downloads3:/media3
-      - ./app:/app/app
-      - ./config:/app/config
-      - ./logs:/app/logs
-      - ./reports:/app/reports
+      - .:/app
 ```
 
 Example host-to-container mapping:
@@ -196,7 +192,7 @@ The UI talks to the backend through native `/api` REST routes (no MCP round-trip
 
 - `GET /api/status` — service info + `auth.required`.
 - `GET /api/libraries` — Jellyfin library list.
-- `POST /api/libraries/{name}/scan` — trigger a library scan.
+- `POST /api/libraries/scan` — trigger a library scan (`{libraryName, ...}` in the body).
 - `POST /api/scans` — create a scan.
 - `GET /api/scans/{scan_id}/progress` and `/report` (`current` variants exist) — poll + report.
 - `PATCH /api/scans/current/items` — edit target paths.
@@ -318,10 +314,8 @@ Important variables from `.env.example`:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `MODEL_PROVIDER` | No | `ollama` or `openrouter` |
-| `OPENROUTER_API_KEY` | If using OpenRouter | OpenRouter API key |
-| `MODEL_BASE_URL` | Usually yes | Model endpoint URL |
-| `MODEL_NAME` | No | Model name, default `llama3.2:1b` |
+| `MODEL_CLASSIFY_CONFIDENCE_THRESHOLD` | No | Min confidence for a classification result (0.65) |
+| `MODEL_PATH_CONFIDENCE_THRESHOLD` | No | Min confidence for a path-resolution match (0.6) |
 | `ENABLE_DOWNLOAD_CLIENT_CHECK` | No | Enable qBittorrent download-state checks |
 | `DOWNLOAD_CLIENT` | No | Download client type, currently `qbittorrent` |
 | `QBT_MCP_URL` | If qBittorrent enabled | qBittorrent MCP endpoint |
@@ -334,9 +328,15 @@ Important variables from `.env.example`:
 | `DOWNLOAD_ROOTS` | Yes | Comma-separated download roots |
 | `MOVIE_ROOTS` | Yes | Comma-separated movie roots, optional `::description` |
 | `SERIES_ROOTS` | Yes | Comma-separated series roots, optional `::description` |
+| `SERIES_TITLE_ALIASES` | No | `alias::canonical` entries mapping release titles to library folder names |
 | `WEB_UI_ENABLED` | No | Enable the web UI (served on the same port as MCP, 18328) |
 | `WEB_UI_PORT` | No | Deprecated — unused. The web UI shares the MCP port |
 | `UI_PANEL_PASSWORD` | No | Panel password; when set, the web UI requires login |
+| `MCP_ALLOW_UNAUTHENTICATED` | No | Allow unauthenticated MCP requests (default `true`); when `false`, `/mcp` needs an API key or `ADMIN_UI_TOKEN` |
+| `ADMIN_UI_TOKEN` | No | Master key accepted by MCP auth for the `admin` user |
+
+Full variable reference and the live-vs-restart apply model:
+[docs/getting-started/configuration.md](docs/getting-started/configuration.md).
 
 ## Development
 

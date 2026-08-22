@@ -23,7 +23,7 @@ stateless; every scan starts from the filesystem.
 
 ### `scan_candidates(paths_config) -> ScanCandidatesResult`
 
-Full scan used by the organizer:
+Full scan used by the scan/plan workflow:
 
 1. For each `download_root` in `PathsConfig.download_roots`:
    - Skip roots that don't exist (recording an error).

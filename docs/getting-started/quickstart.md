@@ -11,15 +11,6 @@ cp .env.example .env
 Common settings:
 
 ```env
-# Model provider
-MODEL_PROVIDER=ollama
-MODEL_BASE_URL=http://localhost:11434
-MODEL_NAME=llama3.2:1b
-
-# Or use OpenRouter instead
-# MODEL_PROVIDER=openrouter
-# OPENROUTER_API_KEY=your-key
-
 # Optional qBittorrent integration
 ENABLE_DOWNLOAD_CLIENT_CHECK=true
 DOWNLOAD_CLIENT=qbittorrent

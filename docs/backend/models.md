@@ -9,10 +9,8 @@ uses snake_case while the wire format uses camelCase.
 | Type | Values |
 | --- | --- |
 | `OperationMode` | `organize`, `normalize` |
-| `NormalizeMode` | `safe`, `full` |
 | `ItemKind` | `movie`, `series`, `skip` |
 | `ScanStatus` | `running`, `completed`, `confirmed`, `failed`, `cancelled` |
-| `RunStatus` | `queued`, `running`, `completed`, `failed`, `cancelled` |
 
 ## ScanRequest
 
@@ -21,9 +19,7 @@ Input for `POST /scans` and `move new downloads scan`.
 | Field | Wire alias | Default | Meaning |
 | --- | --- | --- | --- |
 | `replace_existing` | `replaceExisting` | `true` | When false, existing targets are planned as `skip`. |
-| `operation` | — | `organize` | `organize` or `normalize`. |
-| `allow_medium` | `allowMedium` | `false` | Allow medium confidence classifications. |
-| `use_local_ai` | `useLocalAI` | `false` | Use the external LLM classifier. |
+| `operation` | — | `organize` | `organize` (kept for concept compatibility; the normalize path was removed). |
 
 ## CandidateItem
 
@@ -67,6 +63,22 @@ Output of the resolver.
 | `created_show_folder` / `created_movie_folder` | Whether the folder was created. |
 | `existing_match` | Matched existing path when reused. |
 | `show_folder_exists` / `season_folder_exists` | Pre-existing folder flags. |
+| `phantom_show_folder` | Show dir resolved from in-scan memory only (not on disk). |
+| `has_previous_season` / `max_existing_season` | Continuity evidence used by suspect detection. |
+| `candidate_targets` | `CandidateTarget[]` — scored alternative destinations (top-N, incl. below-threshold options a user may deliberately pick). |
+
+## CandidateTarget
+
+One alternative destination considered during resolution (produced by the
+resolver shortlist / deep re-search).
+
+| Field | Meaning |
+| --- | --- |
+| `path` | Full target file path (target dir + filename). |
+| `label` | Short display label (e.g. `existing folder`, `new folder`). |
+| `evidence` | Why it was considered (e.g. `name match`, `year 2020`, `season 4 present`, `arc '<subdir>'`, `episode title match`, `New folder`, `Movie marker present — classify as movie`). |
+| `source` | Where it came from: `folder` (existing match / current selection), `new` (default new-folder path), `movie` (reclassify-as-movie destination). |
+| `reclassify_as_movie` | Selecting this option also flips the item's `item_type` to `movie` and clears season/episode, not just the path. |
 
 ## ScannedItem
 
@@ -86,6 +98,11 @@ One planned item in a scan.
 | `show_folder_exists` / `season_folder_exists` / `file_exists` | — | Target existence flags. |
 | `file_size` | `fileSize` | Size in bytes. |
 | `cross_drive` | `crossDrive` | True when source and target are on different drives. |
+| `suspect` | — | Continuity signals fired (phantom show folder, season gap, or episode gap). |
+| `flags` | — | `phantom_show_folder` \| `season_gap` \| `episode_gap` |
+| `corrected` | `corrected` | Auto re-targeted by the deep search (or manually overridden). |
+| `correction_note` | `correctionNote` | Explanation when suspect/corrected. |
+| `candidate_targets` | `candidateTargets` | `CandidateTarget[]` exposed in report items. |
 
 ## ScanCounts
 
@@ -114,20 +131,22 @@ The scan state machine. Core fields:
     `confirm_current_copied_bytes`, `confirm_current_speed_bytes`,
     `confirm_current_percent`, `confirm_cross_drive`
   - `confirm_note`, `confirm_last_update_at`
+  - `confirm_queue_length` — confirms requested while one is running are
+    **queued, not rejected**; this is the currently pending count.
+  - `confirm_queue_items` — item count across all queued batches.
+- Planned-coverage tracking (per-scan, used by suspect detection):
+  `planned_episodes` per `(series_key, season)` and `planned_seasons` per
+  `series_key` — so a batch download (S21E01..E13 in one scan) is not flagged
+  as a season/episode gap.
 
-## ScanLogEntry / RunLogEntry
+## ScanLogEntry
 
-Structured log entries: `timestamp`, `level` (`info|warning|error`), `event`,
+Structured log entry: `timestamp`, `level` (`info|warning|error`), `event`,
 `message`, optional `item_path`, and `details` dict.
 
-## Legacy run models
+## Legacy `/runs` endpoints
 
-Kept for backward compatibility with the `/runs` endpoints:
-
-- `RunRequest` — `dryRun`, `replace_existing`, `operation`, `normalize_mode`,
-  `allow_medium`, `use_local_ai`.
-- `ProgressCounts` — `scanned`, `classified`, `moved`, `replaced`, `skipped`,
-  `failed`.
-- `RunState` — full legacy run state: `run_id`, `status`, flags, `counts`,
-  `logs`, `active_step`, `active_item_path`, `ai_thinking`, `ai_output`,
-  `summary_path`, `log_path`, `error`.
+`GET /runs/current` and `POST /runs` are thin compatibility aliases over
+`ScanPlan` / `ScanRequest` (see [api.md](api.md)) — the old `RunState`,
+`RunRequest`, and `ProgressCounts` schemas were removed with the legacy run
+stack. New integrations should use `/scans`.

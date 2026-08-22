@@ -23,6 +23,29 @@ Components consume it via `useAppStore()` which returns `{ state, actions }`.
 | `confirmActive` / `confirmButtonLabel` / `confirmModal` | Confirm workflow state. |
 | `logEntries` | In-memory log (capped at `LOG_LIMIT = 1000`). |
 | `toasts` | Transient toast messages. |
+| `page` | Active SPA page (`scan` / `settings` / `apikeys`), from `window.location.pathname`. |
+| `envSpec` / `envSaved` / `envEffective` | Settings page data (`GET /api/admin/env`). |
+| `apiKeys` | API-key list (`GET /api/admin/api-keys`). |
+
+## Confirm queue (background moving)
+
+The backend is the source of truth: `confirm_scan` **queues** batches when a
+move is already running (see
+[services/scan-manager](../services/scan-manager.md)) and reports
+`queue_length`/`queue_items` in confirm progress. The store mirrors it:
+
+- `openConfirmModal` / `confirmSelected` / `confirmGroup` always open the
+  preflight modal — there is no "already running" rejection.
+- `runConfirm` POSTs and reads `result.queue_length`: `> 0` → push
+  `{itemIds}` to a `pendingBatches` ref, toast "Added to queue — will start
+  after the current move finishes", and do **not** rebuild the transfer queue;
+  `0` → start immediately as before.
+- `pollConfirmProgress` keeps polling while `confirmActive` or a pending batch
+  exists. When the next batch starts (`status === 'running'` with `processed`
+  reset below the previous completed count) it pops `pendingBatches`, rebuilds
+  the transfer queue, resets the confirm-state ref, and toasts "Queued move
+  started". Completion still toasts + `fetchReport` after ~800 ms.
+- The active header / button label append `· N queued` while batches wait.
 
 ## Key actions
 
@@ -33,13 +56,15 @@ Components consume it via `useAppStore()` which returns `{ state, actions }`.
 | `startScan` / `pollScanProgress` | `POST /api/scans`, then poll `GET /api/scans/current/progress` (or by scan id) every `POLL_INTERVAL_MS = 2000`; auto-loads the report 500 ms after `completed`. |
 | `fetchReport` | Calls `GET /api/scans/current/report` (or by scan id), maps + groups items. |
 | `loadLibraries` | `GET /api/libraries`, then fetches the report. |
-| `triggerLibraryScan` | `POST /api/libraries/{name}/scan`. |
+| `triggerLibraryScan` | `POST /api/libraries/scan` with `{libraryName, ...}` in the body. |
 | `setCheckedItems(mode)` | Select all / move / replace / existing (skipped always excluded). |
 | `onTargetInputChange` | Live target-path editing with group-scoped smart sync (see utils/report.md). |
 | `applyGroupTargetEdits` | Sends updated paths for one group via `PATCH /api/scans/current/items`. |
 | `confirmSelected` / `confirmGroup` | Open the confirm modal with the matching itemIds. |
-| `runConfirm` / `pollConfirmProgress` | `POST /api/scans/current/confirm`, then poll `GET /api/scans/current/confirm-progress` (or by scan id). |
+| `runConfirm` / `pollConfirmProgress` | `POST /api/scans/current/confirm`, then poll `GET /api/scans/current/confirm-progress` (or by scan id). Queued batches auto-start via the poll bridge — see "Confirm queue" above. |
+| `retargetItem(confirmId, directory, applyToGroup, reclassifyAsMovie)` | `POST /api/scans/{scan_id}/items/retarget` — re-target an item/group to a browsed folder, then refresh the report. |
 | `deleteSourceItem` / `deleteSelectedSkipped` | `DELETE /api/scans/current/items` after a confirm dialog. |
+| `loadEnv` / `saveEnv` / `loadApiKeys` / `createApiKey` / `toggleApiKey` / `deleteApiKey` | Admin pages: `/api/admin/env` and `/api/admin/api-keys`. |
 | `toast` / `log` / `copyText` | Feedback primitives. |
 
 ## Notes
@@ -53,3 +78,10 @@ Components consume it via `useAppStore()` which returns `{ state, actions }`.
   selectable for deletion.
 - The report render computes `defaultSelection` (all actionable items checked),
   and `renderReport`/`setRowLimit` both rebuild `reportGroups`.
+- "Update Paths" is shown per group while `hasPathEdits` is true and the
+  Confirm button is hidden (the user must apply or discard the edit first);
+  `applyGroupTargetEdits` clears the flag so Confirm returns.
+- The report model passes through `suspect`/`corrected`/`flags`/
+  `correctionNote`/`candidateTargets` from the backend (see
+  [backend/models](../backend/models.md)); rows show Browse/suspect/corrected
+  badges.

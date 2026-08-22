@@ -23,13 +23,12 @@ The processing engine, split by responsibility:
 - `classifier.py` — guessit + regex based media classification.
 - `resolver.py` — maps candidates to target paths in the library roots.
 - `scan_manager.py` — scan → report → confirm workflow and file moves.
-- `organizer.py` — legacy immediate organize/normalize run flow.
-- `run_manager.py` — legacy run lifecycle.
-- `normalizer.py` — library-side rename/normalization (safe/full modes).
+- `presenters.py` — shared report/progress formatting (MCP + UI).
 - `jellyfin.py` — Jellyfin API client (libraries, scans, ongoing series).
 - `download_client.py` — qBittorrent MCP client (in-progress, seed stop).
 - `release_tracker.py` — locally stored next-release dates.
-- `ollama.py` / `openrouter.py` — LLM clients used as external classifier.
+- `api_key_manager.py` / `env_manager.py` — MCP key store + env management
+  (see [backend/auth](../backend/auth.md)).
 
 ### Web UI — `app/ui/`
 

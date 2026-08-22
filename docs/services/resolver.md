@@ -8,12 +8,15 @@ detects existing files/folders so the plan can say `move` vs `replace`.
 | Function | Purpose |
 | --- | --- |
 | `sanitize_name(value)` | Clean a name for use as a filesystem path component. |
-| `normalize_text(value)` | Lowercase, strip punctuation (including apostrophes), keep word tokens. Global normalization used by matching. |
+| `fold_diacritics(value)` | NFD + strip combining marks, so `Nimbús` ≡ `Nimbus`. Applied inside `normalize_text`/`tokenize` (global — every matcher benefits). |
+| `normalize_text(value)` | Lowercase, fold diacritics, strip punctuation (including apostrophes), keep word tokens. Global normalization used by matching. |
 | `normalize_series_text(value)` | `normalize_text` wrapper for series titles. |
 | `tokenize(value)` | Set of normalized word tokens. |
 | `series_lookup_key(title, year)` | Canonical key for a series (title + optional year). |
-| `series_aliases(path)` | Bounded set of normalized titles seen in a series folder (rglob per extension, stops after ~12 video samples). |
+| `series_aliases(path)` | Bounded set of normalized titles seen in a series folder (rglob per extension, stops after ~12 video samples); also yields post-number episode titles so an episode-title match (`A Dream Encounter`) can identify a show whose name diverges completely. |
 | `season_dir_candidates(season_number)` | Possible season folder names (e.g. `Season 01`, `S01`, …). |
+| `season_arc_text(value)` | Release-side season-arc text after the `S21`/`Season 21` marker (`S21 Sun & Moon Ultra Adventures` → `sun moon ultra adventures`). |
+| `season_dir_arc(dir_name)` | Library-side equivalent (`s21 - Sun and Moon Ultra Adventures` → `sun moon ultra adventures`). |
 | `series_video_count(path)` | Video file count in a folder (bounded at ~20). |
 | `clear_resolver_cache()` | Clear all cached lookups (called between scan runs). |
 
@@ -50,7 +53,10 @@ Dispatches on `classification.kind` to `_resolve_movie` or `_resolve_series`.
   (`_remember_series_path` / `_lookup_series_path`) reuses the show folder chosen
   for the first season of the same show, so a freshly-added multi-season series
   is not split across drives during one scan.
-- Reuses an existing season folder (`_pick_existing_season_dir`).
+- Reuses an existing season folder (`_pick_existing_season_dir`) — exact
+  normalized names win, but a dir whose name **starts with** a valid season
+  token also counts (`s21 - Midnight Ultra Journeys` → Season 21), so
+  subtitle-style season dirs are joined instead of recreated.
 - Detects an existing file for the same episode (`SxxEyy` with optional `v\d+`)
   so `[RlsGrp] Show - S01E04v2.mkv` is found even when the constructed target
   name differs → the item is planned as `replace`.
@@ -68,6 +74,49 @@ Dispatches on `classification.kind` to `_resolve_movie` or `_resolve_series`.
   and each match is bounded to a small sample, so scans over large libraries
   stay fast.
 
+### Continuity detection and deep re-search (smart correction)
+
+For continuation items (`season > 1` or mid-season `episode > 1`) the resolver
+computes suspect signals and, on a phantom match, re-searches across all series
+roots instead of trusting the remembered path:
+
+- **Signals** (surfaced as `suspect`/`flags` on the item): `phantom_show_folder`
+  (resolved show dir exists nowhere on disk — it came from in-scan memory),
+  `season_gap` (show exists but has no `season-1` and none is planned in the
+  scan), `episode_gap` (`episode-1` missing on disk and in the scan plan).
+  A fresh S01E01 of an unknown show is never suspect.
+- **Deep search** — `find_continuation_show(title, year, season, episode_title,
+  roots)`: a **recall tier** with no token-overlap gate (folders matching by
+  season-arc subtitle, episode-title alias, year, or name subset all compete),
+  and an **auto-pick tier** requiring a strong signal + continuity evidence
+  (has `season-1`, or the closest season below target). Cost control: cheap
+  signals first; the bounded alias walk only runs on folders that pass a cheap
+  pre-filter — never `sorted(rglob("*"))`.
+- On success the whole title group is re-targeted to the found show dir
+  (`corrected=True`, `correction_note` set) joining the real season dir via the
+  subtitle rule above; `file_exists`/`action` are recomputed per item.
+
+### Candidate targets
+
+Every resolution builds `candidate_targets` (top-N, capped) from the shortlist
+scores plus the default new-folder path — for suspect continuation groups the
+recall set above is used (no token gate) so a lookalike/franchise folder still
+appears; movie-marker suspects additionally get an "as movie" destination
+(`reclassify_as_movie`, flips `item_type` when picked). Candidates flow into
+report items (`candidateTargets`) and the report markdown; the UI surfaces them
+via Browse/retarget (see [web-ui/overview](../web-ui/overview.md)).
+
+### Scan-scoped disk index and planned-target memory
+
+`prepare_scan(paths)` builds the existing movie/series folder index **once per
+scan** — `_resolve_series`/`_resolve_movie` never re-list the roots per
+candidate. `_series_path_memory` is the *planned-target* memory: it records the
+show dir the scan decided to write to (on disk or not) so every episode of one
+show lands in the same target folder. `_lookup_series_path` consults memory
+first, then the disk index — a remembered dir that is **not** in the index is
+a phantom (the suspect signal), so the phantom flag is self-healing instead of
+a memory bug.
+
 ### Runtime state
 
 - `reset_runtime_state()` — clears caches and path memories at the start of a
@@ -78,4 +127,7 @@ Dispatches on `classification.kind` to `_resolve_movie` or `_resolve_series`.
 
 - `_is_valid_series_path` sanity-checks a target before it is accepted.
 - `_movie_folder_name` produces the `Title (Year)` folder name.
-- Path matching treats punctuation as irrelevant: `Fox's Den` matches `Foxs Den`.
+- Path matching treats punctuation and diacritics as irrelevant: `Fox's Den`
+  matches `Foxs Den`; `Nimbús Pocket Monsters (1996)` matches title `Nimbus`
+  and a `S01E05` release of a franchise movie with zero name overlap can still
+  find the show via season-arc or episode-title evidence.

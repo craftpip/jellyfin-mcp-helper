@@ -6,6 +6,28 @@ The service speaks MCP over JSON-RPC 2.0 on `POST /mcp`. The app listens on port
 share the single port `18328`. Compatible with MCP clients such as Claude and
 opencode.
 
+## Authentication
+
+MCP requests are gated by `require_mcp_auth` (`app/core/auth.py`):
+
+- `MCP_ALLOW_UNAUTHENTICATED=true` (default) → every request passes and is
+  logged as user `anonymous`.
+- `MCP_ALLOW_UNAUTHENTICATED=false` → the request must present a valid API key
+  via `Authorization: Bearer <key>` **or** `X-API-Key: <key>`:
+  - Valid key → request attributed to the key's `user` (logged as
+    `as <user>`).
+  - `ADMIN_UI_TOKEN`, when set, is accepted as a master key for user `admin`
+    (so the UI proxy / admin tooling can authenticate when unauthenticated
+    access is off).
+  - Missing/invalid key → HTTP `401` with a JSON-RPC error body
+    `{"code": -32001, "message": "unauthorized"}` keeping the request `id`.
+
+API keys are stored **hashed** (SHA-256) in `MCP_KEYS_FILE`
+(`config/mcp_keys.json`, bind-mounted, no restart needed on write) and are
+managed by `app/services/api_key_manager.py`; the full key is shown exactly
+once at creation. See [auth.md](auth.md) for the key lifecycle and the
+admin endpoints.
+
 ## Request/response shape
 
 All requests and responses are `application/json`.

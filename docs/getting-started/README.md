@@ -8,7 +8,6 @@ How to install, configure, and run JellySort.
 ## Requirements
 
 - Python 3.11+ or Docker.
-- A model provider for classification: `ollama` (default) or `openrouter` with `OPENROUTER_API_KEY`.
 - Optional: a qBittorrent MCP server for download-state checks and pre-move handling.
 - Optional: a Jellyfin server + API key for library refresh and Jellyfin MCP tools.
 

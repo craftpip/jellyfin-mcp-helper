@@ -27,6 +27,14 @@ ARC_FILLER_WORDS = {"the", "and", "of", "a", "an"}
 _SEASON_ARC_MARKER_RE = re.compile(r"\b(?:s\d{1,2}|season\s*\d{1,2})\b\s*[-–—._]?\s*", re.IGNORECASE)
 
 
+def _is_hidden(value: str) -> bool:
+    return any(part.startswith(".") for part in value.split("/") if part)
+
+
+def _is_hidden_path(path: Path) -> bool:
+    return any(part.startswith(".") for part in path.parts if part)
+
+
 def sanitize_name(value: str) -> str:
     cleaned = INVALID_PATH_CHARS.sub(" ", value)
     cleaned = re.sub(r"\s+", " ", cleaned).strip().rstrip(".")
@@ -99,6 +107,8 @@ def series_aliases(path: str) -> set[str]:
     sample_count = 0
     for ext in VIDEO_EXTENSIONS:
         for file_path in root.rglob(f"*{ext}"):
+            if _is_hidden_path(file_path):
+                continue
             if sample_count >= 12:
                 break
             cleaned = EPISODE_TAG_RE.sub("", file_path.stem).strip(" -._")
@@ -132,6 +142,8 @@ def series_video_count(path: str) -> int:
         return 0
     count = 0
     for file_path in root.rglob("*"):
+        if _is_hidden_path(file_path):
+            continue
         if file_path.is_file() and file_path.suffix.lower() in {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv"}:
             count += 1
             if count >= 20:
@@ -311,6 +323,8 @@ class PathResolver:
         episode_tag = f"s{season_number:02d}e{episode_number:02d}"
         if season_dir.exists():
             for f in season_dir.iterdir():
+                if f.name.startswith("."):
+                    continue
                 if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS:
                     if re.search(rf"{re.escape(episode_tag)}(?:v\d+)?(?=[^a-z0-9]|$)", f.stem.lower()):
                         target_path = str(f)
@@ -392,45 +406,52 @@ class PathResolver:
 
         scored: list[tuple[float, bool, str]] = []
         for path in paths:
-            folder = Path(path)
-            folder_name = folder.name
-            folder_norm = normalize_series_text(folder_name)
-            folder_tokens = tokenize(folder_name)
-            seasons = self._existing_seasons(folder)
-            prev_season_in = (season - 1) in seasons
-            season_in_target = season in seasons
-            year_match = bool(year_text and year_text in folder_name)
-            if prev_season_in:
-                continuity_bonus = 2.0
-            elif seasons and max(seasons) < season:
-                continuity_bonus = 1.0
-            else:
-                continuity_bonus = 0.0
+            try:
+                folder = Path(path)
+                folder_name = folder.name
+                folder_norm = normalize_series_text(folder_name)
+                folder_tokens = tokenize(folder_name)
+                seasons = self._existing_seasons(folder)
+                prev_season_in = (season - 1) in seasons
+                season_in_target = season in seasons
+                year_match = bool(year_text and year_text in folder_name)
+                if prev_season_in:
+                    continuity_bonus = 2.0
+                elif seasons and max(seasons) < season:
+                    continuity_bonus = 1.0
+                else:
+                    continuity_bonus = 0.0
 
-            arc_match = False
-            if target_arc and folder.is_dir():
-                for child in folder.iterdir():
-                    if not child.is_dir():
-                        continue
-                    arc = season_dir_arc(child.name)
-                    if arc and (arc == target_arc or target_arc in arc or arc in target_arc):
-                        arc_match = True
-                        break
+                arc_match = False
+                if target_arc and folder.is_dir():
+                    for child in folder.iterdir():
+                        if child.name.startswith(".") or not child.is_dir():
+                            continue
+                        arc = season_dir_arc(child.name)
+                        if arc and (arc == target_arc or target_arc in arc or arc in target_arc):
+                            arc_match = True
+                            break
 
-            alias_match = False
-            cheap_gate = bool(
-                (title_tokens & folder_tokens)
-                or year_match
-                or prev_season_in
-                or season_in_target
-                or arc_match
-            )
-            if ep_title_norm and cheap_gate:
-                for alias in series_aliases(path):
-                    alias_norm = normalize_series_text(alias)
-                    if alias_norm and (alias_norm == ep_title_norm or ep_title_norm in alias_norm or alias_norm in ep_title_norm):
-                        alias_match = True
-                        break
+                alias_match = False
+                cheap_gate = bool(
+                    (title_tokens & folder_tokens)
+                    or year_match
+                    or prev_season_in
+                    or season_in_target
+                    or arc_match
+                )
+                if ep_title_norm and cheap_gate:
+                    for alias in series_aliases(path):
+                        alias_norm = normalize_series_text(alias)
+                        if alias_norm and (alias_norm == ep_title_norm or ep_title_norm in alias_norm or alias_norm in ep_title_norm):
+                            alias_match = True
+                            break
+            except OSError as exc:
+                logger.warning(
+                    "[resolver] continuation search: skipping folder %s (filesystem error: %s)",
+                    path, exc,
+                )
+                continue
 
             name_equal = bool(folder_norm and title_norm and folder_norm == title_norm)
             name_subset = bool(title_tokens and title_tokens <= folder_tokens)
@@ -736,7 +757,7 @@ class PathResolver:
         valid_names = season_dir_candidates(season_number)
         prefix_match: Path | None = None
         for child in sorted(show_dir.iterdir()):
-            if not child.is_dir():
+            if child.name.startswith(".") or not child.is_dir():
                 continue
             child_name = normalize_text(child.name)
             if child_name in valid_names:
@@ -758,7 +779,7 @@ class PathResolver:
             return set()
         seasons = set()
         for child in show_dir.iterdir():
-            if not child.is_dir():
+            if child.name.startswith(".") or not child.is_dir():
                 continue
             season_number = self._season_number_from_name(child.name)
             if season_number is not None:
@@ -770,9 +791,10 @@ class PathResolver:
             return set()
         episodes = set()
         for f in season_dir.iterdir():
-            if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS:
-                match = re.search(r"\bs\d{1,2}e(\d{1,3})\b", f.stem.lower())
-                if match:
+            if f.name.startswith(".") or not f.is_file() or f.suffix.lower() not in VIDEO_EXTENSIONS:
+                continue
+            match = re.search(r"\bs\d{1,2}e(\d{1,3})\b", f.stem.lower())
+            if match:
                     episodes.add(int(match.group(1)))
         return episodes
 
@@ -898,7 +920,7 @@ class PathResolver:
         if arc_text:
             arc_tokens = set(arc_text.split())
             for child in Path(path).iterdir():
-                if not child.is_dir():
+                if child.name.startswith(".") or not child.is_dir():
                     continue
                 dir_arc_tokens = set(season_dir_arc(child.name).split())
                 if arc_tokens and (arc_tokens <= dir_arc_tokens or dir_arc_tokens <= arc_tokens):

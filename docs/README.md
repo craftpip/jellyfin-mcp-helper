@@ -20,6 +20,7 @@ This folder is the complete project documentation, written from the code.
   - [MCP JSON-RPC protocol](backend/mcp.md)
   - [MCP tools reference](backend/mcp-tools.md)
   - [REST API](backend/api.md)
+  - [Auth and admin](backend/auth.md) — MCP API keys, env management, admin API
   - [Data models](backend/models.md)
   - [Settings and config models](backend/config.md)
 - **[Services](services/README.md)** — the processing engine
@@ -27,12 +28,9 @@ This folder is the complete project documentation, written from the code.
   - [Classifier](services/classifier.md)
   - [Resolver](services/resolver.md)
   - [Scan manager](services/scan-manager.md)
-  - [Organizer](services/organizer.md)
-  - [Normalizer](services/normalizer.md)
   - [Jellyfin client](services/jellyfin.md)
   - [qBittorrent client](services/download-client.md)
   - [Release tracker](services/release-tracker.md)
-  - [LLM clients (Ollama / OpenRouter)](services/llm-clients.md)
 - **[Web UI](web-ui/README.md)** — the React frontend
   - [Overview](web-ui/overview.md)
   - [State store](web-ui/store.md)
@@ -51,7 +49,7 @@ This folder is the complete project documentation, written from the code.
 | `app/main.py` | FastAPI entry point, MCP JSON-RPC endpoint, tool registry |
 | `app/core/` | Settings, logging, version |
 | `app/models/` | Pydantic schemas |
-| `app/services/` | Scanner, classifier, resolver, scan/organize/normalize managers, Jellyfin + qBittorrent + LLM clients, release tracker |
+| `app/services/` | Scanner, classifier, resolver, scan manager, presenters, env/api-key managers, Jellyfin + qBittorrent clients, release tracker |
 | `app/ui/` | FastAPI UI server (`server.py`) and the React app (`react/`) with its built bundle (`react-dist/`) |
 | `config/` | Runtime state (`ongoing_releases.json`) |
 | `reports/` | Generated run/scan reports |
@@ -66,9 +64,8 @@ This folder is the complete project documentation, written from the code.
 - **Language / runtime:** Python 3.12 (FastAPI + uvicorn), React 18 (Vite) for the UI.
 - **Ports:** single port — MCP (`/mcp`) and Web UI (`/`, `/settings`, `/api/*`) both on `18327` (internal) / `18328` (host-mapped).
 - **Media classification:** [guessit](https://guessit.readthedocs.io/) plus regex
-  fallbacks for SxxEyy patterns, bare episodes, extras, samples, and foreign
-  language episodes; optional external LLM (Ollama or OpenRouter) as an
-  external classifier / name resolver.
+  fallbacks for SxxEyy patterns, bare episodes, extras, samples, foreign
+  language episodes, and movie-marker reclassification.
 - **Integrations:** Jellyfin (library scans, media updates, ongoing-series
   tracking) and qBittorrent (in-progress detection, seed stopping).
 - **Clients:** MCP clients (claude, opencode) talk to the service over

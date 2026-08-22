@@ -26,13 +26,9 @@ No jellysort skill is installed in this environment yet — do not try to load o
 - app/services/download_client.py: qBittorrent MCP client
 - app/services/env_manager.py: ENV_SPEC manifest + .env read/write/reload (settings page backend)
 - app/services/jellyfin.py: Jellyfin API client
-- app/services/normalizer.py: file and folder renaming
-- app/services/ollama.py: Ollama LLM client
-- app/services/openrouter.py: OpenRouter LLM client
-- app/services/organizer.py: scan, classify, resolve, and move orchestration
+- app/services/presenters.py: shared report/confirm progress formatters (MCP + UI)
 - app/services/release_tracker.py: ongoing-release tracking (state in config/ongoing_releases.json)
 - app/services/resolver.py: PathResolver path-matching logic
-- app/services/run_manager.py: legacy run management
 - app/services/scan_manager.py: scan-plan workflow, scan then confirm
 - app/services/scanner.py: filesystem scanner
 - app/main.py: FastAPI entry point and MCP handlers
@@ -45,7 +41,7 @@ No jellysort skill is installed in this environment yet — do not try to load o
 - app/ui/react/src/utils/report.js: pure helpers (item mapping, grouping, filters, smart path sync)
 - plans/: project plans and roadmap documents (markdown)
 - tests/: pytest test suite
-- config/: config files plus runtime state (`current_scan.json`, `ongoing_releases.json`, `mcp_keys.json`)
+- config/: config files plus runtime state (`ongoing_releases.json`, `mcp_keys.json`; scan plans live in memory only)
 - logs/: runtime logs
 - reports/: generated reports
 - .env: active configuration
@@ -458,9 +454,9 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 **Verification:** After a restart, confirm `grep react_redirect app/ui/server.py` and `grep -c 'rel="icon"' app/ui/react/index.html` still match.
 
-### MCP auth + admin pages (plan 03)
+### MCP auth + admin pages
 
-**Design:** `MCP_ALLOW_UNAUTHENTICATED` defaults to `true`. When `false`, `/mcp` requests must present a valid API key (`Authorization: Bearer` or `X-API-Key`) or `ADMIN_UI_TOKEN`; the activity log line appends `as <user>`. Keys live hashed in `config/mcp_keys.json` (gitignored); the full key is returned exactly once at creation. Unauthenticated rejections are HTTP 401 with a JSON-RPC body `{code: -32001, message: "unauthorized"}` keeping the request `id`.
+**Design:** `MCP_ALLOW_UNAUTHENTICATED` defaults to `true`. When `false`, `/mcp` requests must present a valid API key (`Authorization: Bearer` or `X-API-Key`) or `ADMIN_UI_TOKEN`; the activity log line appends `as <user>`. Keys live hashed in `config/mcp_keys.json` (gitignored); the full key is returned exactly once at creation. Unauthenticated rejections are HTTP 401 with a JSON-RPC body `{code: -32001, message: "unauthorized"}` keeping the request `id`. Full write-up: `docs/backend/auth.md`.
 
 **Key code locations:**
 - `app/core/auth.py` — `require_mcp_auth` dependency + `MCPUnauthorizedError`; handler in `app/main.py:273`.
@@ -471,18 +467,19 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 **Live config reload:** `.env` is bind-mounted into `/app`, so Settings saves take effect on disk instantly. `reload_settings()` patches `os.environ` from `.env`, resets `_settings`, and clears `get_config` — this is what makes `live` vars work without a restart. `restart` vars need `docker compose up -d --force-recreate`.
 
-**Verification:** `python3 -m pytest tests/` (184 tests incl. `test_api_key_manager.py`, `test_mcp_auth.py`, `test_env_manager.py`, admin endpoint tests in `test_ui_api.py`). Frontend: `npm test` in `app/ui/react` (56 tests incl. `AdminPages.test.jsx`).
+**Verification:** `python3 -m pytest tests/` (390 tests incl. `test_api_key_manager.py`, `test_mcp_auth.py`, `test_env_manager.py`, admin endpoint tests in `test_ui_api.py`). Frontend: `npm test` in `app/ui/react` (73 tests incl. `AdminPages.test.jsx`).
 
 ### Test suite counts
 
-Backend `python3 -m pytest tests/` runs **189 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **68 tests**. Keep both green after changes.
+Backend `python3 -m pytest tests/` runs **390 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **73 tests**. Keep both green after changes.
 
-### Browse + retarget (smart correction UI, plan 06 Part G)
+### Browse + retarget (smart correction UI)
 
 **Feature:** The report UI lets a user pick a different target folder for a planned item. Each report item carries `candidateTargets` (scored alternatives incl. `reclassify_as_movie` and "New folder" options) plus `suspect`/`corrected`/`flags`/`correctionNote`. Rows show a "Browse…" button that opens the browse modal (no per-row dropdown — the "Suggested targets" select was removed as useless; browse/search is the correction path).
 
 - Backend routes (all in `app/ui/server.py`, panel-auth protected): `GET /api/browse/roots`, `GET /api/browse?path=`, `GET /api/browse/search?q=`, `POST /api/scans/current/items/retarget` + `/api/scans/{scan_id}/items/retarget`.
 - `ScanManager.retarget_item(scan_id, confirm_id, directory, apply_to_group, reclassify_as_movie)` recomputes the target: series → show dir + existing season dir (via `_pick_existing_season_dir`) or `Season {ss:02d}`; movie → `directory / basename`; reclassify → `item_type="movie"` + `directory / directory.name + ext`. 400s: confirmed/running scan, skip item, reclassify+applyToGroup combo, non-root dir, multi-season group with a season-level pick.
+- **The source path is ground truth for retargeting** (`_effective_type`): an `SxxEyy` tag in the immutable source filename wins over a mutated `item.item_type`, and `_source_episode_tag` seeds the rebuilt episode filename — so a series→movie→series round-trip fully restores `Season {ss}` + `SxxEyy` (a movie basename never leaks into the series target; a season-level pick uses the parent folder as the show name). Regression: `TestBrowseAndRetarget::test_retarget_series_to_movie_and_back`.
 - Frontend: `BrowseModal.jsx` opens on a **combined "All libraries" view** — no root/kind chips to pick first (the user may not know which library the show belongs to). All media roots are listed as folder rows; clicking one browses into it, and the breadcrumb/`..` return to the combined view. Search (`/api/browse/search`) already searches every movie + series root. `AppStore.retargetItem`, `ReportPanel` Browse/Suspect/Corrected badges, `report.js` passthrough of `candidateTargets`/`flags`/`suspect`/`corrected`/`correctionNote`.
 
 **Browse/search must be cheap — never walk the whole tree.** Media roots have 130+ series folders, some with thousands of files per season:
@@ -490,7 +487,7 @@ Backend `python3 -m pytest tests/` runs **189 tests** (uses the container: `dock
 - `_browse_search_root` is a depth-limited walk (root → show → season, max depth 3) using `os.scandir` (d_type, no stat) with a per-dir child cap (`BROWSE_SEARCH_CHILD_CAP`), junk-name pruning (`BROWSE_IGNORED_NAME_PARTS`: trickplay/extras/sample/…), and results sorted by depth. A full `os.walk` over the roots took ~18s; the depth-limited scandir walk takes ~0.3s.
 - Browse/search read roots from `request.app.state.scan_manager._config`, **not** `get_config()` — the global settings read the real `.env` media roots and must not be trusted for UI listing.
 
-**Verification:** backend `tests/test_ui_api.py::TestBrowseAndRetarget` (5 tests: listing/season numbers, out-of-root + missing-dir 400s, search, movie retarget, retarget validation); frontend `BrowseModal.test.jsx` (drill-down + retarget POST body, search hit) and `report.test.js` (candidate passthrough). Live check via `docker exec jellysort python3 -c "urllib.request...localhost:18327/api/browse/..."` — series-root listing 60 entries in ~0.07s, search ~0.3s.
+**Verification:** backend `tests/test_ui_api.py::TestBrowseAndRetarget` (5 tests: listing/season numbers, out-of-root + missing-dir 400s, search, movie retarget, retarget validation); frontend `BrowseModal.test.jsx` (drill-down + retarget POST body, search hit) and `report.test.js` (candidate passthrough). Backend suite is 390 tests, frontend 73.
 
 ### Confirms are queued, not rejected, when a move is already running
 
@@ -509,11 +506,22 @@ Backend `python3 -m pytest tests/` runs **189 tests** (uses the container: `dock
 - `pollConfirmProgress` detects a queued batch starting via `result.status === 'running' && p < confirmStateRef.current.completed` (processed reset = new batch), pops `pendingBatchesRef`, rebuilds the transfer queue, resets `confirmStateRef`, and toasts "Queued move started". The button/label and transfer header append "· N queued".
 - `ConfirmModal` shows a warn box ("A move is already running — this batch will be added to the queue…") when `confirmActive`.
 
-**Verification:** backend `tests/test_scan_errors.py::test_confirm_queues_batch_behind_running_move` (two confirms, first runs, second queued, both complete, moved=3); frontend `App.test.jsx` "queues a confirm batch instead of blocking…" and `Toasts.test.jsx` queued-batch header cases. Backend suite is 190 tests, frontend 71.
+**Verification:** backend `tests/test_scan_errors.py::test_confirm_queues_batch_behind_running_move` (two confirms, first runs, second queued, both complete, moved=3); frontend `App.test.jsx` "queues a confirm batch instead of blocking…" and `Toasts.test.jsx` queued-batch header cases. Backend suite is 390 tests, frontend 73.
 
 ## Plans
 
-The `plans/` directory is the central location for all project plans and roadmap documents. Each plan is a markdown file, named with a leading number (e.g. `03-mcp-auth-and-config-pages.md`). When working on a plan, reference the plan file path in conversations and use it as a checklist. Plans can be created, implemented incrementally, and marked complete within the same file.
+The `plans/` directory holds **active** project plans and roadmap documents.
+Each plan is a markdown file, named with a leading number (e.g.
+`07-...-md`). When working on a plan, reference the plan file path in
+conversations and use it as a checklist. Plans can be created, implemented
+incrementally, and marked complete within the same file.
+
+**Completed plans are absorbed into `docs/` and deleted** — the plan files
+03–06 (MCP auth + config pages, standalone UI + login, confirm queue +
+background moving, smart correction) are all fully implemented and their
+durable knowledge now lives in `docs/` (backend/auth.md, services/,
+web-ui/). Do not recreate them; the `docs/` sections (plus the pattern blocks
+above) are the single source of truth for those features.
 
 ## Project Learnings
 

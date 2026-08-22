@@ -28,13 +28,21 @@ Pure, unit-tested helpers (no DOM access) plus the REST API client.
 
 | Function | Purpose |
 | --- | --- |
-| `mapReportItems(report)` | Maps raw report items to rows; derives `title`/`season`/`episode` from the target path; skipped items get `title: "Skipped items"` and a `reason`. |
+| `mapReportItems(report)` | Maps raw report items to rows; derives `title`/`season`/`episode` from the target path; skipped items get `title: "Skipped items"` and a `reason`. Passes through `suspect`/`corrected`/`flags`/`correctionNote`/`candidateTargets`. |
 | `groupItems(items)` | Groups rows by title with `totalSize`; each row carries `_idx`. |
 | `itemSearchText(item)` | Free-text search blob (title, episode, paths, reason). |
 | `matchesFilter(item, query, filterVal)` | Applies the query + action/fileExists axis (`move`, `replace`, `existing`, `new`). |
 | `computePathSync(idx, oldPath, newPath, items)` | Group-scoped smart path sync — see below. |
 | `defaultSelection(items)` | All actionable items checked. |
 | `isCrossDriveItem(item)` | Live cross-drive check honoring edited targets. |
+| `targetOptions(item)` | Builds the browse/retarget option list from `candidateTargets` (existing folders, "New folder", reclassify-as-movie). |
+
+### Smart-correction passthrough
+
+`candidateTargets` carry `{path, label, evidence, source, reclassifyAsMovie}`;
+suspect rows render from `suspect` + `flags` (values
+`phantom_show_folder | season_gap | episode_gap`) and `correctionNote` (see
+[backend/models](../backend/models.md)).
 
 ### `computePathSync` — smart path sync
 

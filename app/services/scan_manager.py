@@ -486,10 +486,11 @@ class ScanManager:
                 episode_tag = f"s{season_number:02d}e{episode_number:02d}"
                 if season_dir.exists():
                     for f in season_dir.iterdir():
-                        if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS:
-                            if re.search(rf"{re.escape(episode_tag)}(?:v\d+)?(?=[^a-z0-9]|$)", f.stem.lower()):
-                                new_target = f
-                                break
+                        if f.name.startswith(".") or not f.is_file() or f.suffix.lower() not in VIDEO_EXTENSIONS:
+                            continue
+                        if re.search(rf"{re.escape(episode_tag)}(?:v\d+)?(?=[^a-z0-9]|$)", f.stem.lower()):
+                            new_target = f
+                            break
                 old_target = item.target_path
                 item.target_path = str(new_target)
                 item.show_folder_exists = new_show_dir.exists()
@@ -684,11 +685,13 @@ class ScanManager:
 
         target_items = [item]
         if apply_to_group:
-            if item.item_type == "series":
+            item_eff_type = self._effective_type(item, reclassify_as_movie)
+            if item_eff_type == "series":
                 group_key = str(Path(item.target_path).parent.parent)
                 group_items = [
                     i for i in scan.items
                     if i.action != "skip" and i.item_type != "skip"
+                    and self._effective_type(i, False) == "series"
                     and str(Path(i.target_path).parent.parent) == group_key
                 ]
             else:
@@ -696,12 +699,13 @@ class ScanManager:
                 group_items = [
                     i for i in scan.items
                     if i.action != "skip" and i.item_type != "skip"
+                    and self._effective_type(i, False) != "series"
                     and str(Path(i.target_path).parent) == group_key
                 ]
             if group_items:
                 target_items = group_items
 
-        if apply_to_group and item.item_type == "series":
+        if apply_to_group and self._effective_type(item, reclassify_as_movie) == "series":
             seasons = set()
             for group_item in target_items:
                 tag = self._target_episode_tag(group_item.target_path)
@@ -727,42 +731,96 @@ class ScanManager:
         if not path.exists() or not path.is_dir():
             return True
         try:
-            entries = list(path.iterdir())
+            entries = [e for e in path.iterdir() if not e.name.startswith(".")]
         except OSError:
             return True
         has_video_file = any(e.is_file() and e.suffix.lower() in (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv") for e in entries)
         has_subdir = any(e.is_dir() for e in entries)
         return not has_video_file and has_subdir
 
-    def _apply_retarget(self, item: ScannedItem, directory: Path, reclassify_as_movie: bool) -> None:
-        ext = Path(item.target_path).suffix or ".mkv"
+    @staticmethod
+    def _source_episode_tag(item: ScannedItem) -> tuple[int, int] | None:
+        """Extract (season, episode) from the source filename."""
+        match = re.search(r"S(\d{1,2})E(\d{1,3})", Path(item.source_path).name, re.IGNORECASE)
+        if not match:
+            return None
+        return int(match.group(1)), int(match.group(2))
+
+    @staticmethod
+    def _effective_type(item: ScannedItem, reclassify_as_movie: bool) -> str:
+        """Return the effective item kind, using the source path as ground truth.
+
+        The source filename is immutable — an ``SxxEyy`` tag means the file is
+        a series episode regardless of what ``item.item_type`` currently says
+        (it may have been mutated by a prior reclassify retarget).
+        """
         if reclassify_as_movie:
-            item.item_type = "movie"
+            return "movie"
+        if re.search(r"S\d{1,2}E\d{1,3}", Path(item.source_path).name, re.IGNORECASE):
+            return "series"
+        return item.item_type
+
+    def _apply_retarget(self, item: ScannedItem, directory: Path, reclassify_as_movie: bool) -> None:
+        """Recompute an item's target path from a chosen directory.
+
+        The *effective* item type is derived from three inputs:
+        1. ``reclassify_as_movie`` — explicit user request to treat as movie.
+        2. ``item.source_path`` — the immutable source filename.  An ``SxxEyy``
+           tag in the source name means the file is a series episode regardless
+           of what ``item.item_type`` currently says (it may have been changed
+           by a prior reclassify retarget).
+        3. ``item.item_type`` — fallback when neither of the above applies
+           (genuine movie, already-series, etc.).
+
+        Using the source path as ground truth means a series→movie→series
+        round-trip always recovers the correct season subdirectory and episode
+        filename.
+        """
+        ext = Path(item.target_path).suffix or ".mkv"
+        effective_type = self._effective_type(item, reclassify_as_movie)
+        source_tag = self._source_episode_tag(item)
+
+        # --- compute target path by effective type ---
+        if effective_type == "movie":
             base_name = directory.name or "Movie"
             target_path = directory / f"{base_name}{ext}"
-        elif item.item_type == "movie":
-            target_path = directory / Path(item.target_path).name
         else:
-            season_number = 1
-            tag = self._target_episode_tag(item.target_path)
-            if tag:
-                season_number = tag[0]
+            season_number = source_tag[0] if source_tag else 1
+            # Prefer source tag for episode number too; fall back to target
+            # tag (which may be stale after a prior reclassify).
+            episode_number = source_tag[1] if source_tag else None
+
+            # The show name for the episode filename.  When the user picks a
+            # season-level folder the show is the parent; when they pick a
+            # show-level folder it is the directory itself.
             if self._is_show_level_dir(directory):
+                show_name = directory.name
                 season_dir = (
                     self._resolver._pick_existing_season_dir(directory, season_number)
                     or directory / f"Season {season_number:02d}"
                 )
             else:
+                show_name = directory.parent.name
                 season_dir = directory
-            target_path = season_dir / Path(item.target_path).name
-            episode_tag = f"s{season_number:02d}e{(tag[1] if tag else 1):02d}"
+
+            if source_tag:
+                target_path = season_dir / f"{show_name} - S{season_number:02d}E{episode_number:02d}{ext}"
+            else:
+                target_path = season_dir / Path(item.target_path).name
+
+            # Check for an existing file matching this episode in the season dir.
+            ep_num = episode_number or (self._target_episode_tag(item.target_path) or (1, 1))[1]
+            episode_tag = f"s{season_number:02d}e{ep_num:02d}"
             if season_dir.exists():
                 for f in season_dir.iterdir():
-                    if f.is_file() and f.suffix.lower() in (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv"):
-                        if re.search(rf"{re.escape(episode_tag)}(?:v\d+)?(?=[^a-z0-9]|$)", f.stem.lower()):
-                            target_path = f
-                            break
+                    if f.name.startswith(".") or not f.is_file() or f.suffix.lower() not in (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv"):
+                        continue
+                    if re.search(rf"{re.escape(episode_tag)}(?:v\d+)?(?=[^a-z0-9]|$)", f.stem.lower()):
+                        target_path = f
+                        break
 
+        # --- persist ---
+        item.item_type = effective_type
         item.target_path = str(target_path)
         target_exists = target_path.exists()
         item.action = "replace" if target_exists else "move"

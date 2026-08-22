@@ -400,6 +400,76 @@ class TestBrowseAndRetarget:
             assert moved["action"] == "move"
             assert moved["sourcePath"] == item["sourcePath"]
 
+    def test_retarget_series_to_movie_and_back(self, tmp_path, monkeypatch):
+        """After reclassifying a series episode as a movie, retargeting back to
+        a series folder must restore the series path structure (Season subdir,
+        SxxEyy filename, itemType=series)."""
+        series_dir = tmp_path / "series" / "My Show"
+        (series_dir / "Season 01").mkdir(parents=True)
+
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            scan_id = self._run_scan(client, tmp_path, [
+                "Ghost.in.the.Shell.SAC.2045.S01E07.720p.WEB.mkv"
+            ])
+            report = client.get(f"/api/scans/{scan_id}/report").json()
+            actionable = [i for i in report["items"] if i["action"] in ("move", "replace")]
+            assert actionable
+            item = actionable[0]
+            cid = item["confirmId"]
+            assert item["itemType"] == "series"
+
+            # Step 1: retarget to a series folder — should have Season 01
+            res = client.post(
+                f"/api/scans/{scan_id}/items/retarget",
+                json={"confirmId": cid, "directory": str(series_dir)},
+            )
+            assert res.status_code == 200
+            moved = next(i for i in res.json()["items"] if i["confirmId"] == cid)
+            assert "S01E07" in Path(moved["targetPath"]).name
+            assert "Season 01" in moved["targetPath"]
+
+            # Step 2: reclassify as movie → movie basename, itemType=movie
+            movie_dir = tmp_path / "movies" / "Angel's Egg (1985)"
+            movie_dir.mkdir(parents=True, exist_ok=True)
+            res = client.post(
+                f"/api/scans/{scan_id}/items/retarget",
+                json={"confirmId": cid, "directory": str(movie_dir), "reclassifyAsMovie": True},
+            )
+            assert res.status_code == 200
+            moved = next(i for i in res.json()["items"] if i["confirmId"] == cid)
+            assert moved["itemType"] == "movie"
+            assert Path(moved["targetPath"]).name == "Angel's Egg (1985).mkv"
+
+            # Step 3: retarget back to series folder — must fully restore
+            # the series path structure, not just fix the filename.
+            res = client.post(
+                f"/api/scans/{scan_id}/items/retarget",
+                json={"confirmId": cid, "directory": str(series_dir)},
+            )
+            assert res.status_code == 200
+            moved = next(i for i in res.json()["items"] if i["confirmId"] == cid)
+            target = moved["targetPath"]
+            fname = Path(target).name
+            assert moved["itemType"] == "series", f"itemType should be series, got {moved['itemType']}"
+            assert "S01E07" in fname, f"Expected series filename with S01E07, got: {fname}"
+            assert "Angel" not in fname, f"Movie basename leaked into series target: {fname}"
+            assert "Season 01" in target, f"Expected Season 01 subdirectory in: {target}"
+
+            # Step 4: pick a season-level folder directly — show name must
+            # come from the parent, not from the season folder itself.
+            season_dir = series_dir / "Season 01"
+            res = client.post(
+                f"/api/scans/{scan_id}/items/retarget",
+                json={"confirmId": cid, "directory": str(season_dir)},
+            )
+            assert res.status_code == 200
+            moved = next(i for i in res.json()["items"] if i["confirmId"] == cid)
+            target = moved["targetPath"]
+            fname = Path(target).name
+            assert fname == "My Show - S01E07.mkv", f"Season-pick filename wrong: {fname}"
+            assert str(season_dir) in target, f"Season dir missing from path: {target}"
+
     def test_retarget_validation(self, tmp_path, monkeypatch):
         client, _ = _make_client(tmp_path, monkeypatch)
         with client:

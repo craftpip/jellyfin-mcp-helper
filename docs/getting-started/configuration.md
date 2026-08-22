@@ -12,31 +12,46 @@ pydantic-settings (`app/core/config.py`). Copy `.env.example` to `.env` and edit
 - `get_config()` (an `@lru_cache`) builds the derived `AppConfig`:
   - `PathsConfig.from_env(settings)` — parses `DOWNLOAD_ROOTS` / `MOVIE_ROOTS` /
     `SERIES_ROOTS` into structured roots.
-  - `ModelConfig.from_env(settings)` — copies model tuning values.
+  - `ModelConfig.from_env(settings)` — copies the classification/path
+    confidence thresholds.
   - `series_title_aliases` — parsed from `SERIES_TITLE_ALIASES`.
   - `log_dir` / `report_dir` — always `BASE_DIR/logs` and `BASE_DIR/reports`.
 - `BASE_DIR` is the repository root (`Path(__file__).resolve().parents[2]`).
 
-Settings are read at process start; changes to `.env` require a container
-restart (and `docker compose` recreate for values applied via `env_file` at
-container creation).
+### Apply model: live vs restart
+
+Every variable is classified by `ENV_SPEC` (see
+[app/services/env_manager.py](../../app/services/env_manager.py) and
+[backend/config.md](../backend/config.md)) as either **live** or **restart**:
+
+- **Live** — read per request/operation from `os.environ` (Jellyfin and
+  qBittorrent client settings, `UI_PANEL_PASSWORD`, `MCP_ALLOW_UNAUTHENTICATED` /
+  `MCP_KEYS_FILE` / `ADMIN_UI_TOKEN`). Saving them via the Settings page takes
+  effect immediately (no restart).
+- **Restart** — captured in the `ScanManager` snapshot or the startup lifespan
+  (media roots, thresholds, `WEB_UI_*`). They need
+  `docker compose up -d --force-recreate` (the compose `env_file` applies at
+  container creation) — the Settings page shows a "Recreate required" banner
+  listing exactly these vars.
+
+`reload_settings()` (env_manager) re-parses `.env`, patches `os.environ` for
+changed keys, resets the `Settings` cache and clears `get_config()` — this is
+what makes `live` vars take effect without a restart. `.env` is bind-mounted
+into the container, so disk edits are visible instantly.
 
 ## Variables
 
-### AI / Classification
+### Classification thresholds
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `OPENROUTER_API_KEY` | — | API key, required only when `MODEL_PROVIDER=openrouter`. |
-| `MODEL_PROVIDER` | `ollama` | Model provider: `ollama` or `openrouter`. |
-| `MODEL_MODE` | `external-classifier` | Keep as `external-classifier`. |
-| `MODEL_BASE_URL` | — | Model API base URL (Ollama default `http://localhost:11434`). |
-| `MODEL_NAME` | `llama3.2:1b` | Model name to use. |
-| `MODEL_TEMPERATURE` | `0` | Temperature (0 = deterministic). |
-| `MODEL_CLASSIFY_CONFIDENCE_THRESHOLD` | `0.65` | Min confidence for LLM classification. |
-| `MODEL_PATH_CONFIDENCE_THRESHOLD` | `0.6` | Min confidence for LLM path resolution. |
-| `MODEL_REQUEST_TIMEOUT_SECONDS` | `120` | Timeout for model API calls. |
-| `MODEL_RETRY_ATTEMPTS` | `2` | Retry attempts for model API calls. |
+| `MODEL_CLASSIFY_CONFIDENCE_THRESHOLD` | `0.65` | Min confidence for a classification result to be kept. |
+| `MODEL_PATH_CONFIDENCE_THRESHOLD` | `0.6` | Min confidence for a path-resolution match to be used. |
+
+(The legacy LLM model vars — `MODEL_PROVIDER`, `MODEL_MODE`, `MODEL_BASE_URL`,
+`MODEL_NAME`, `MODEL_TEMPERATURE`, `OPENROUTER_API_KEY`,
+`MODEL_REQUEST_TIMEOUT_SECONDS`, `MODEL_RETRY_ATTEMPTS` — were removed with the
+LLM clients and are no longer read by the code.)
 
 ### Download client (qBittorrent via MCP)
 
@@ -73,6 +88,15 @@ container creation).
 | --- | --- | --- |
 | `WEB_UI_ENABLED` | `false` | Enable the React web UI. It is mounted at `/` on the MCP app, so it shares the single port `18328`. |
 | `WEB_UI_PORT` | `18329` | Deprecated — unused. The web UI shares the MCP port. |
+| `UI_PANEL_PASSWORD` | *(empty)* | Panel login password. Empty = direct login (no prompt); non-empty = the `/api` routes (except `/api/status`, `/api/login`, static assets) require a Bearer token from `POST /api/login`. Tokens are in-memory 32-hex strings (see [web-ui/overview](../web-ui/overview.md)); changing the value needs a container recreate. |
+
+### MCP Access Control
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `MCP_ALLOW_UNAUTHENTICATED` | `true` | Allow unauthenticated MCP requests. When `false`, every `/mcp` request needs a valid API key (`Authorization: Bearer` or `X-API-Key`) or `ADMIN_UI_TOKEN`. |
+| `MCP_KEYS_FILE` | `config/mcp_keys.json` | Path to the hashed API-key store (see [backend/auth.md](../backend/auth.md)). |
+| `ADMIN_UI_TOKEN` | *(empty)* | Master key accepted by MCP auth for the user `"admin"`. |
 
 ## Derived config structures
 
@@ -94,8 +118,3 @@ It also exposes helpers used across the app:
   each download root to derive the media prefix (used to infer cross-drive moves).
 - `find_download_root_for_folder(name)` — locates which download root contains a
   folder (used to detect in-progress downloads).
-
-`PromptPolicy` controls the LLM prompt contract:
-
-- `classifyAs: ["movie", "series", "skip"]`
-- `extractFields: ["title", "year", "season", "episode", "confidence", "reason"]`

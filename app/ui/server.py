@@ -100,6 +100,8 @@ def _browse_video_count(dir_path: Path) -> int:
     count = 0
     try:
         for entry in dir_path.iterdir():
+            if entry.name.startswith("."):
+                continue
             if count >= BROWSE_VIDEO_COUNT_CAP:
                 return count
             if entry.is_file() and entry.suffix.lower() in BROWSE_VIDEO_EXTENSIONS:
@@ -113,6 +115,8 @@ def _browse_subdir_count(dir_path: Path) -> int:
     count = 0
     try:
         for entry in dir_path.iterdir():
+            if entry.name.startswith("."):
+                continue
             if count >= BROWSE_VIDEO_COUNT_CAP:
                 return count
             if entry.is_dir():
@@ -186,6 +190,8 @@ def _browse_entries(dir_path: Path, root: Path) -> dict:
         has_videos = False
         try:
             for entry in child.iterdir():
+                if entry.name.startswith("."):
+                    continue
                 if entry.is_dir():
                     has_subdirs = True
                     break

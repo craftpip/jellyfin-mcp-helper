@@ -47,6 +47,8 @@ Flow:
 | `BARE_EPISODE_RE` | bare episode numbers in a filename stem |
 | `CONTAINED_BARE_EPISODE_RE` | leading number + separator + title; the separator `.` must NOT be followed by a digit, so floats never match |
 | `FOREIGN_EPISODE_RE` | `episodio`, `episode`, `capitulo`, `capitolo`, `capítulo`, `chapitre`, `épisode`, `kapitel` + number |
+| `MOVIE_MARKER_RE` | `movie <N>` (e.g. `Nimbus Movie 05`) — reclassification marker, see below |
+| `FRANCHISE_MOVIE_MARKER_RE` | `S\d{1,2}M\d{1,2}` — franchise special/movie releases (e.g. `S21M01`), same marker treatment |
 
 ## Season/episode extraction order
 
@@ -69,6 +71,27 @@ Flow:
 | guessit says movie | `movie` | 0.9 |
 | Year present, no `SxxEyy` | `movie` | 0.75 |
 | Default (standalone file) | `movie` | 0.65 |
+
+## Movie-marker reclassification
+
+Before `_infer_kind`: when the release has **no explicit `SxxEyy`/season-episode
+token** (`has_explicit_episode` is False — a `Movie 05` label still yields
+`episode=5` from guessit, so the gate is on the explicit token, not where the
+number came from) and the title **or** container folder carries `MOVIE_MARKER_RE`
+or `FRANCHISE_MOVIE_MARKER_RE`, the kind is forced to **movie**:
+`season=None`, `episode=None`, title from the cleaned container folder name
+(guarded: only when the container is not a download root itself, else the
+guessit title + number). Explicit `SxxEyy` always wins, so real TV is safe.
+
+Examples:
+
+- `Nimbus Movie 05 Nimbus Heroes [1280x688_Blu_Ray_Dual_Audio][...].mkv`
+  → movie (was series S01E05).
+- `... the Movie 11 - <subtitle> ...` → movie.
+- `Nimbus Movie 3` → movie (unchanged).
+- `Show S01E05 ...` → series (explicit episode wins).
+- `S21M01` / `S22M01` franchise releases → movie (marker without explicit
+  season-episode).
 
 ## Extra / sample overrides
 

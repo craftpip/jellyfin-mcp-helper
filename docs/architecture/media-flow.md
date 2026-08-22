@@ -1,7 +1,7 @@
 # Media Processing Flow
 
-The core workflow is **scan → classify → resolve → plan → review → confirm**.
-The modern path uses `ScanManager`; a legacy path uses `OrganizerService`.
+The core workflow is **scan → classify → resolve → plan → review → confirm**,
+driven entirely by `ScanManager`.
 
 ## 1. Scan
 
@@ -39,9 +39,8 @@ are collected per-path (`ScanPathError`) instead of aborting the whole scan.
    `recap`, `trailer`, …) and samples are classified `skip`.
 
 The result is a `ClassificationResult` with `kind`, `title`, `episode_title`,
-`year`, `season`, `episode`, `confidence`, and `reason`. When `use_local_ai`
-is enabled, an external LLM (`ollama`/`openrouter`) can classify instead, and
-its output is kept when confidence clears the threshold.
+`year`, `season`, `episode`, `confidence`, and `reason`. Classification is
+purely local (guessit + regex) — there is no external LLM classifier.
 
 ## 3. Resolve
 
@@ -114,11 +113,5 @@ Before confirming, callers can:
 
 Per-confirm progress is scoped to the current batch (`confirm_processed`,
 baseline snapshots of cumulative counts), while the final report still reflects
-the cumulative scan totals.
-
-## Legacy flow (organizer)
-
-`organizer.py` runs the same scan/classify/resolve steps but **applies moves
-immediately** per item inside a `RunState`, supporting `dry_run` and optional
-normalization. `run_manager.py` wraps this in a "one active run" lifecycle with
-streaming logs. New integrations should use the scan workflow instead.
+the cumulative scan totals. Confirms requested while a move runs are **queued**
+and start automatically, one batch at a time.

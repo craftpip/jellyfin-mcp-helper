@@ -39,5 +39,10 @@ confusingly. Test files are co-located:
 
 - `src/utils/format.test.js`
 - `src/utils/report.test.js` (includes the solo-group "keeps the edit" path-sync case)
+- `src/utils/transfer.test.js`
 - `src/components/PathPills.test.jsx`
+- `src/components/ScanProgressPanel.test.jsx`
+- `src/components/Toasts.test.jsx`
+- `src/components/BrowseModal.test.jsx`
+- `src/AdminPages.test.jsx`
 - `src/App.test.jsx`

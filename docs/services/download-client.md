@@ -54,6 +54,6 @@ root with the torrent name.
 
 ## Related in-progress logic
 
-The scan manager and organizer also match by **label** (top-level folder/file
+The scan manager also matches by **label** (top-level folder/file
 name) via `_candidate_release_labels` / `_path_name_labels`, so torrents whose
 paths don't map cleanly into the container still get detected.
