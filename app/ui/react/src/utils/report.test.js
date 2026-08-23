@@ -117,10 +117,11 @@ describe('mapReportItems', () => {
 })
 
 describe('groupItems', () => {
-  it('groups by title and sums size', () => {
+  it('groups by title and sums size (newest first)', () => {
     const groups = groupItems(buildItems())
-    expect(groups.map((g) => g.title)).toEqual(['Show Name (2020)', 'Movie (2024)', 'Skipped items'])
-    expect(groups[0].totalSize).toBe(1073741824)
+    // Newest (highest _idx) first — incremental scans surface new files at the top
+    expect(groups.map((g) => g.title)).toEqual(['Skipped items', 'Movie (2024)', 'Show Name (2020)'])
+    expect(groups.find((g) => g.title === 'Show Name (2020)').totalSize).toBe(1073741824)
   })
 })
 

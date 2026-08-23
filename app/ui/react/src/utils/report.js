@@ -87,7 +87,15 @@ export function groupItems(items) {
     groups[key].items.push({ ...item, _idx: idx })
     if (item.fileSize) groups[key].totalSize += Number(item.fileSize)
   })
-  return Object.values(groups)
+  const grouped = Object.values(groups)
+  // Newest items/groups first — incremental scans append at end, so higher _idx is newer
+  grouped.forEach((g) => g.items.sort((a, b) => (b._idx ?? 0) - (a._idx ?? 0)))
+  grouped.sort((a, b) => {
+    const aMax = Math.max(...a.items.map((i) => i._idx ?? 0))
+    const bMax = Math.max(...b.items.map((i) => i._idx ?? 0))
+    return bMax - aMax
+  })
+  return grouped
 }
 
 // Legacy row filter: free-text search against the row text + action/fileExists axis.

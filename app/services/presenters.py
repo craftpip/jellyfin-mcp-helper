@@ -463,8 +463,18 @@ def format_report_grouped(items_by_action: dict[str, list[ScannedItem]]) -> list
                     for ct in item.candidate_targets
                 ],
             })
-    # Sort groups by sourceFolder for stable output
-    return sorted(grouped.values(), key=lambda g: g["sourceFolder"].lower())
+    # Newest groups/items first so incremental scans surface new files at the top
+    for g in grouped.values():
+        try:
+            g["items"].sort(key=lambda it: int(str(it["confirmId"]).lstrip("i") or 0), reverse=True)
+        except Exception:
+            pass
+    def _group_max_id(g):
+        try:
+            return max(int(str(it["confirmId"]).lstrip("i") or 0) for it in g["items"])
+        except Exception:
+            return 0
+    return sorted(grouped.values(), key=lambda g: _group_max_id(g), reverse=True)
 
 
 def format_scan_report(scan: ScanPlan, format: str = "markdown", group_by: str = "sourceFolder") -> dict:
