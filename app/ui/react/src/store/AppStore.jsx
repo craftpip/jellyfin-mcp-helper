@@ -27,11 +27,11 @@ function getInitialFilter() {
     try {
       const url = new URL(window.location.href)
       const f = url.searchParams.get('filter')
-      if (f && ['all', 'move', 'replace', 'existing', 'new'].includes(f)) return f
+      if (f && ['all', 'move', 'replace', 'extra'].includes(f)) return f
     } catch {}
     try {
       const s = localStorage.getItem('jsort_filter')
-      if (s && ['all', 'move', 'replace', 'existing', 'new'].includes(s)) return s
+      if (s && ['all', 'move', 'replace', 'extra'].includes(s)) return s
     } catch {}
   }
   return 'all'
@@ -954,7 +954,7 @@ export function AppStoreProvider({ children }) {
   }
 
   function setFilter(filter) {
-    const valid = ['all', 'move', 'replace', 'existing', 'new'].includes(filter) ? filter : 'all'
+    const valid = ['all', 'move', 'replace', 'extra'].includes(filter) ? filter : 'all'
     dispatch({ type: 'SET_FILTER', filter: valid })
     try {
       localStorage.setItem('jsort_filter', valid)
@@ -1072,7 +1072,7 @@ export function AppStoreProvider({ children }) {
         const url = new URL(window.location.href)
         const f = url.searchParams.get('filter')
         const q = url.searchParams.get('q')
-        if (f && ['all', 'move', 'replace', 'existing', 'new'].includes(f) && f !== stateRef.current.currentFilter) {
+        if (f && ['all', 'move', 'replace', 'extra'].includes(f) && f !== stateRef.current.currentFilter) {
           dispatch({ type: 'SET_FILTER', filter: f })
         } else if (!f && stateRef.current.currentFilter !== 'all') {
           dispatch({ type: 'SET_FILTER', filter: 'all' })
