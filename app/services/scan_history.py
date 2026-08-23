@@ -9,7 +9,7 @@ from app.core.config import get_config
 from app.core.db import get_db, init_db
 
 HISTORY_DIR_NAME = "history"
-MAX_HISTORY = 20
+MAX_HISTORY = 200
 SINGLETON_NAME = "current.json"
 
 
