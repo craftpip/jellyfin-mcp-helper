@@ -102,28 +102,6 @@ export default function ReportPanel() {
             <strong>{value}</strong> {label}
           </div>
         ))}
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: '4px', alignItems: 'center' }}>
-          {summary.scan_id && (
-            <span
-              onClick={() => actions.copyText(summary.scan_id)}
-              style={{
-                cursor: 'pointer',
-                borderBottom: '1px dashed #9aa4ab',
-                color: '#9aa4ab',
-                fontSize: '0.8rem',
-              }}
-              title="Click to copy"
-            >
-              scan_id: {summary.scan_id}
-            </span>
-          )}
-          <button className="small" onClick={() => actions.toggleAllGroups(false)}>
-            Collapse all
-          </button>
-          <button className="small" onClick={() => actions.toggleAllGroups(true)}>
-            Expand all
-          </button>
-        </div>
       </div>
 
       {state.reportServiceErrors && Object.keys(state.reportServiceErrors).length > 0 && (() => {
@@ -203,20 +181,11 @@ export default function ReportPanel() {
         </div>
         {hasItems && (
           <div className="report-actions">
-            <button className="small" id="btnSelectAll" onClick={() => actions.setCheckedItems('all')}>
-              Select All
+            <button className="small" onClick={() => actions.toggleAllGroups(false)}>
+              Collapse all
             </button>
-            <button className="small" id="btnSelectNone" onClick={() => actions.setCheckedItems('none')}>
-              Select None
-            </button>
-            <button className="small" id="btnSelectExisting" onClick={() => actions.setCheckedItems('existing')}>
-              Select existing paths
-            </button>
-            <button className="small" id="btnSelectMove" onClick={() => actions.setCheckedItems('move')}>
-              Select all new
-            </button>
-            <button className="small" id="btnSelectReplace" onClick={() => actions.setCheckedItems('replace')}>
-              Select all existing
+            <button className="small" onClick={() => actions.toggleAllGroups(true)}>
+              Expand all
             </button>
           </div>
         )}
