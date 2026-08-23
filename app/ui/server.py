@@ -664,7 +664,10 @@ def create_ui_app(
         manager: ScanManager = request.app.state.scan_manager
         try:
             scan = await manager.create_scan(
-                ScanRequest(replaceExisting=payload.get("replaceExisting", True))
+                ScanRequest(
+                    replaceExisting=payload.get("replaceExisting", True),
+                    fullRescan=bool(payload.get("fullRescan", False)),
+                )
             )
         except HTTPException as exc:
             raise HTTPException(status_code=400, detail=exc.detail)
@@ -759,18 +762,20 @@ def create_ui_app(
         return format_scan_progress(scan)
 
     @ui_app.get("/api/scans/current/report", dependencies=[Depends(require_panel_auth)])
-    async def api_current_scan_report(request: Request):
+    async def api_current_scan_report(request: Request, format: str = "markdown", groupBy: str = "sourceFolder"):
         manager: ScanManager = request.app.state.scan_manager
         scan = manager.get_current_scan()
         if not scan:
             return {"hint": "No scan found. Ask the user if they want to start a new scan before doing anything."}
-        return format_scan_report(scan)
+        fmt = format.lower() if format.lower() in ("markdown", "json") else "markdown"
+        return format_scan_report(scan, format=fmt, group_by=groupBy)
 
     @ui_app.get("/api/scans/{scan_id}/report", dependencies=[Depends(require_panel_auth)])
-    async def api_scan_report(request: Request, scan_id: str):
+    async def api_scan_report(request: Request, scan_id: str, format: str = "markdown", groupBy: str = "sourceFolder"):
         manager: ScanManager = request.app.state.scan_manager
         scan = manager.get_scan(scan_id)
-        return format_scan_report(scan)
+        fmt = format.lower() if format.lower() in ("markdown", "json") else "markdown"
+        return format_scan_report(scan, format=fmt, group_by=groupBy)
 
     @ui_app.get("/api/scans/history", dependencies=[Depends(require_panel_auth)])
     async def api_scan_history(limit: int = 20):

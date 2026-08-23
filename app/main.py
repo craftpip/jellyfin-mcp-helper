@@ -322,7 +322,7 @@ def _mcp_tools() -> list[dict[str, object]]:
     return [
         {
             "name": "move new downloads scan",
-            "description": "Start a new background organizer scan of the configured download folders. This tool is read-only: it classifies candidates and prepares a move plan, but it does not move files. After calling this tool, use the progress tool until the scan completes, then use the report tool to review planned actions before confirming. IMPORTANT: When polling the progress tool, wait at least 10 seconds between calls. Do not poll more than once per second or the LLM will appear stuck in a loop.",
+            "description": "Start a new background organizer scan of the configured download folders. This tool is read-only: it classifies candidates and prepares a move plan, but it does not move files. By default scans are incremental: only new files not already in the report are added; existing edits (retargets, etc.) are preserved. Use fullRescan to overwrite the report. After calling this tool, use the progress tool until the scan completes, then use the report tool to review planned actions before confirming. IMPORTANT: When polling the progress tool, wait at least 10 seconds between calls. Do not poll more than once per second or the LLM will appear stuck in a loop.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -330,6 +330,11 @@ def _mcp_tools() -> list[dict[str, object]]:
                         "type": "boolean",
                         "default": True,
                         "description": "When true, the planned action may replace an existing target file. When false, items with an existing target are planned as skip instead of replace."
+                    },
+                    "fullRescan": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "When true, rescan all files and overwrite the report (discarding previous edits). When false (default), only new files not already in the report are added."
                     }
                 }
             },
@@ -429,13 +434,25 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get move new downloads scan report",
-            "description": "Get the final organizer scan report after a scan completes. Returns planned items and actions such as move, replace, or skip. If the scan is still running, this tool returns compact progress guidance instead of a full report.",
+            "description": "Get the final organizer scan report after a scan completes. Returns planned items and actions such as move, replace, or skip. If the scan is still running, this tool returns compact progress guidance instead of a full report. Use format=json to get grouped JSON by source folder instead of markdown.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
                         "description": "Optional scan_id to fetch a specific scan report. If omitted, the current active scan is used."
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["markdown", "json"],
+                        "default": "markdown",
+                        "description": "Output format. markdown returns report_md plus flat items; json returns groups grouped by sourceFolder with no markdown."
+                    },
+                    "groupBy": {
+                        "type": "string",
+                        "enum": ["sourceFolder"],
+                        "default": "sourceFolder",
+                        "description": "Grouping key when format=json. Only sourceFolder is supported."
                     }
                 }
             },
@@ -781,6 +798,7 @@ async def mcp(request: dict) -> JSONResponse:
                 scan = await manager.create_scan(
                     ScanRequest(
                         replaceExisting=arguments.get("replaceExisting", True),
+                        fullRescan=bool(arguments.get("fullRescan", False)),
                     )
                 )
                 response = _format_scan_progress(scan)
@@ -1045,6 +1063,10 @@ async def mcp(request: dict) -> JSONResponse:
 
         if name == "get move new downloads scan report":
             scan_id = arguments.get("scanId")
+            fmt = str(arguments.get("format") or "markdown").lower()
+            if fmt not in ("markdown", "json"):
+                fmt = "markdown"
+            group_by = str(arguments.get("groupBy") or "sourceFolder")
             try:
                 if scan_id:
                     scan = manager.get_scan(scan_id)
@@ -1074,7 +1096,7 @@ async def mcp(request: dict) -> JSONResponse:
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": json.dumps(_format_scan_report(scan)),
+                                    "text": json.dumps(_format_scan_report(scan, format=fmt, group_by=group_by)),
                                 }
                             ],
                             "isError": False,

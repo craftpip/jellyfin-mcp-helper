@@ -13,6 +13,7 @@ ScanStatus = Literal["running", "completed", "confirmed", "failed", "cancelled"]
 class ScanRequest(BaseModel):
     replace_existing: bool = Field(default=True, alias="replaceExisting")
     operation: OperationMode = Field(default="organize")
+    full_rescan: bool = Field(default=False, alias="fullRescan")
 
     model_config = {"populate_by_name": True}
 

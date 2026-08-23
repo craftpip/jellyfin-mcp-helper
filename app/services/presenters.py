@@ -411,7 +411,63 @@ def format_scan_progress(scan: ScanPlan) -> dict:
     }
 
 
-def format_scan_report(scan: ScanPlan) -> dict:
+GENERIC_SOURCE_FOLDERS = frozenset({"downloads", "torrents", "download", "complete", "incomplete"})
+
+
+def format_report_grouped(items_by_action: dict[str, list[ScannedItem]]) -> list[dict]:
+    """Group actionable+skipped items by sourceFolder (torrent folder)."""
+    grouped: dict[str, dict] = {}
+    for bucket in ("move", "replace", "skip"):
+        for item in items_by_action.get(bucket, []):
+            key = item.source_folder or (Path(item.container_path).name if item.container_path else None) or item.source_path
+            # Fallback for generic download root names -> use source_path basename
+            if key and key.lower() in GENERIC_SOURCE_FOLDERS:
+                key = Path(item.source_path).name or key
+            if not key:
+                key = "Unknown"
+            entry = grouped.get(key)
+            if not entry:
+                grouped[key] = {
+                    "sourceFolder": key,
+                    "containerPath": item.container_path or "",
+                    "count": 0,
+                    "totalSize": 0,
+                    "items": [],
+                }
+                entry = grouped[key]
+            entry["count"] += 1
+            if item.file_size:
+                entry["totalSize"] += int(item.file_size)
+            entry["items"].append({
+                "confirmId": item.confirm_id,
+                "sourcePath": item.source_path,
+                "name": item.name,
+                "targetPath": item.target_path,
+                "itemType": item.item_type,
+                "action": item.action,
+                "fileSize": item.file_size,
+                "showFolderExists": item.show_folder_exists,
+                "seasonFolderExists": item.season_folder_exists,
+                "fileExists": item.file_exists,
+                "crossDrive": item.cross_drive,
+                "reason": item.reason,
+                "error": item.error,
+                "suspect": item.suspect,
+                "flags": item.flags,
+                "corrected": item.corrected,
+                "correctionNote": item.correction_note,
+                "containerPath": item.container_path,
+                "sourceFolder": item.source_folder,
+                "candidateTargets": [
+                    {"path": ct.path, "label": ct.label, "evidence": ct.evidence, "source": ct.source, "reclassifyAsMovie": ct.reclassify_as_movie}
+                    for ct in item.candidate_targets
+                ],
+            })
+    # Sort groups by sourceFolder for stable output
+    return sorted(grouped.values(), key=lambda g: g["sourceFolder"].lower())
+
+
+def format_scan_report(scan: ScanPlan, format: str = "markdown", group_by: str = "sourceFolder") -> dict:
     if scan.status == "running":
         progress = format_scan_progress(scan)
         return {
@@ -473,11 +529,14 @@ def format_scan_report(scan: ScanPlan) -> dict:
     if series_roots_info:
         summary["series_roots"] = series_roots_info
 
-    report = {
+    report: dict = {
         "summary": summary,
-        "report_md": format_report_md(items_by_action, movie_roots_info, series_roots_info),
         "items": format_report_items(scan, items_by_action),
     }
+    if format == "json" and group_by == "sourceFolder":
+        report["groups"] = format_report_grouped(items_by_action)
+    else:
+        report["report_md"] = format_report_md(items_by_action, movie_roots_info, series_roots_info)
 
     if scan.service_errors:
         report["service_errors"] = scan.service_errors

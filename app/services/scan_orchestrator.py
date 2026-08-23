@@ -230,9 +230,35 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
     )
     in_progress_paths = manager._load_in_progress_paths_sync()
     scan.skipped_in_progress = len(in_progress_paths)
+    # Incremental: seed from existing items present at scan start
+    initial_source_paths: set[str] = set()
+    initial_items_snapshot: list = []
+    if not getattr(request, "full_rescan", False) and scan.items:
+        initial_source_paths = {it.source_path for it in scan.items if not it.confirmed}
+        initial_items_snapshot = list(scan.items)
     planned_targets: dict[str, tuple[int, int]] = {}
     planned_episodes: dict[tuple[str, int], set[int]] = {}
     planned_seasons: dict[str, set[int]] = {}
+    # Seed dedup structures from existing report items
+    for idx, it in enumerate(scan.items):
+        if it.action in ("move", "replace") and it.target_path:
+            rev = extract_revision(it.name or Path(it.source_path).name)
+            # keep highest revision per target
+            existing = planned_targets.get(it.target_path)
+            if not existing or rev >= existing[1]:
+                planned_targets[it.target_path] = (idx, rev)
+        if it.item_type == "series" and it.target_path:
+            tag = target_episode_tag(it.target_path)
+            if tag and it.action in ("move", "replace"):
+                # Derive series_key from resolver if available, else use show folder
+                try:
+                    sk = Path(it.target_path).parent.parent.name
+                except Exception:
+                    sk = it.target_path
+                # Use generic seeding for gap detection (best-effort)
+                season_num, ep_num = tag
+                planned_seasons.setdefault(sk, set()).add(season_num)
+                planned_episodes.setdefault((sk, season_num), set()).add(ep_num)
 
     scan_result = scan_candidates(manager._config.paths)
     candidates = scan_result.candidates
@@ -251,6 +277,10 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
             return
         scan.current_candidate_index = index
         scan.current_candidate = candidate.source_path
+        # Incremental dedup: already in report -> preserve existing entry, skip re-adding
+        if candidate.source_path in initial_source_paths:
+            scan.processed_candidates = index
+            continue
         if in_progress_paths and manager._is_in_progress(candidate.source_path, in_progress_paths):
             scan.counts.skipped += 1
             logger.warning("Scan %s skipped in-progress download: %s", scan.scan_id, candidate.source_path)
@@ -494,6 +524,29 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                 )
             )
             scan.processed_candidates = index
+
+    # Incremental: mark initial items whose source vanished as missing (preserve but flag)
+    if initial_items_snapshot:
+        existing_paths_now = {c.source_path for c in candidates}
+        for old_item in initial_items_snapshot:
+            if old_item.confirmed:
+                continue
+            if old_item.source_path not in existing_paths_now:
+                # Verify on disk (candidates may have missed due to filter, but path may still exist as skip)
+                # Only mark missing if the file truly no longer exists
+                if not Path(old_item.source_path).exists():
+                    if old_item.action != "skip" or "Source missing" not in old_item.reason:
+                        was_actionable = old_item.action in ("move", "replace")
+                        old_item.action = "skip"
+                        old_item.reason = "Source missing on disk"
+                        old_item.target_path = ""
+                        old_item.error = "missing"
+                        if was_actionable:
+                            if old_item.item_type == "movie":
+                                scan.counts.movies = max(scan.counts.movies - 1, 0)
+                            elif old_item.item_type == "series":
+                                scan.counts.series = max(scan.counts.series - 1, 0)
+                            scan.counts.skipped += 1
 
     group_retarget_pass(manager, scan, planned_targets)
     manager._resolver.reset_runtime_state()

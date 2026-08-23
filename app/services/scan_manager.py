@@ -81,24 +81,56 @@ class ScanManager:
         now = datetime.now(UTC)
         scan_id = uuid4().hex
 
-        self._current_scan = ScanPlan(
-            scan_id=scan_id,
-            status="running",
-            operation=request.operation,
-            items=[],
-            counts=ScanCounts(),
-            skipped_in_progress=0,
-            created_at=now,
-            started_at=now,
-        )
+        # Single-report incremental: preserve existing report unless fullRescan
+        is_full = bool(getattr(request, "full_rescan", False))
+        existing = self._current_scan
+        if existing and not is_full and existing.status in ("completed", "confirmed", "failed", "cancelled") and existing.items:
+            # Incremental: seed new scan with copy of previous items/counts
+            seeded_items = [it.model_copy(deep=True) for it in existing.items]
+            seeded_counts = existing.counts.model_copy(deep=True)
+            seeded_errors = dict(existing.service_errors)
+            self._current_scan = ScanPlan(
+                scan_id=scan_id,
+                status="running",
+                operation=request.operation,
+                items=seeded_items,
+                counts=seeded_counts,
+                skipped_in_progress=0,
+                created_at=now,
+                started_at=now,
+                service_errors=seeded_errors,
+            )
+            logger.info("Scan %s incremental: seeded %d existing items (fullRescan=%s)", scan_id, len(seeded_items), is_full)
+        else:
+            # Full rescan or no prior report: archive prior if overwriting
+            if existing and is_full and existing.items:
+                try:
+                    from app.services.presenters import format_scan_report as _fmt2
+                    from app.services.scan_history import save_report as _save2
+
+                    _save2(existing.scan_id, _fmt2(existing), self._config.report_dir)
+                    logger.info("Scan %s fullRescan: archived previous report %s with %d items", scan_id, existing.scan_id, len(existing.items))
+                except Exception as exc:
+                    logger.warning("Failed to archive previous report on fullRescan: %s", exc)
+            self._current_scan = ScanPlan(
+                scan_id=scan_id,
+                status="running",
+                operation=request.operation,
+                items=[],
+                counts=ScanCounts(),
+                skipped_in_progress=0,
+                created_at=now,
+                started_at=now,
+            )
         self._scan_plans[scan_id] = self._current_scan
         self._scan_cancel_events[scan_id] = threading.Event()
 
         logger.info(
-            "Scan %s started: operation=%s replace_existing=%s",
+            "Scan %s started: operation=%s replace_existing=%s fullRescan=%s",
             scan_id,
             request.operation,
             request.replace_existing,
+            is_full,
         )
 
         self._scan_tasks[scan_id] = create_task(self._run_scan_task(scan_id, request, previous_task))
