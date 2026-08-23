@@ -1,6 +1,13 @@
 # 15 — History Page: Groups Exactly Like Scan Report (No Shortcuts)
 
-> **Status: Plan — awaiting `go` to implement. No code will be changed until you approve.**
+> **Status: Implemented 2026-08-24 (§3 steps 1–6).** Matrix green: backend `415 passed`
+> (+8 new in `tests/test_history_store.py`), frontend `112 passed` (+8 new
+> `HistoryPage.test.jsx`), `npm run build` ✓, container restarted, live `/api/history` +
+> `/history` verified, `config/app.db` migration confirmed (`suspect`, `corrected`,
+> `correction_note`, `cross_drive` columns present). FK note: `scans` row is written by the
+> orchestrator when the scan completes, before any confirm, so `append_history_group` never hits
+> the foreign key. Remaining manual check: perform one real Confirm and verify exactly one card
+> with only the moved files appears (History page shows `No confirms yet` until then).
 
 > **Goal:** History (`/history` → `HistoryPage.jsx`) must show **confirmed groups exactly like the Scan report** — per-sourceFolder `▼/▶` cards, `Source → Target` table with `PathPills`/`Suspect`/`Corrected`, `Browse…`, filters (`All`/`New`/`Replace`/`Extras` with `✓`), search, and `Move again`/`Undo` — not a flat table. One Confirm = one history card; two separate Confirms on same sourceFolder = two history cards.
 
@@ -36,7 +43,7 @@
 
 ### 2.4 Edge Cases
 
-- **No confirms yet:** Show `Scans history (20)` as groups (so you see old scans immediately) and hint `No confirms yet — your past scans are below, confirm a group to see it here as well.`
+- **No confirms yet:** Show `No confirms yet — scan and confirm a group to see it here.` (scans are **not** listed here per §2.1; they stay on Dashboard `Recent:`).
 - **No scans either:** Show `No confirms yet — scan and confirm a group to see it here.`
 - **Many scans (20 → 200):** Fetch only first 5 full reports eagerly, lazy-load the rest on expand (`onToggle` for that `scan_id` fetches `GET /api/scans/history/{id}` if not in `scanReports` cache) to keep `History` fast.
 - **Trail:** `path_history_json` may be `null` for old rows — fallback to `source_path → target_path`.
@@ -45,11 +52,38 @@
 
 ## 3. Implementation Steps (Full, No Shortcuts)
 
-1. **HistoryPage state** (`HistoryPage.jsx:8`): Add `scans`, `scanReports` (`scan_id → report`), `scanExpanded` (`scan_id → bool`). Keep existing `groups`/`expanded`/`editing` for confirms. Do **not** add `filter`/`search` state for History — History shows groups only, no summary pills/search/filter chips per your “Just show the fucking group.”
-2. **Load** (`load()`): `Promise.all([apiGet('/history?limit=50'), apiGet('/scans/history?limit=20')])` → `setGroups` + `setScans`; then for `scans.slice(0,5)` `apiGet('/scans/history/{id}')` → `setScanReports`. Do not replace confirms with scans.
-3. **Render** (`return`): Keep existing `▼/▶` confirm cards exactly as `fe43516` (no summary pills/search/filter chips). For scans, add above confirms a `Scans history (N)` section where each `scan` is a collapsible card header (`scan_id` `saved_at`, `N files`) that expands to **Scan-report-style groups only** (`groupItems(mapReportItems(report))` → `group-header`/`group-body` with `Source → Target` table, `PathPills`, `Suspect`/`Corrected`, `Browse…`, `Move again` per group via `POST /api/scans/{scan_id}/confirm` with `itemIds` of that group’s items). **No `summary-strip` (`3 Movies 83 Series…`), no `search-bar`, no `filter-chips` in History — just the group cards.**
-4. **Actions:** For scans, `Move again` per group (and optionally `Move on all` for the whole scan) and `Undo` not applicable; for confirms, keep `Undo`/`Save & Move Again` as before. Do not stub `Move again` as a toast — it must call the real endpoint and poll progress.
-5. **Tests:** Add `HistoryPage.test.jsx` (render with mocked `GET /history` + `GET /scans/history` + `GET /scans/history/{id}`, assert `▼` group cards, expand, `Source → Target` table, `Move again` calls `POST /api/scans/{id}/confirm` with correct `itemIds`; assert no `.summary-strip`/`.filter-chips`/`.search-bar` in History).
+> **Resolution of the earlier scans-section idea:** Steps 1–4 below used to describe adding a
+> `Scans history (N)` section (old scans expandable into full report groups with `Move again`)
+> **inside `/history`**. That design produced `caa293c`, which you rejected (“why the whole report
+> in each history item?”) and was reverted in `7d9ece3`. It is superseded by §2.1: scans stay on
+> Dashboard `Recent:` + `GET /api/scans/history`; `/history` renders confirm cards only. The steps
+> below are the corrected, final implementation list.
+
+1. **Backend data for row parity:** `history_items` gains `suspect`, `corrected`, `correction_note`,
+   `cross_drive` columns (PRAGMA-based `ALTER TABLE` migration in `init_db`; table currently empty).
+   `move_executor._run_confirm_task` persists them at confirm time (`_is_cross_drive(source, target)`).
+2. **Live existence in API:** `history_store.list_history_groups`/`get_history_group` compute per item
+   `source_exists`, `target_exists`, and `pathExists` (`Show ✓ Season ✓ File ✓` / `Folder ✓ File ✓`)
+   so the frontend can reuse `PathPills` unchanged.
+3. **Delete if applicable:** new endpoint `POST /api/history/{history_id}/delete-source`
+   (`confirmId`) deletes the leftover source file only when `source_path` still exists on disk as a
+   file; UI shows the Delete button only when `source_exists` is true (window.confirm before).
+4. **HistoryPage expanded table = Scan-report row parity:** columns `Action` (action badge +
+   `Cross-drive`/`Suspect`/`Corrected` badges + `PathPills`), `Source → Target Path` (source line,
+   editable target input, `Browse…`), `Size` (`formatBytes(file_size)`), `Trail`, `Status`,
+   Delete-if-applicable. Browse reuses the scan-report modal: refactor `BrowseModal.jsx` to export a
+   presentational `FolderPicker` (props: `onPick(path)`, `onClose()`, `title`) plus the existing
+   store-connected default export for the scan flow (unchanged behavior). No summary pills, no
+   search bar, no filter chips anywhere in `/history`.
+5. **Keep actions:** `Undo` (`POST /history/{id}/undo`) and `Save & Move Again`
+   (`POST /history/{id}/retarget`) unchanged.
+6. **Tests:** Add `HistoryPage.test.jsx` (mocked fetch): card header + expand, Action badges
+   (`Suspect`/`Corrected`/`Cross-drive` render only when flagged), `PathPills`, size formatting,
+   trail join, edit input + `Browse…` pick fills the input, `Save & Move Again` POSTs correct
+   `updates`, `Undo` POSTs undo, Delete button hidden when `source_exists` false and calls
+   delete-source when true; assert **no** `.summary-strip`/`.filter-chips`/`.search-bar` in
+   History. Backend: extend tests for new columns persistence, `pathExists` computation, and
+   delete-source guardrails (missing item → 404; nonexistent source → `deleted: false`).
 
 ---
 

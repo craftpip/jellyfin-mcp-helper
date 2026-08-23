@@ -873,6 +873,19 @@ def create_ui_app(
                 continue
         return {"moved": moved, "history_id": history_id}
 
+    @ui_app.post("/api/history/{history_id}/delete-source", dependencies=[Depends(require_panel_auth)])
+    async def api_history_delete_source(history_id: str, payload: dict | None = None):
+        from app.services.history_store import delete_source_file
+
+        payload = payload or {}
+        confirm_id = payload.get("confirmId") or payload.get("confirm_id")
+        if not confirm_id:
+            raise HTTPException(status_code=400, detail="confirmId is required")
+        result = delete_source_file(history_id, confirm_id)
+        if result.get("reason") == "not_found":
+            raise HTTPException(status_code=404, detail="History item not found")
+        return {**result, "history_id": history_id, "confirmId": confirm_id}
+
     @ui_app.patch("/api/scans/current/items", dependencies=[Depends(require_panel_auth)])
     async def api_update_current_items(request: Request, payload: dict | None = None):
         payload = payload or {}

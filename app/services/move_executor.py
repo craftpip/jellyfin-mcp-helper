@@ -416,6 +416,10 @@ async def run_confirm_task(
                             "fileSize": it.file_size,
                             "status": status,
                             "error": it.error,
+                            "suspect": bool(it.suspect),
+                            "corrected": bool(it.corrected),
+                            "correctionNote": it.correction_note,
+                            "crossDrive": _is_cross_drive(it.source_path, it.target_path),
                         }
                     )
                 history_id = append_history_group(

@@ -46,8 +46,8 @@ def append_history_group(
                 path_history = [source, target]
             conn.execute(
                 """
-                INSERT INTO history_items (history_id, confirm_id, source_path, source_folder, target_path, path_history_json, action, item_type, file_size, status, error)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO history_items (history_id, confirm_id, source_path, source_folder, target_path, path_history_json, action, item_type, file_size, status, error, suspect, corrected, correction_note, cross_drive)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     history_id,
@@ -61,6 +61,10 @@ def append_history_group(
                     item.get("fileSize") or item.get("file_size"),
                     item.get("status") or "moved",
                     item.get("error"),
+                    1 if item.get("suspect") else 0,
+                    1 if item.get("corrected") else 0,
+                    item.get("correctionNote") or item.get("correction_note"),
+                    1 if item.get("crossDrive") or item.get("cross_drive") else 0,
                 ),
             )
         conn.commit()
@@ -83,6 +87,38 @@ def append_history_group(
         conn.close()
 
 
+def _live_item_fields(item: dict[str, Any]) -> dict[str, Any]:
+    """Compute live on-disk existence for a stored history item.
+
+    Adds source_exists/target_exists plus the pathExists string in the same
+    format as presenters.format_path_exists so the frontend PathPills component
+    can be reused unchanged.
+    """
+    source = item.get("source_path") or ""
+    target = item.get("target_path") or ""
+    source_exists = bool(source) and Path(source).is_file()
+    target_exists = bool(target) and Path(target).is_file()
+    check = "\u2713" if target_exists else "\u2717"
+    if (item.get("item_type") or "movie") == "series":
+        target_path = Path(target) if target else None
+        season_exists = bool(target_path and target_path.parent.is_dir())
+        show_exists = bool(target_path and target_path.parent.parent.is_dir())
+        item["pathExists"] = "Show %s, Season %s, File %s" % (
+            "\u2713" if show_exists else "\u2717",
+            "\u2713" if season_exists else "\u2717",
+            check,
+        )
+    else:
+        folder_exists = bool(target and Path(target).parent.is_dir())
+        item["pathExists"] = "Folder %s, File %s" % (
+            "\u2713" if folder_exists else "\u2717",
+            check,
+        )
+    item["source_exists"] = source_exists
+    item["target_exists"] = target_exists
+    return item
+
+
 def list_history_groups(limit: int = 50, group_title: str | None = None, db_path: Path | None = None) -> list[dict[str, Any]]:
     init_db(db_path)
     conn = get_db(db_path)
@@ -103,7 +139,7 @@ def list_history_groups(limit: int = 50, group_title: str | None = None, db_path
                     item["pathHistory"] = json.loads(item["path_history_json"] or "[]")
                 except:
                     item["pathHistory"] = []
-                items.append(item)
+                items.append(_live_item_fields(item))
             g["items"] = items
             g["file_count"] = len(items)
             groups.append(g)
@@ -129,7 +165,7 @@ def get_history_group(history_id: str, db_path: Path | None = None) -> dict[str,
                 item["pathHistory"] = json.loads(item["path_history_json"] or "[]")
             except:
                 item["pathHistory"] = []
-            items.append(item)
+            items.append(_live_item_fields(item))
         group["items"] = items
         return group
     finally:
@@ -170,5 +206,34 @@ def mark_undone(history_id: str, db_path: Path | None = None) -> bool:
         cur = conn.execute("UPDATE history_items SET status = 'undone' WHERE history_id = ?", (history_id,))
         conn.commit()
         return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_source_file(history_id: str, confirm_id: str, db_path: Path | None = None) -> dict[str, Any]:
+    """Delete a leftover source file recorded in history.
+
+    Only deletes when the exact recorded source_path still exists on disk as a
+    file. Returns {deleted: bool, reason: str, source_path: str}.
+    """
+    init_db(db_path)
+    conn = get_db(db_path)
+    try:
+        cur = conn.execute(
+            "SELECT source_path FROM history_items WHERE history_id = ? AND confirm_id = ?",
+            (history_id, confirm_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"deleted": False, "reason": "not_found", "source_path": ""}
+        source = row["source_path"]
+        path = Path(source) if source else None
+        if not path or not path.is_file():
+            return {"deleted": False, "reason": "missing", "source_path": source}
+        try:
+            path.unlink()
+        except OSError as exc:
+            return {"deleted": False, "reason": f"error: {exc}", "source_path": source}
+        return {"deleted": True, "reason": "", "source_path": source}
     finally:
         conn.close()

@@ -13,7 +13,29 @@ export default function BrowseModal() {
 function BrowseView({ confirmId }) {
   const { state, actions } = useAppStore()
   const item = state.currentItems.find((i) => i.confirmId === confirmId)
+  const isSeries = item?.itemType === 'series'
 
+  return (
+    <FolderPicker
+      title={item ? item.title : null}
+      suspectNote={item?.suspect ? ' — flagged as suspicious' : ''}
+      correctionNote={item?.correctionNote ? ' — ' + item.correctionNote : ''}
+      showReclassifyOption={isSeries}
+      showApplyToGroupOption={!!item}
+      onPick={(directory, opts) =>
+        actions.retargetItem(
+          confirmId,
+          directory,
+          !!opts?.applyToGroup,
+          !!opts?.reclassifyAsMovie
+        )
+      }
+      onClose={() => actions.closeBrowse()}
+    />
+  )
+}
+
+export function FolderPicker({ title, suspectNote, correctionNote, showReclassifyOption, showApplyToGroupOption, onPick, onClose }) {
   const [roots, setRoots] = useState([])
   const [cwd, setCwd] = useState('')
   const [root, setRoot] = useState('')
@@ -112,24 +134,23 @@ function BrowseView({ confirmId }) {
 
   function select() {
     if (!cwd) return
-    actions.retargetItem(confirmId, cwd, applyToGroup, reclassifyAsMovie)
-    actions.closeBrowse()
+    onPick(cwd, { applyToGroup, reclassifyAsMovie })
+    onClose()
   }
 
   const breadcrumb = cwd.split('/').filter(Boolean)
   const targetCount = entries.reduce((s, e) => s + (e.videoCount || 0), 0)
-  const isSeries = item?.itemType === 'series'
   const atTopLevel = !cwd
 
   return (
     <div className="modal-overlay" id="browseModal">
       <div className="modal browse-modal" role="dialog" aria-modal="true" aria-labelledby="browseModalTitle">
         <h3 id="browseModalTitle">Choose target folder</h3>
-        {item && (
+        {title && (
           <div className="hint" style={{ marginBottom: '8px' }}>
-            {item.title}
-            {item.suspect ? ' — flagged as suspicious' : ''}
-            {item.correctionNote ? ' — ' + item.correctionNote : ''}
+            {title}
+            {suspectNote}
+            {correctionNote}
           </div>
         )}
 
@@ -223,31 +244,33 @@ function BrowseView({ confirmId }) {
         </div>
         )}
 
-        <div className="browse-options">
-          {isSeries && (
-            <label className="chk-label">
-              <input
-                type="checkbox"
-                checked={reclassifyAsMovie}
-                onChange={(e) => {
-                  setReclassifyAsMovie(e.target.checked)
-                  if (e.target.checked) setApplyToGroup(false)
-                }}
-              />
-              <span className="chk-text">Treat as movie (franchise movie folder)</span>
-            </label>
-          )}
-          {!reclassifyAsMovie && item && (
-            <label className="chk-label">
-              <input
-                type="checkbox"
-                checked={applyToGroup}
-                onChange={(e) => setApplyToGroup(e.target.checked)}
-              />
-              <span className="chk-text">Apply to all items in this group</span>
-            </label>
-          )}
-        </div>
+        {(showReclassifyOption || showApplyToGroupOption) && (
+          <div className="browse-options">
+            {showReclassifyOption && (
+              <label className="chk-label">
+                <input
+                  type="checkbox"
+                  checked={reclassifyAsMovie}
+                  onChange={(e) => {
+                    setReclassifyAsMovie(e.target.checked)
+                    if (e.target.checked) setApplyToGroup(false)
+                  }}
+                />
+                <span className="chk-text">Treat as movie (franchise movie folder)</span>
+              </label>
+            )}
+            {!reclassifyAsMovie && showApplyToGroupOption && (
+              <label className="chk-label">
+                <input
+                  type="checkbox"
+                  checked={applyToGroup}
+                  onChange={(e) => setApplyToGroup(e.target.checked)}
+                />
+                <span className="chk-text">Apply to all items in this group</span>
+              </label>
+            )}
+          </div>
+        )}
 
         <div className="browse-footer">
           <div className="hint browse-target" id="browseTarget">
@@ -255,7 +278,7 @@ function BrowseView({ confirmId }) {
             {targetCount > 0 && ' (' + targetCount + ' files)'}
           </div>
           <div className="browse-actions">
-            <button className="small" onClick={() => actions.closeBrowse()}>
+            <button className="small" onClick={onClose}>
               Cancel
             </button>
             <button className="primary small" disabled={!cwd || loading} onClick={select}>

@@ -107,10 +107,31 @@ def init_db(db_path: Path | None = None) -> None:
                 file_size INTEGER,
                 status TEXT NOT NULL,
                 error TEXT,
+                suspect INTEGER NOT NULL DEFAULT 0,
+                corrected INTEGER NOT NULL DEFAULT 0,
+                correction_note TEXT,
+                cross_drive INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY(history_id) REFERENCES history_groups(history_id) ON DELETE CASCADE
             )
             """
         )
+        # Add flag columns for existing DBs
+        try:
+            conn.execute("ALTER TABLE history_items ADD COLUMN suspect INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE history_items ADD COLUMN corrected INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE history_items ADD COLUMN correction_note TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE history_items ADD COLUMN cross_drive INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
         # Indexes
         conn.execute("CREATE INDEX IF NOT EXISTS idx_history_groups_scan_id ON history_groups(scan_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_history_groups_title ON history_groups(group_title)")

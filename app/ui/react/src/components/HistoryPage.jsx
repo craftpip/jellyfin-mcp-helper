@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost } from '../api/apiClient.js'
 import { useAppStore } from '../store/AppStore.jsx'
+import { formatBytes } from '../utils/format.js'
+import PathPills from './PathPills.jsx'
+import { FolderPicker } from './BrowseModal.jsx'
 
 export default function HistoryPage() {
   const { actions } = useAppStore()
@@ -9,6 +12,7 @@ export default function HistoryPage() {
   const [expanded, setExpanded] = useState({})
   const [editing, setEditing] = useState({}) // history_id -> {confirmId -> newTarget}
   const [busy, setBusy] = useState(null)
+  const [browseRow, setBrowseRow] = useState(null) // {historyId, confirmId, title}
 
   async function load() {
     setLoading(true)
@@ -49,6 +53,24 @@ export default function HistoryPage() {
       ...prev,
       [historyId]: { ...(prev[historyId] || {}), [confirmId]: newTarget },
     }))
+  }
+
+  async function handleDeleteSource(group, item) {
+    if (!window.confirm(`Delete leftover source file?\n${item.source_path}`)) return
+    setBusy(group.history_id)
+    try {
+      const res = await apiPost(`/history/${group.history_id}/delete-source`, { confirmId: item.confirm_id })
+      if (res.deleted) {
+        actions.toast('Deleted leftover source file', 'good')
+      } else {
+        actions.toast('Source file no longer exists', 'warn')
+      }
+      await load()
+    } catch (e) {
+      actions.toast('Delete failed: ' + e.message, 'err')
+    } finally {
+      setBusy(null)
+    }
   }
 
   async function handleRetarget(group) {
@@ -122,34 +144,70 @@ export default function HistoryPage() {
                   <table className="admin-table" style={{ width: '100%' }}>
                     <thead>
                       <tr>
-                        <th>Source</th>
-                        <th>Current Target</th>
-                        <th>New Target (edit)</th>
-                        <th>Trail</th>
-                        <th>Status</th>
+                        <th style={{ width: '150px' }}>Action</th>
+                        <th>Source → Target Path</th>
+                        <th style={{ width: '90px', textAlign: 'right' }}>Size</th>
+                        <th style={{ width: '220px' }}>Trail</th>
+                        <th style={{ width: '90px' }}>Status</th>
+                        <th style={{ width: '70px', textAlign: 'right' }}></th>
                       </tr>
                     </thead>
                     <tbody>
                       {group.items.map((item) => {
                         const currentTarget = item.target_path
                         const edited = groupEdits[item.confirm_id] ?? currentTarget
-                        const trail = item.pathHistory || item.path_history_json ? (() => { try { const h = item.pathHistory || JSON.parse(item.path_history_json || '[]'); return Array.isArray(h) ? h.join(' → ') : ''; } catch { return ''; } })() : `${item.source_path} → ${item.target_path}`
+                        const trail = item.pathHistory && item.pathHistory.length ? item.pathHistory.join(' → ') : `${item.source_path} → ${item.target_path}`
                         return (
                           <tr key={item.confirm_id}>
-                            <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.source_path}>
-                              {item.source_path}
-                            </td>
-                            <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.target_path}>
-                              {item.target_path}
+                            <td>
+                              <div className="action-cell">
+                                {item.cross_drive ? (
+                                  <span className="crossdrive-badge" title="Moved between hard drives">
+                                    Cross-drive
+                                  </span>
+                                ) : null}
+                                {item.suspect ? (
+                                  <span className="suspect-badge" title={item.correction_note || 'Suspect classification — double-check the target'}>
+                                    Suspect
+                                  </span>
+                                ) : null}
+                                {item.corrected ? (
+                                  <span className="corrected-badge" title={item.correction_note || 'Reclassified after review'}>
+                                    Corrected
+                                  </span>
+                                ) : null}
+                                <span className="path-status">
+                                  <PathPills item={{ itemType: item.item_type, pathExists: item.pathExists }} />
+                                </span>
+                              </div>
                             </td>
                             <td>
-                              <input
-                                type="text"
-                                value={edited}
-                                onChange={(e) => handleEditChange(group.history_id, item.confirm_id, e.target.value)}
-                                style={{ width: '260px', fontFamily: 'monospace', fontSize: '0.78rem' }}
-                                placeholder="New target path"
-                              />
+                              <div className="path-cell">
+                                <div className="source-name" title={item.source_path}>
+                                  {item.source_path}
+                                </div>
+                                <input
+                                  type="text"
+                                  className="target-input"
+                                  value={edited}
+                                  onChange={(e) => handleEditChange(group.history_id, item.confirm_id, e.target.value)}
+                                  placeholder="New target path"
+                                />
+                                <div className="target-tools">
+                                  <button
+                                    type="button"
+                                    className="small browse-btn"
+                                    onClick={() =>
+                                      setBrowseRow({ historyId: group.history_id, confirmId: item.confirm_id, title: item.source_path })
+                                    }
+                                  >
+                                    Browse…
+                                  </button>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{ whiteSpace: 'nowrap', textAlign: 'right', color: '#9aa4ab', fontSize: '0.8rem' }}>
+                              {item.file_size ? formatBytes(item.file_size) : ''}
                             </td>
                             <td style={{ fontSize: '0.7rem', color: 'var(--jf-text-muted)', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={trail}>
                               {trail}
@@ -158,6 +216,19 @@ export default function HistoryPage() {
                               <span className={`badge ${item.status === 'failed' ? 'skip' : item.status === 'undone' ? 'skip' : 'move'}`}>
                                 {item.status}
                               </span>
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              {item.source_exists ? (
+                                <button
+                                  type="button"
+                                  className="danger small"
+                                  disabled={busy === group.history_id}
+                                  onClick={() => handleDeleteSource(group, item)}
+                                  title="Delete the leftover source file"
+                                >
+                                  Delete
+                                </button>
+                              ) : null}
                             </td>
                           </tr>
                         )
@@ -184,6 +255,14 @@ export default function HistoryPage() {
           </div>
         )
       })}
+
+      {browseRow && (
+        <FolderPicker
+          title={browseRow.title}
+          onPick={(directory) => handleEditChange(browseRow.historyId, browseRow.confirmId, directory)}
+          onClose={() => setBrowseRow(null)}
+        />
+      )}
     </div>
   )
 }
