@@ -14,7 +14,7 @@ const LOG_LIMIT = 1000
 
 function pageFromPath() {
   if (typeof window === 'undefined') return 'scan'
-  const match = window.location.pathname.match(/^\/(scan|settings|apikeys)(?:\/|$)/)
+  const match = window.location.pathname.match(/^\/(scan|settings|apikeys|history)(?:\/|$)/)
   return match ? match[1] : 'scan'
 }
 
@@ -940,7 +940,7 @@ export function AppStoreProvider({ children }) {
 
   // ---- admin: page navigation ----
   function setPage(page) {
-    if (page !== 'scan' && page !== 'settings' && page !== 'apikeys') page = 'scan'
+    if (page !== 'scan' && page !== 'settings' && page !== 'apikeys' && page !== 'history') page = 'scan'
     const target = pathForPage(page)
     if (window.location.pathname !== target) window.history.pushState({}, '', target)
     dispatch({ type: 'SET_PAGE', page })

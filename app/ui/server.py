@@ -377,6 +377,7 @@ def create_ui_app(
     @ui_app.get("/scan")
     @ui_app.get("/settings")
     @ui_app.get("/apikeys")
+    @ui_app.get("/history")
     async def spa_page():
         return _serve_react()
 
@@ -781,6 +782,91 @@ def create_ui_app(
         if not report:
             raise HTTPException(status_code=404, detail="History report not found")
         return report
+
+    # ── History (per-group confirm history with pathHistory) ────────────
+    @ui_app.get("/api/history", dependencies=[Depends(require_panel_auth)])
+    async def api_history_list(limit: int = 50, group: str | None = None):
+        from app.services.history_store import list_history_groups
+
+        return {"groups": list_history_groups(limit=min(limit, 100), group_title=group)}
+
+    @ui_app.get("/api/history/{history_id}", dependencies=[Depends(require_panel_auth)])
+    async def api_history_get(history_id: str):
+        from app.services.history_store import get_history_group
+
+        group = get_history_group(history_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="History group not found")
+        return group
+
+    @ui_app.post("/api/history/{history_id}/undo", dependencies=[Depends(require_panel_auth)])
+    async def api_history_undo(history_id: str):
+        from app.services.history_store import get_history_group, mark_undone
+        import shutil
+        from pathlib import Path
+
+        group = get_history_group(history_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="History group not found")
+        restored = 0
+        skipped = []
+        for item in group.get("items", []):
+            target = Path(item.get("target_path") or "")
+            source = Path(item.get("source_path") or "")
+            if not target.is_file():
+                skipped.append({"path": str(target), "reason": "target missing"})
+                continue
+            if source.exists():
+                skipped.append({"path": str(source), "reason": "source already exists"})
+                continue
+            try:
+                source.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(target), str(source))
+                restored += 1
+            except Exception as e:
+                skipped.append({"path": str(target), "reason": str(e)})
+        if restored:
+            mark_undone(history_id)
+        return {"restored": restored, "skipped": skipped, "history_id": history_id}
+
+    @ui_app.post("/api/history/{history_id}/retarget", dependencies=[Depends(require_panel_auth)])
+    async def api_history_retarget(history_id: str, payload: dict | None = None):
+        from app.services.history_store import append_to_path_history, get_history_group
+        import shutil
+        from pathlib import Path
+
+        payload = payload or {}
+        # Expect payload like {"updates": [{"confirmId": "i1", "newTarget": "/new/path/..."}]}
+        updates = payload.get("updates") or payload.get("items") or []
+        if not isinstance(updates, list) or not updates:
+            raise HTTPException(status_code=400, detail="updates is required")
+        group = get_history_group(history_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="History group not found")
+        moved = 0
+        for upd in updates:
+            confirm_id = upd.get("confirmId") or upd.get("confirm_id")
+            new_target = upd.get("newTarget") or upd.get("new_target") or upd.get("targetPath")
+            if not confirm_id or not new_target:
+                continue
+            # Find the item's current target
+            item = next((it for it in group.get("items", []) if it.get("confirm_id") == confirm_id), None)
+            if not item:
+                continue
+            old_target = Path(item.get("target_path") or "")
+            new_path = Path(new_target)
+            if not old_target.is_file():
+                continue
+            if new_path.exists():
+                continue
+            try:
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(old_target), str(new_path))
+                append_to_path_history(history_id, confirm_id, str(new_path))
+                moved += 1
+            except Exception:
+                continue
+        return {"moved": moved, "history_id": history_id}
 
     @ui_app.patch("/api/scans/current/items", dependencies=[Depends(require_panel_auth)])
     async def api_update_current_items(request: Request, payload: dict | None = None):

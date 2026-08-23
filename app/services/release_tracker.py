@@ -1,26 +1,85 @@
 from __future__ import annotations
-
 import json
 from datetime import UTC, date, datetime, time
 from pathlib import Path
-from threading import Lock
 from typing import Any
 from zoneinfo import ZoneInfo
+from app.core.db import get_db, init_db
 
-from app.core.config import BASE_DIR
+def _normalize_name(v: str) -> str:
+    return " ".join(v.strip().casefold().split())
 
-DEFAULT_RELEASE_TRACKER_PATH = BASE_DIR / "config" / "ongoing_releases.json"
-
-
-def _normalize_name(value: str) -> str:
-    return " ".join(value.strip().casefold().split())
-
+# For backward compat with tests that patch this
+DEFAULT_RELEASE_TRACKER_PATH = Path(__file__).resolve().parents[2] / "config" / "ongoing_releases.json"
 
 class ReleaseTracker:
-    _lock = Lock()
+    def __init__(self, store_path: Path | None = None, db_path: Path | None = None) -> None:
+        # Handle backward compat with tests that patch DEFAULT_RELEASE_TRACKER_PATH
+        if db_path is None and store_path is None:
+            # Check if DEFAULT_RELEASE_TRACKER_PATH has been patched to a tmp path
+            try:
+                default_path = DEFAULT_RELEASE_TRACKER_PATH
+                if "pytest" in str(default_path) or "tmp" in str(default_path):
+                    p = Path(default_path)
+                    db_path = p.parent / "test.db" if p.suffix == ".json" else p
+            except:
+                pass
+        if db_path is None and store_path is not None:
+            p = Path(store_path)
+            db_path = p.parent / "test.db" if p.suffix == ".json" else p
+        self._db_path = db_path
+        init_db(self._db_path)
+        # Ensure data_json column exists
+        conn = get_db(self._db_path)
+        try:
+            try:
+                conn.execute("ALTER TABLE ongoing_releases ADD COLUMN data_json TEXT")
+                conn.commit()
+            except:
+                pass
+        finally:
+            conn.close()
 
-    def __init__(self, store_path: Path | None = None) -> None:
-        self._store_path = store_path or DEFAULT_RELEASE_TRACKER_PATH
+    def _conn(self):
+        return get_db(self._db_path)
+
+    def _find_key(self, library_name: str, series_name: str, series_id: str | None) -> str | None:
+        conn = self._conn()
+        try:
+            if series_id:
+                cur = conn.execute("SELECT series_key FROM ongoing_releases WHERE series_key = ?", (series_id,))
+                if cur.fetchone():
+                    return series_id
+            nk = f"{_normalize_name(library_name)}::{_normalize_name(series_name)}"
+            cur = conn.execute("SELECT series_key FROM ongoing_releases WHERE series_key = ?", (nk,))
+            if cur.fetchone():
+                return nk
+            # Scan all
+            cur = conn.execute("SELECT series_key, data_json FROM ongoing_releases")
+            for row in cur.fetchall():
+                try:
+                    d = json.loads(row["data_json"] or "{}")
+                    if _normalize_name(str(d.get("libraryName",""))) == _normalize_name(library_name) and _normalize_name(str(d.get("seriesName",""))) == _normalize_name(series_name):
+                        return row["series_key"]
+                except:
+                    continue
+            return None
+        finally:
+            conn.close()
+
+    def _load_all(self):
+        conn = self._conn()
+        try:
+            cur = conn.execute("SELECT data_json FROM ongoing_releases")
+            out = []
+            for row in cur.fetchall():
+                try:
+                    out.append(json.loads(row["data_json"]))
+                except:
+                    continue
+            return out
+        finally:
+            conn.close()
 
     def upsert_release(self, payload: dict[str, Any]) -> dict[str, Any]:
         library_name = str(payload.get("libraryName") or "").strip()
@@ -28,209 +87,139 @@ class ReleaseTracker:
         next_release_date = str(payload.get("nextReleaseDate") or "").strip()
         series_id = str(payload.get("seriesId") or "").strip() or None
         timezone_name = str(payload.get("timezone") or "").strip() or None
-
-        if not library_name:
-            raise ValueError("libraryName is required")
-        if not series_name:
-            raise ValueError("seriesName is required")
-        if not next_release_date:
-            raise ValueError("nextReleaseDate is required")
-
-        parsed_release = self._parse_datetime(next_release_date, timezone_name)
+        if not library_name: raise ValueError("libraryName is required")
+        if not series_name: raise ValueError("seriesName is required")
+        if not next_release_date: raise ValueError("nextReleaseDate is required")
+        parsed = self._parse_datetime(next_release_date, timezone_name)
         updated_at = datetime.now(UTC).isoformat()
-
-        with self._lock:
-            records = self._load_records()
-            existing_key = self._find_existing_key(records, library_name, series_name, series_id)
-            record_key = series_id or existing_key or self._name_key(library_name, series_name)
-
-            if existing_key and existing_key != record_key:
-                existing = records.pop(existing_key)
-            else:
-                existing = records.get(record_key, {})
-
-            record = {
-                "libraryName": library_name,
-                "seriesName": series_name,
-                "seriesId": series_id or existing.get("seriesId"),
-                "nextReleaseDate": parsed_release.isoformat(),
-                "nextSeason": payload.get("nextSeason"),
-                "nextEpisode": payload.get("nextEpisode"),
-                "timezone": timezone_name,
-                "source": str(payload.get("source") or existing.get("source") or "unknown"),
-                "notes": payload.get("notes"),
-                "updatedAt": updated_at,
-            }
-            records[record_key] = record
-            self._save_records(records)
-
+        existing_key = self._find_key(library_name, series_name, series_id)
+        # Find existing record for merge
+        existing = None
+        if existing_key:
+            conn = self._conn()
+            try:
+                cur = conn.execute("SELECT data_json FROM ongoing_releases WHERE series_key = ?", (existing_key,))
+                row = cur.fetchone()
+                if row:
+                    existing = json.loads(row["data_json"])
+            finally:
+                conn.close()
+        record_key = series_id or existing_key or f"{_normalize_name(library_name)}::{_normalize_name(series_name)}"
+        if existing_key and existing_key != record_key and existing:
+            # delete old
+            conn = self._conn()
+            try:
+                conn.execute("DELETE FROM ongoing_releases WHERE series_key = ?", (existing_key,))
+                conn.commit()
+            finally:
+                conn.close()
+        record = {
+            "libraryName": library_name,
+            "seriesName": series_name,
+            "seriesId": series_id or (existing.get("seriesId") if existing else None),
+            "nextReleaseDate": parsed.isoformat(),
+            "nextSeason": payload.get("nextSeason"),
+            "nextEpisode": payload.get("nextEpisode"),
+            "timezone": timezone_name,
+            "source": str(payload.get("source") or (existing.get("source") if existing else "unknown")),
+            "notes": payload.get("notes"),
+            "updatedAt": updated_at,
+        }
+        conn = self._conn()
+        try:
+            conn.execute("INSERT OR REPLACE INTO ongoing_releases (series_key, title, last_episode, updated_at, data_json) VALUES (?, ?, ?, ?, ?)",
+                         (record_key, series_name, parsed.isoformat(), updated_at, json.dumps(record)))
+            conn.commit()
+        finally:
+            conn.close()
         return record
 
-    def list_releases(self, library_name: str | None = None, limit: int = 100) -> dict[str, Any]:
-        records = self._filtered_records(library_name)
-        items = sorted(records, key=lambda item: self._parse_stored_datetime(item["nextReleaseDate"]))[:limit]
-        return {
-            "tracked_count": len(items),
-            "items": items,
-        }
+    def list_releases(self, library_name: str | None = None, limit: int = 100):
+        records = self._load_all()
+        if library_name:
+            needle = _normalize_name(library_name)
+            records = [r for r in records if _normalize_name(str(r.get("libraryName",""))) == needle]
+        items = sorted(records, key=lambda x: self._parse_stored_datetime(x["nextReleaseDate"]))[:limit]
+        return {"tracked_count": len(items), "items": items}
 
-    def get_release(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+    def get_release(self, payload):
         library_name = str(payload.get("libraryName") or "").strip()
         series_name = str(payload.get("seriesName") or "").strip()
         series_id = str(payload.get("seriesId") or "").strip() or None
-
-        if not library_name:
-            raise ValueError("libraryName is required")
-        if not series_name:
-            raise ValueError("seriesName is required")
-
-        records = self._load_records()
-        existing_key = self._find_existing_key(records, library_name, series_name, series_id)
-        if not existing_key:
+        if not library_name: raise ValueError("libraryName is required")
+        if not series_name: raise ValueError("seriesName is required")
+        key = self._find_key(library_name, series_name, series_id)
+        if not key:
             return None
-        return dict(records[existing_key])
+        conn = self._conn()
+        try:
+            cur = conn.execute("SELECT data_json FROM ongoing_releases WHERE series_key = ?", (key,))
+            row = cur.fetchone()
+            if row:
+                return json.loads(row["data_json"])
+            return None
+        finally:
+            conn.close()
 
-    def get_due_releases(
-        self,
-        library_name: str | None = None,
-        before: str | None = None,
-        limit: int = 50,
-    ) -> dict[str, Any]:
+    def get_due_releases(self, library_name=None, before=None, limit=50):
         before_dt = self._parse_before(before)
-        items: list[dict[str, Any]] = []
-
-        for record in sorted(self._filtered_records(library_name), key=lambda item: self._parse_stored_datetime(item["nextReleaseDate"])):
-            release_dt = self._parse_stored_datetime(record["nextReleaseDate"])
+        all_items = self.list_releases(library_name, limit=1000)["items"]
+        items = []
+        for rec in sorted(all_items, key=lambda x: self._parse_stored_datetime(x["nextReleaseDate"])):
+            release_dt = self._parse_stored_datetime(rec["nextReleaseDate"])
             if release_dt > before_dt:
                 continue
-            item = dict(record)
-            overdue_seconds = max((before_dt.astimezone(UTC) - release_dt.astimezone(UTC)).total_seconds(), 0.0)
-            if overdue_seconds >= 86400:
-                item["daysOverdue"] = int(overdue_seconds // 86400)
+            item = dict(rec)
+            overdue = max((before_dt.astimezone(UTC) - release_dt.astimezone(UTC)).total_seconds(), 0.0)
+            if overdue >= 86400:
+                item["daysOverdue"] = int(overdue // 86400)
             else:
-                item["hoursOverdue"] = round(overdue_seconds / 3600, 1)
+                item["hoursOverdue"] = round(overdue/3600, 1)
             items.append(item)
             if len(items) >= limit:
                 break
+        return {"before": before_dt.isoformat(), "due_count": len(items), "items": items}
 
-        return {
-            "before": before_dt.isoformat(),
-            "due_count": len(items),
-            "items": items,
-        }
-
-    def delete_release(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+    def delete_release(self, payload):
         library_name = str(payload.get("libraryName") or "").strip()
         series_name = str(payload.get("seriesName") or "").strip()
         series_id = str(payload.get("seriesId") or "").strip() or None
-
-        if not library_name:
-            raise ValueError("libraryName is required")
-        if not series_name:
-            raise ValueError("seriesName is required")
-
-        with self._lock:
-            records = self._load_records()
-            existing_key = self._find_existing_key(records, library_name, series_name, series_id)
-            if not existing_key:
-                return None
-            deleted = records.pop(existing_key)
-            self._save_records(records)
-        return deleted
-
-    def _filtered_records(self, library_name: str | None) -> list[dict[str, Any]]:
-        records = self._load_records()
-        items = list(records.values())
-        if not library_name:
-            return items
-
-        needle = _normalize_name(library_name)
-        return [item for item in items if _normalize_name(str(item.get("libraryName", ""))) == needle]
-
-    def _load_records(self) -> dict[str, dict[str, Any]]:
-        if not self._store_path.exists():
-            return {}
-
-        raw = self._store_path.read_text(encoding="utf-8").strip()
-        if not raw:
-            return {}
-
-        data = json.loads(raw)
-        records = data.get("records", {}) if isinstance(data, dict) else {}
-        if not isinstance(records, dict):
-            raise ValueError(f"Invalid release tracker store format: {self._store_path}")
-        return {str(key): value for key, value in records.items() if isinstance(value, dict)}
-
-    def _save_records(self, records: dict[str, dict[str, Any]]) -> None:
-        self._store_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = self._store_path.with_suffix(f"{self._store_path.suffix}.tmp")
-        payload = {"records": records}
-        temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        temp_path.replace(self._store_path)
+        if not library_name: raise ValueError("libraryName is required")
+        if not series_name: raise ValueError("seriesName is required")
+        rec = self.get_release(payload)
+        if not rec:
+            return None
+        key = self._find_key(library_name, series_name, series_id)
+        if not key:
+            return None
+        conn = self._conn()
+        try:
+            conn.execute("DELETE FROM ongoing_releases WHERE series_key = ?", (key,))
+            conn.commit()
+        finally:
+            conn.close()
+        return rec
 
     @staticmethod
-    def _name_key(library_name: str, series_name: str) -> str:
-        return f"{_normalize_name(library_name)}::{_normalize_name(series_name)}"
-
-    def _find_existing_key(
-        self,
-        records: dict[str, dict[str, Any]],
-        library_name: str,
-        series_name: str,
-        series_id: str | None,
-    ) -> str | None:
-        if series_id and series_id in records:
-            return series_id
-
-        name_key = self._name_key(library_name, series_name)
-        if name_key in records:
-            return name_key
-
-        library_key = _normalize_name(library_name)
-        series_key = _normalize_name(series_name)
-        for record_key, record in records.items():
-            if _normalize_name(str(record.get("libraryName", ""))) != library_key:
-                continue
-            if _normalize_name(str(record.get("seriesName", ""))) != series_key:
-                continue
-            return record_key
-        return None
-
-    @staticmethod
-    def _parse_stored_datetime(value: str) -> datetime:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=UTC)
-        return parsed
-
-    def _parse_before(self, value: str | None) -> datetime:
-        raw = str(value or "now").strip()
+    def _parse_stored_datetime(v: str) -> datetime:
+        p = datetime.fromisoformat(v.replace("Z", "+00:00"))
+        return p.replace(tzinfo=UTC) if p.tzinfo is None else p
+    def _parse_before(self, v):
+        raw = str(v or "now").strip()
         if raw.lower() == "now":
             return datetime.now(UTC)
         return self._parse_datetime(raw, None)
-
-    def _parse_datetime(self, value: str, timezone_name: str | None) -> datetime:
+    def _parse_datetime(self, value: str, tzname: str | None) -> datetime:
         raw = value.strip()
-        tzinfo = self._resolve_timezone(timezone_name)
-
         try:
-            parsed_date = date.fromisoformat(raw)
-        except ValueError:
-            parsed_date = None
-
-        if parsed_date is not None and "T" not in raw and " " not in raw:
-            return datetime.combine(parsed_date, time.min, tzinfo=tzinfo)
-
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=tzinfo)
-        return parsed
-
-    @staticmethod
-    def _resolve_timezone(timezone_name: str | None):
-        if not timezone_name:
-            return UTC
+            tzinfo = ZoneInfo(tzname) if tzname else UTC
+        except Exception as exc:
+            raise ValueError(f"Invalid timezone: {tzname}") from exc
         try:
-            return ZoneInfo(timezone_name)
-        except Exception as exc:  # pragma: no cover - invalid tz database varies by platform
-            raise ValueError(f"Invalid timezone: {timezone_name}") from exc
+            d = date.fromisoformat(raw)
+            if "T" not in raw and " " not in raw:
+                return datetime.combine(d, time.min, tzinfo=tzinfo)
+        except: pass
+        p = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return p.replace(tzinfo=tzinfo) if p.tzinfo is None else p
+

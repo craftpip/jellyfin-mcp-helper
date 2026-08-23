@@ -56,6 +56,9 @@ export default function Dashboard() {
               {undoing ? 'Undoing…' : 'Undo moves'}
             </button>
           )}
+          <button className="small" style={{ marginLeft: '8px' }} onClick={() => actions.setPage('history')}>
+            View in History
+          </button>
         </div>
       </div>
     )
@@ -86,6 +89,9 @@ export default function Dashboard() {
               {undoing ? 'Undoing…' : `Undo ${last.moved} move${last.moved === 1 ? '' : 's'}`}
             </button>
           )}
+          <button className="small" style={{ marginLeft: '8px' }} onClick={() => actions.setPage('history')}>
+            View in History
+          </button>
         </div>
         {history.length > 1 && (
           <div style={{ marginTop: '8px', fontSize: '0.72rem', color: 'var(--jf-text-muted)' }}>

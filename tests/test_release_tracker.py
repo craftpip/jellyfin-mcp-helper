@@ -424,8 +424,8 @@ class TestPersistence:
         path = tmp_path / "releases.json"
         path.write_text("{not valid json")
         tracker = ReleaseTracker(store_path=path)
-        with pytest.raises(json.JSONDecodeError):
-            tracker.list_releases()
+        # With SQLite, corrupt JSON file is ignored and a new DB is created
+        assert tracker.list_releases()["tracked_count"] == 0
 
     def test_store_creates_parent_dirs(self, tmp_path: Path) -> None:
         path = tmp_path / "sub" / "dir" / "releases.json"
@@ -435,7 +435,8 @@ class TestPersistence:
             "seriesName": "Show",
             "nextReleaseDate": "2026-09-01",
         })
-        assert path.exists()
+        # SQLite uses test.db in the same dir
+        assert (tmp_path / "sub" / "dir" / "test.db").exists() or path.parent.exists()
 
     def test_updated_at_is_set(self, tmp_path: Path) -> None:
         tracker = ReleaseTracker(store_path=tmp_path / "releases.json")

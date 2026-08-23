@@ -64,7 +64,23 @@
 
 * **Backend:** `tests/test_history.py` — create a scan, confirm a group, assert `history.json` has an entry with correct `sourcePath`/`targetPath`; undo restores the file and marks the history entry as `undone`; re-target moves it again and appends a new entry.
 * **Frontend:** `History.test.jsx` — list shows groups, expand shows files, Undo per group works, “View in History” link from Dashboard jumps correctly.
-* **Manual:** Confirm a group in the UI, check `config/history.json` on disk, refresh → History page shows it, click Undo → file moves back, `ls` confirms.
+* **Manual (with dedicated test file):**
+  * **Test file (keep for regression — do NOT delete, always restore after test):**
+    ```
+    /media3/torrents/[bonkai77] Millennium Actress (2001) [1080p] [MULTI-AUDIO] [MULTI-SUB] [HEVC] [10bit]/Millennium Actress (2001) [1080p] [x265] [10bit].mkv
+    ```
+    This is the **alias*** file — obfuscated in `tests/corpus/download_paths.json` but kept as a real file on disk for live testing. The file is inside a folder named `[bonkai77] Millennium Actress (2001) [1080p] [MULTI-AUDIO] [MULTI-SUB] [HEVC] [10bit]` which is the torrent folder.
+  * **Flow to test history in every way:**
+    1. Ensure the file exists at the path above (create the folder and a dummy file if needed for CI: `mkdir -p "/media3/torrents/[bonkai77] Millennium Actress (2001) [1080p] [MULTI-AUDIO] [MULTI-SUB] [HEVC] [10bit]" && touch ".../Millennium Actress (2001) [1080p] [x265] [10bit].mkv"`).
+    2. `scan` → confirm the above entry (it should be classified as `movie` with title `Millennium Actress`).
+    3. Check History: `GET /api/history` shows a group with that file, `pathHistory: [source, target]`, and the UI History page shows it.
+    4. Test **undo**: `POST /api/history/{id}/undo` → file moves back to source, `status` becomes `undone`.
+    5. Test **retarget**: Edit the target folder name in History (e.g. `Millennium Actress` → `Millennium Actress (2001)`) and confirm again → file moves from `target1` to `target2`, `pathHistory` becomes `[source, target1, target2]`.
+  * **After testing done:** **Move the file back** to its original location for the next test run:
+    ```
+    /media3/torrents/[bonkai77] Millennium Actress (2001) [1080p] [MULTI-AUDIO] [MULTI-SUB] [HEVC] [10bit]/Millennium Actress (2001) [1080p] [x265] [10bit].mkv
+    ```
+    This file will serve you for testing forever — do not delete the folder, just ensure the file is restored after each test cycle.
 
 ---
 

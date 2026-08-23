@@ -377,6 +377,58 @@ async def run_confirm_task(
             finally:
                 scan.confirm_processed += 1
 
+        # Write to history (SQLite) for per-group review
+        if selected_items:
+            try:
+                from app.services.history_store import append_history_group
+
+                # Group by target for display: for series, it's the show folder; for movies, it's the movie folder
+                # Use the first item to determine group
+                first = selected_items[0]
+                first_target = Path(first.target_path)
+                if first.item_type == "movie":
+                    # For movies, each movie is its own group: use the movie folder
+                    group_key = str(first_target.parent)
+                    group_title = first_target.parent.name or first_target.name
+                else:
+                    # For series, group by show folder (parent of season)
+                    group_key = str(first_target.parent.parent) if first_target.parent.parent and first_target.parent.parent.name else str(first_target.parent)
+                    group_title = first_target.parent.parent.name if first_target.parent.parent and first_target.parent.parent.name else first_target.parent.name
+                # Fallback to scan_id if no title
+                if not group_title or group_title in ("/", "."):
+                    group_title = f"Batch {scan_id[:6]}"
+
+                history_items = []
+                for it in selected_items:
+                    # Determine status
+                    status = "moved" if it.action == "move" else "replaced" if it.action == "replace" else "failed" if it.error else "moved"
+                    if it.error:
+                        status = "failed"
+                    history_items.append(
+                        {
+                            "confirmId": it.confirm_id,
+                            "sourcePath": it.source_path,
+                            "sourceFolder": Path(it.source_path).parent.name if it.source_path else "",
+                            "targetPath": it.target_path,
+                            "pathHistory": [it.source_path, it.target_path],
+                            "action": it.action,
+                            "item_type": it.item_type,
+                            "fileSize": it.file_size,
+                            "status": status,
+                            "error": it.error,
+                        }
+                    )
+                history_id = append_history_group(
+                    scan_id=scan_id,
+                    group_title=group_title,
+                    group_key=group_key,
+                    items=history_items,
+                    confirmed_by=getattr(manager, "_current_user", None) or "panel",
+                )["history_id"]
+                logger.info("Wrote history %s for scan %s group %s (%d items)", history_id, scan_id, group_title, len(history_items))
+            except Exception as e:
+                logger.warning("Failed to write history for scan %s: %s", scan_id, e, exc_info=True)
+
         manager._update_confirm_state(
             scan,
             confirm_phase="triggering_jellyfin",

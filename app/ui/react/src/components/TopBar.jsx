@@ -40,6 +40,14 @@ export default function TopBar() {
           {state.page === 'scan' && state.jellyfinLibraries.length > 0 && <LibraryScanDropdown />}
           <button
             type="button"
+            className={`small ${state.page === 'history' ? 'active' : ''}`}
+            onClick={() => actions.setPage('history')}
+            title="View confirm history"
+          >
+            History
+          </button>
+          <button
+            type="button"
             className={`small ${state.page === 'settings' ? 'active' : ''}`}
             onClick={() => actions.setPage('settings')}
             title="Open settings"
