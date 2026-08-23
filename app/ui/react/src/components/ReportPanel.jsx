@@ -59,6 +59,7 @@ export default function ReportPanel() {
   const hasItems = actionable.length > 0
   const hasSkippedOnly = !hasItems && skipped.length > 0
   const skippedSize = skipped.reduce((s, i) => s + (Number(i.fileSize) || 0), 0)
+  const allExpanded = hasItems && reportGroups.length > 0 && expandedGroups.length === reportGroups.length
 
   // Mirror the legacy updateSelectionSummary: "visible" = actionable rows in
   // expanded groups (filter-independent), selected among them.
@@ -102,6 +103,21 @@ export default function ReportPanel() {
             <strong>{value}</strong> {label}
           </div>
         ))}
+        <div className="search-bar" style={{ marginLeft: 'auto', maxWidth: 280, flex: '1 1 220px', minWidth: 180, marginBottom: 0 }}>
+          <input
+            type="text"
+            id="filterInput"
+            value={query}
+            onChange={(e) => actions.setSearchQuery(e.target.value)}
+            placeholder="Search by title, path..."
+            style={{ borderRadius: 8 }}
+          />
+          {query && (
+            <button className="small" onClick={() => actions.setSearchQuery('')} title="Clear search" style={{ borderRadius: 8 }}>
+              Clear
+            </button>
+          )}
+        </div>
       </div>
 
       {state.reportServiceErrors && Object.keys(state.reportServiceErrors).length > 0 && (() => {
@@ -146,21 +162,6 @@ export default function ReportPanel() {
         </div>
       )}
 
-      <div className="search-bar">
-        <input
-          type="text"
-          id="filterInput"
-          value={query}
-          onChange={(e) => actions.setSearchQuery(e.target.value)}
-          placeholder="Search by title, path..."
-        />
-        {query && (
-          <button className="small" onClick={() => actions.setSearchQuery('')} title="Clear search">
-            Clear
-          </button>
-        )}
-      </div>
-
       <div className="report-toolbar">
         <div className="hint" id="selectionSummary">
           {selectionSummary}
@@ -179,11 +180,8 @@ export default function ReportPanel() {
               ))}
             </div>
             <div className="report-actions">
-              <button className="small" onClick={() => actions.toggleAllGroups(false)}>
-                Collapse all
-              </button>
-              <button className="small" onClick={() => actions.toggleAllGroups(true)}>
-                Expand all
+              <button className="small" onClick={() => actions.toggleAllGroups(!allExpanded)}>
+                {allExpanded ? 'Collapse all' : 'Expand all'}
               </button>
             </div>
           </div>
