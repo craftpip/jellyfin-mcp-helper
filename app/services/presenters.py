@@ -138,6 +138,8 @@ def format_report_items(scan: ScanPlan, items_by_action: dict[str, list[ScannedI
             "flags": item.flags,
             "corrected": item.corrected,
             "correctionNote": item.correction_note,
+            "containerPath": item.container_path,
+            "sourceFolder": item.source_folder,
             "candidateTargets": [
                 {
                     "path": ct.path,
@@ -159,6 +161,8 @@ def format_report_items(scan: ScanPlan, items_by_action: dict[str, list[ScannedI
             "fileSize": item.file_size,
             "reason": item.reason,
             "error": item.error,
+            "containerPath": item.container_path,
+            "sourceFolder": item.source_folder,
         })
     return result
 

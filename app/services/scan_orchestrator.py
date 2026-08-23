@@ -67,6 +67,8 @@ def record_scan_errors(manager, scan, errors) -> None:
             err_size = Path(error.path).stat().st_size
         except OSError:
             err_size = None
+        err_container = None
+        err_source_folder = Path(error.path).parent.name or Path(error.path).name
         scan.items.append(
             ScannedItem(
                 confirm_id=manager._next_confirm_id(scan),
@@ -79,6 +81,8 @@ def record_scan_errors(manager, scan, errors) -> None:
                 action="skip",
                 error=error.error,
                 file_size=err_size,
+                container_path=err_container,
+                source_folder=err_source_folder,
             )
         )
         messages.append(f"{error.path} ({error.error})")
@@ -250,6 +254,8 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
         if in_progress_paths and manager._is_in_progress(candidate.source_path, in_progress_paths):
             scan.counts.skipped += 1
             logger.warning("Scan %s skipped in-progress download: %s", scan.scan_id, candidate.source_path)
+            _cp = candidate.container_path
+            _sf = Path(_cp).name if _cp else Path(candidate.source_path).parent.name or candidate.name
             scan.items.append(
                 ScannedItem(
                     confirm_id=manager._next_confirm_id(scan),
@@ -261,6 +267,8 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                     target_path="",
                     action="skip",
                     file_size=candidate.file_size,
+                    container_path=_cp,
+                    source_folder=_sf,
                 )
             )
             scan.processed_candidates = index
@@ -273,6 +281,8 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                 scan.scan_id,
                 candidate.source_path,
             )
+            _cp2 = candidate.container_path
+            _sf2 = Path(_cp2).name if _cp2 else Path(candidate.source_path).parent.name or candidate.name
             scan.items.append(
                 ScannedItem(
                     confirm_id=manager._next_confirm_id(scan),
@@ -284,6 +294,8 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                     target_path="",
                     action="skip",
                     file_size=candidate.file_size,
+                    container_path=_cp2,
+                    source_folder=_sf2,
                 )
             )
             scan.processed_candidates = index
@@ -302,6 +314,8 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                     candidate.source_path,
                     classification.reason,
                 )
+                _cp3 = candidate.container_path
+                _sf3 = Path(_cp3).name if _cp3 else Path(candidate.source_path).parent.name or candidate.name
                 scan.items.append(
                     ScannedItem(
                         confirm_id=manager._next_confirm_id(scan),
@@ -313,6 +327,8 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                         target_path="",
                         action="skip",
                         file_size=candidate.file_size,
+                        container_path=_cp3,
+                        source_folder=_sf3,
                     )
                 )
                 scan.processed_candidates = index
@@ -348,6 +364,8 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                         scan.scan_id,
                         candidate.source_path,
                     )
+                    _cp4 = candidate.container_path
+                    _sf4 = Path(_cp4).name if _cp4 else Path(candidate.source_path).parent.name or candidate.name
                     scan.items.append(
                         ScannedItem(
                             confirm_id=manager._next_confirm_id(scan),
@@ -359,6 +377,8 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                             target_path="",
                             action="skip",
                             file_size=candidate.file_size,
+                            container_path=_cp4,
+                            source_folder=_sf4,
                         )
                     )
                     scan.processed_candidates = index
@@ -397,6 +417,13 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                 ):
                     flags.append("episode_gap")
 
+            # Derive source folder for grouping (per plan 12)
+            container_path = candidate.container_path
+            if container_path:
+                source_folder = Path(container_path).name
+            else:
+                # Single file or no container: use parent folder name or file name
+                source_folder = Path(candidate.source_path).parent.name or Path(candidate.source_path).name
             scan.items.append(
                 ScannedItem(
                     confirm_id=manager._next_confirm_id(scan),
@@ -415,6 +442,8 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                     suspect=bool(flags),
                     flags=flags,
                     candidate_targets=resolved.candidate_targets,
+                    container_path=container_path,
+                    source_folder=source_folder,
                 )
             )
             if (
@@ -446,6 +475,8 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
 
         except Exception as exc:
             logger.error("Scan %s failed to process %s: %s", scan.scan_id, candidate.source_path, str(exc), exc_info=True)
+            _cp5 = candidate.container_path
+            _sf5 = Path(_cp5).name if _cp5 else Path(candidate.source_path).parent.name or candidate.name
             scan.items.append(
                 ScannedItem(
                     confirm_id=manager._next_confirm_id(scan),
@@ -458,6 +489,8 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                     action="skip",
                     error=str(exc),
                     file_size=candidate.file_size,
+                    container_path=_cp5,
+                    source_folder=_sf5,
                 )
             )
             scan.processed_candidates = index

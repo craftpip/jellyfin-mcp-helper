@@ -38,6 +38,8 @@ class ScannedItem(BaseModel):
     corrected: bool = False
     correction_note: str | None = None
     candidate_targets: list[CandidateTarget] = Field(default_factory=list, alias="candidateTargets")
+    container_path: str | None = Field(default=None, alias="containerPath")
+    source_folder: str | None = Field(default=None, alias="sourceFolder")
 
     model_config = {"populate_by_name": True}
 

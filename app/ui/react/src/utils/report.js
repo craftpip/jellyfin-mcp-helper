@@ -31,6 +31,8 @@ export function mapReportItems(report) {
       title,
       sourceName: (item.sourcePath || '').split('/').filter(Boolean).pop() || '',
       sourcePath: item.sourcePath || '',
+      sourceFolder: item.sourceFolder || (item.containerPath ? item.containerPath.split('/').filter(Boolean).pop() : '') || title,
+      containerPath: item.containerPath || '',
       targetPath: p,
       originalTarget: p,
       itemType: item.itemType,
@@ -54,6 +56,8 @@ export function mapReportItems(report) {
     title: 'Skipped items',
     sourceName: (item.sourcePath || '').split('/').filter(Boolean).pop() || '',
     sourcePath: item.sourcePath || '',
+    sourceFolder: item.sourceFolder || (item.containerPath ? item.containerPath.split('/').filter(Boolean).pop() : '') || 'Skipped items',
+    containerPath: item.containerPath || '',
     targetPath: '',
     originalTarget: '',
     itemType: item.itemType || 'skip',
@@ -70,9 +74,10 @@ export function mapReportItems(report) {
 export function groupItems(items) {
   const groups = {}
   items.forEach((item, idx) => {
-    const key = item.title || 'Unknown'
+    // Group by source folder (torrent folder) per plan 12 — all files in one torrent folder stay together
+    const key = item.sourceFolder || item.containerPath?.split('/').filter(Boolean).pop() || item.title || 'Unknown'
     if (!groups[key]) {
-      groups[key] = { title: key, type: item.itemType, items: [], totalSize: 0 }
+      groups[key] = { title: key, type: item.itemType, items: [], totalSize: 0, sourceFolder: key, containerPath: item.containerPath || '' }
     }
     groups[key].items.push({ ...item, _idx: idx })
     if (item.fileSize) groups[key].totalSize += Number(item.fileSize)
