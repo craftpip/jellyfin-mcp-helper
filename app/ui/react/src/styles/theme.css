@@ -388,7 +388,7 @@ td input[type="checkbox"] { accent-color: var(--jf-primary); }
 
 .group-header {
   background: var(--jf-bg-raised); border: 1px solid var(--jf-border); border-radius: 6px;
-  padding: 8px 10px; margin: 6px 0 0 0; cursor: pointer;
+  padding: 8px 10px; margin: 14px 0 0 0; cursor: pointer;
   display: flex; align-items: center; gap: 10px;
   user-select: none;
 }
@@ -399,7 +399,7 @@ td input[type="checkbox"] { accent-color: var(--jf-primary); }
 .group-header .g-title { color: var(--jf-text-strong); font-weight: 500; font-size: 0.85rem; }
 .group-header .g-count { color: var(--jf-text-muted); font-size: 0.78rem; }
 .group-header .g-size { color: var(--jf-text-muted); font-size: 0.78rem; margin-left: auto; }
-.group-body { border: 1px solid var(--jf-border-soft); border-top: none; border-radius: 0 0 6px 6px; margin-bottom: 4px; }
+.group-body { border: 1px solid var(--jf-border-soft); border-top: none; border-radius: 0 0 6px 6px; margin-bottom: 12px; }
 .group-body table { border: none; }
 .group-body table td:first-child { padding-left: 12px; }
 .group-body.collapsed { display: none; }
