@@ -88,8 +88,9 @@ export default function ReportPanel() {
   const summary = reportSummary || {}
 
   return (
-    <div className="panel" id="reportPanel">
-      <h2>Scan Report</h2>
+    <>
+      <div id="reportPanel" style={{ background: 'transparent', border: 'none', padding: 0, boxShadow: 'none' }}>
+        <h2>Scan Report</h2>
       <div className="summary-strip">
         {[
           ['Movies', summary.movies ?? 0, ''],
@@ -220,9 +221,10 @@ export default function ReportPanel() {
           </div>
         )}
       </div>
+    </div>
 
-      <div id="reportItems">
-        {reportGroups.length === 0 && (
+      <div id="reportItems" style={{ marginTop: 12 }}>
+        {reportGroups.length === 0 && hasItems && (
           <div style={{ color: '#9aa4ab' }}>No items to review.</div>
         )}
         {reportGroups.map((group, gi) => {
@@ -244,7 +246,7 @@ export default function ReportPanel() {
           )
         })}
       </div>
-    </div>
+    </>
   )
 }
 
