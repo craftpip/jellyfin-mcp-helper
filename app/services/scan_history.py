@@ -117,44 +117,72 @@ def save_report(scan_id: str, report: dict, report_dir: Path | None = None) -> P
     return path
 
 def list_history(limit: int = 20, report_dir: Path | None = None) -> list[dict]:
-    # Try DB first, fallback to files
+    # Merge DB and file histories so neither source hides the other (DB may be stale,
+    # files may contain pre-migration scans). Deduplicate by scan_id, newest first.
+    merged: dict[str, dict] = {}
     db_path = _get_db_path(report_dir)
-    # Also check default DB
     for test_db in [db_path, None]:
         try:
             init_db(test_db)
             conn = get_db(test_db)
             try:
-                cur = conn.execute("SELECT scan_id, report_json, saved_at FROM scans ORDER BY saved_at DESC LIMIT ?", (limit,))
-                rows = cur.fetchall()
-                if rows:
-                    out = []
-                    for row in rows:
-                        try:
-                            data = json.loads(row["report_json"])
-                            summary = data.get("summary", {})
-                            out.append({
-                                "scan_id": summary.get("scan_id") or row["scan_id"],
-                                "status": summary.get("status"),
-                                "saved_at": row["saved_at"],
-                                "movies": summary.get("movies"),
-                                "series": summary.get("series"),
-                                "skipped": summary.get("skipped"),
-                                "moved": summary.get("moved", 0),
-                                "replaced": summary.get("replaced", 0),
-                                "failed": summary.get("failed", 0),
-                                "action_required": summary.get("action_required"),
-                                "path": f"db:{row['scan_id']}",
-                            })
-                        except:
-                            continue
-                    if out:
-                        return out
+                cur = conn.execute("SELECT scan_id, report_json, saved_at FROM scans ORDER BY saved_at DESC LIMIT ?", (limit * 2,))
+                for row in cur.fetchall():
+                    try:
+                        data = json.loads(row["report_json"])
+                        summary = data.get("summary", {})
+                        sid = summary.get("scan_id") or row["scan_id"]
+                        entry = {
+                            "scan_id": sid,
+                            "status": summary.get("status"),
+                            "saved_at": row["saved_at"] or data.get("saved_at") or "",
+                            "movies": summary.get("movies"),
+                            "series": summary.get("series"),
+                            "skipped": summary.get("skipped"),
+                            "moved": summary.get("moved", 0),
+                            "replaced": summary.get("replaced", 0),
+                            "failed": summary.get("failed", 0),
+                            "action_required": summary.get("action_required"),
+                            "path": f"db:{row['scan_id']}",
+                        }
+                        if sid not in merged or (entry["saved_at"] or "") > (merged[sid].get("saved_at") or ""):
+                            merged[sid] = entry
+                    except:
+                        continue
             finally:
                 conn.close()
         except:
             continue
-    # Fallback to files
+    # Also collect file-based history (covers pre-DB scans and any DB gap)
+    d = history_dir(report_dir)
+    if d.exists():
+        files = sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[: limit * 2]
+        for f in files:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                summary = data.get("summary", {})
+                sid = summary.get("scan_id") or f.stem
+                entry = {
+                    "scan_id": sid,
+                    "status": summary.get("status"),
+                    "saved_at": data.get("saved_at") or "",
+                    "movies": summary.get("movies"),
+                    "series": summary.get("series"),
+                    "skipped": summary.get("skipped"),
+                    "moved": summary.get("moved", 0),
+                    "replaced": summary.get("replaced", 0),
+                    "failed": summary.get("failed", 0),
+                    "action_required": summary.get("action_required"),
+                    "path": str(f),
+                }
+                if sid not in merged or (entry["saved_at"] or "") > (merged[sid].get("saved_at") or ""):
+                    merged[sid] = entry
+            except:
+                continue
+    if merged:
+        out = sorted(merged.values(), key=lambda x: x.get("saved_at") or "", reverse=True)[:limit]
+        return out
+    # Fallback to files (already handled, but keep for compat)
     d = history_dir(report_dir)
     if not d.exists():
         return []
