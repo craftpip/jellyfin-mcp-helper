@@ -38,7 +38,7 @@ class TestMcpAuthEnabled:
     def test_unauthenticated_requires_key(self, monkeypatch, tmp_path):
         monkeypatch.setenv("MCP_ALLOW_UNAUTHENTICATED", "false")
         monkeypatch.setenv("MCP_KEYS_FILE", str(tmp_path / "keys.json"))
-        monkeypatch.delenv("ADMIN_UI_TOKEN", raising=False)
+        monkeypatch.delenv("MCP_DEFAULT_TOKEN", raising=False)
 
         from app.core.config import reset_settings
 
@@ -61,7 +61,7 @@ class TestMcpAuthEnabled:
 
         monkeypatch.setenv("MCP_ALLOW_UNAUTHENTICATED", "false")
         monkeypatch.setenv("MCP_KEYS_FILE", str(tmp_path / "keys.json"))
-        monkeypatch.delenv("ADMIN_UI_TOKEN", raising=False)
+        monkeypatch.delenv("MCP_DEFAULT_TOKEN", raising=False)
 
         from app.core.config import reset_settings
 
@@ -95,7 +95,7 @@ class TestMcpAuthEnabled:
 
     def test_admin_token_accepted(self, monkeypatch, tmp_path):
         monkeypatch.setenv("MCP_ALLOW_UNAUTHENTICATED", "false")
-        monkeypatch.setenv("ADMIN_UI_TOKEN", "super-secret-token")
+        monkeypatch.setenv("MCP_DEFAULT_TOKEN", "super-secret-token")
 
         from app.core.config import reset_settings
 
@@ -168,7 +168,7 @@ class TestRequireMcpAuthUser:
             state = type("State", (), {})()
 
         monkeypatch.setenv("MCP_ALLOW_UNAUTHENTICATED", "false")
-        monkeypatch.setenv("ADMIN_UI_TOKEN", "tok")
+        monkeypatch.setenv("MCP_DEFAULT_TOKEN", "tok")
 
         from app.core.config import reset_settings
 

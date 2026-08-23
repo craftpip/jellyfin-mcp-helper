@@ -33,24 +33,25 @@ ENV_SPEC: list[dict[str, Any]] = [
     {"key": "MODEL_PATH_CONFIDENCE_THRESHOLD", "section": "ai", "type": "float", "secret": False, "apply": "restart", "description": "Confidence threshold for path resolution (0.0 - 1.0)."},
 
     # ── Download Client ──
-    {"key": "ENABLE_DOWNLOAD_CLIENT_CHECK", "section": "download", "type": "bool", "secret": False, "apply": "live", "description": "Enable qBittorrent checks (stop seeding before moves)."},
-    {"key": "DOWNLOAD_CLIENT", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "Download client type: qbittorrent (default)."},
-    {"key": "QBT_MCP_URL", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "MCP endpoint for qBittorrent."},
-    {"key": "QBT_MCP_API_KEY", "section": "download", "type": "str", "secret": True, "apply": "live", "description": "API key for the qBittorrent MCP server."},
-    {"key": "QBT_WEBUI_USER", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "Optional qBittorrent WebUI username."},
-    {"key": "QBT_WEBUI_PASS", "section": "download", "type": "str", "secret": True, "apply": "live", "description": "Optional qBittorrent WebUI password."},
+    {"key": "ENABLE_DOWNLOAD_CLIENT_CHECK", "section": "download", "type": "bool", "secret": False, "apply": "live", "description": "Enable download client checks (stop seeding before moves)."},
+    {"key": "DOWNLOAD_CLIENT", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "Download client type.", "options": ["", "qbittorrent", "transmission", "deluge"]},
+    {"key": "QBT_WEBUI_URL", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "qBittorrent WebUI URL (e.g. http://10.69.1.164:8080).", "showWhen": {"DOWNLOAD_CLIENT": "qbittorrent"}},
+    {"key": "QBT_WEBUI_USER", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "qBittorrent WebUI username.", "showWhen": {"DOWNLOAD_CLIENT": "qbittorrent"}},
+    {"key": "QBT_WEBUI_PASS", "section": "download", "type": "str", "secret": True, "apply": "live", "description": "qBittorrent WebUI password.", "showWhen": {"DOWNLOAD_CLIENT": "qbittorrent"}},
+    {"key": "TRANSMISSION_URL", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "Transmission RPC URL (e.g. http://10.69.1.164:9091/transmission/rpc).", "showWhen": {"DOWNLOAD_CLIENT": "transmission"}},
+    {"key": "TRANSMISSION_USER", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "Transmission username (if auth enabled).", "showWhen": {"DOWNLOAD_CLIENT": "transmission"}},
+    {"key": "TRANSMISSION_PASS", "section": "download", "type": "str", "secret": True, "apply": "live", "description": "Transmission password.", "showWhen": {"DOWNLOAD_CLIENT": "transmission"}},
+    {"key": "DELUGE_URL", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "Deluge WebUI URL (e.g. http://10.69.1.164:8112).", "showWhen": {"DOWNLOAD_CLIENT": "deluge"}},
+    {"key": "DELUGE_PASSWORD", "section": "download", "type": "str", "secret": True, "apply": "live", "description": "Deluge password.", "showWhen": {"DOWNLOAD_CLIENT": "deluge"}},
 
     # ── Web UI ──
-    {"key": "WEB_UI_ENABLED", "section": "web", "type": "bool", "secret": False, "apply": "restart", "description": "Enable the web UI. It is served on the same port as MCP (18328)."},
-    {"key": "WEB_UI_PORT", "section": "web", "type": "int", "secret": False, "apply": "restart", "description": "Deprecated — unused. The web UI shares the MCP port."},
     {"key": "UI_PANEL_PASSWORD", "section": "web", "type": "str", "secret": True, "apply": "live", "description": "Panel login password. Empty = direct login."},
 
     # ── Jellyfin Integration ──
     {"key": "ENABLE_JELLYFIN_INTEGRATION", "section": "jellyfin", "type": "bool", "secret": False, "apply": "live", "description": "Auto-scan Jellyfin libraries after moving files."},
     {"key": "JELLYFIN_BASE_URL", "section": "jellyfin", "type": "str", "secret": False, "apply": "live", "description": "Jellyfin server URL."},
     {"key": "JELLYFIN_API_KEY", "section": "jellyfin", "type": "str", "secret": True, "apply": "live", "description": "Jellyfin API key (Dashboard > API Keys)."},
-    {"key": "JELLYFIN_MOVIE_LIBRARY_NAME", "section": "jellyfin", "type": "str", "secret": False, "apply": "live", "description": "Movies library name as configured in Jellyfin."},
-    {"key": "JELLYFIN_SERIES_LIBRARY_NAME", "section": "jellyfin", "type": "str", "secret": False, "apply": "live", "description": "Shows library name as configured in Jellyfin."},
+
 
     # ── Storage Paths ──
     {"key": "DOWNLOAD_ROOTS", "section": "paths", "type": "str", "secret": False, "apply": "restart", "description": "Comma-separated paths where torrent downloads reside."},
@@ -59,9 +60,9 @@ ENV_SPEC: list[dict[str, Any]] = [
     {"key": "SERIES_TITLE_ALIASES", "section": "paths", "type": "str", "secret": False, "apply": "restart", "description": "Series title aliases: 'alias::canonical' entries separated by commas."},
 
     # ── MCP Access Control ──
-    {"key": "MCP_ALLOW_UNAUTHENTICATED", "section": "mcp", "type": "bool", "secret": False, "apply": "live", "description": "Allow unauthenticated MCP requests. Set false to require an API key or ADMIN_UI_TOKEN."},
+    {"key": "MCP_ALLOW_UNAUTHENTICATED", "section": "mcp", "type": "bool", "secret": False, "apply": "live", "description": "Allow unauthenticated MCP requests. Set false to require an API key or MCP_DEFAULT_TOKEN."},
     {"key": "MCP_KEYS_FILE", "section": "mcp", "type": "str", "secret": False, "apply": "live", "description": "JSON file holding hashed MCP API keys."},
-    {"key": "ADMIN_UI_TOKEN", "section": "mcp", "type": "str", "secret": True, "apply": "live", "description": "Master token accepted as an MCP key for the admin user."},
+    {"key": "MCP_DEFAULT_TOKEN", "section": "mcp", "type": "str", "secret": True, "apply": "live", "description": "MCP master key — bypasses per-client keys for API use."},
 ]
 
 ENV_SPEC_KEYS = {item["key"] for item in ENV_SPEC}
@@ -116,9 +117,10 @@ def _field_for_key(key: str) -> str | None:
 
 def _effective_value(key: str) -> Any:
     field = _field_for_key(key)
-    if field is None:
-        return None
-    return getattr(get_settings(), field)
+    if field is not None:
+        return getattr(get_settings(), field)
+    # Fallback for spec keys that are read via os.getenv directly (e.g. legacy)
+    return os.getenv(key)
 
 
 def list_env() -> dict[str, Any]:
@@ -144,7 +146,10 @@ def list_env() -> dict[str, Any]:
         entry["saved"] = saved_display
         entry["effective"] = effective_display
         entries.append(entry)
-        if saved_value != effective_value:
+        # Only flag pending when the key is actually present in .env; missing
+        # keys using defaults (e.g. deprecated WEB_UI_PORT) should not show as
+        # pending after a restart/recreate.
+        if key in saved and saved_value != effective_value:
             pending.append(key)
     return {
         "spec": entries,
@@ -175,19 +180,13 @@ def _rewrite_env(updates: dict[str, str]) -> None:
 
 
 def reload_settings() -> None:
-    """Patch os.environ from .env and reset the settings/config caches.
+    """Reset the settings cache so fresh readers pick up the rewritten .env.
 
-    Makes `apply: "live"` variables effective on the next per-request read
-    without a restart.
+    .env is authoritative: get_settings() feeds the parsed file entries as
+    init kwargs (highest pydantic precedence), which replaced the old
+    os.environ patching. `apply: "live"` variables are therefore effective on
+    the next per-request read without a restart.
     """
-    saved = _parse_env_file()
-    current = dict(os.environ)
-    for key, value in saved.items():
-        if current.get(key) != value:
-            os.environ[key] = value
-    for key in list(current):
-        if key in ENV_SPEC_KEYS and key not in saved:
-            os.environ.pop(key, None)
     reset_settings()
 
 
@@ -212,14 +211,19 @@ def update_env(changes: dict[str, str]) -> dict[str, list[str]]:
         item = spec_by_key[key]
         text = str(value).strip()
         if item["secret"] and text == "":
-            continue  # blank secret = keep unchanged
+            if key == "UI_PANEL_PASSWORD":
+                updates[key] = ""
+            # else: blank secret = keep unchanged for other secrets
+            continue
         updates[key] = text
 
     if not updates:
         return {"appliedLive": [], "needsRecreate": []}
 
-    # Validate by constructing Settings from the merged environment.
-    merged = {**dict(os.environ), **updates}
+    # Validate by constructing Settings from the merged .env (authoritative).
+    from app.core.config import _read_dotenv
+
+    merged = {**_read_dotenv(), **updates}
     try:
         Settings(**merged)
     except ValidationError as exc:

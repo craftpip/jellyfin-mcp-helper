@@ -132,6 +132,29 @@ class TestPasswordMode:
             assert body["token"] == ""
 
 
+class TestSseProgressStreams:
+    def test_scan_stream_emits_hint_and_closes_without_scan(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            res = client.get("/api/scans/progress/events")
+            assert res.status_code == 200
+            assert res.headers["content-type"].startswith("text/event-stream")
+            body = res.text
+            assert "data:" in body
+            assert '"hint"' in body
+
+    def test_confirm_stream_requires_token_when_password_set(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("UI_PANEL_PASSWORD", "changeme")
+        client, manager = _make_client(tmp_path, monkeypatch)
+        with client:
+            assert client.get("/api/scans/confirm/events").status_code == 401
+
+            token = client.post("/api/login", json={"password": "changeme"}).json()["token"]
+            res = client.get("/api/scans/confirm/events", params={"token": token})
+            assert res.status_code == 200
+            assert "data:" in res.text
+
+
 class TestScanLifecycle:
     def test_scan_report_confirm_delete_flow(self, tmp_path, monkeypatch):
         downloads = tmp_path / "downloads"
@@ -493,3 +516,62 @@ class TestBrowseAndRetarget:
                 json={"confirmId": confirm_id, "directory": str(tmp_path / "movies"), "applyToGroup": True, "reclassifyAsMovie": True},
             )
             assert bad_combo.status_code == 400
+
+
+class TestUndoEndpoints:
+    def test_undo_history_scan_restores_files_and_updates_report(self, tmp_path, monkeypatch):
+        from app.services.scan_history import list_history, load_report, save_report
+
+        client, manager = _make_client(tmp_path, monkeypatch)
+        source = tmp_path / "downloads" / "Movie (2024).mkv"
+        target = tmp_path / "library" / "Movie (2024).mkv"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"x")
+        scan_id = "undotest1234"
+
+        save_report(
+            scan_id,
+            {
+                "scan_id": scan_id,
+                "status": "completed",
+                "summary": {"moved": 1, "replaced": 0, "failed": 0},
+                "items": [
+                    {
+                        "confirmId": "c1",
+                        "sourcePath": str(source),
+                        "name": "Movie (2024).mkv",
+                        "item_type": "movie",
+                        "confidence": 1.0,
+                        "reason": "test",
+                        "target_path": str(target),
+                        "action": "move",
+                        "confirmed": True,
+                    }
+                ],
+            },
+            report_dir=tmp_path,
+        )
+
+        with client:
+            res = client.post(f"/api/scans/{scan_id}/undo")
+            assert res.status_code == 200
+            body = res.json()
+            assert body["ok"] is True
+            assert body["restored_count"] == 1
+
+        assert source.is_file() and not target.exists()
+        updated = load_report(scan_id, report_dir=tmp_path)
+        assert updated["summary"]["moved"] == 0
+        assert updated["summary"]["undone"] == 1
+
+    def test_undo_unknown_scan_returns_404(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            res = client.post("/api/scans/doesnotexist/undo")
+        assert res.status_code == 404
+
+    def test_undo_current_without_scan_returns_404(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            res = client.post("/api/scans/current/undo")
+        assert res.status_code == 404

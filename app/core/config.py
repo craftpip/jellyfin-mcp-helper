@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-import os
-from functools import lru_cache
+import re
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
-
 BASE_DIR = Path(__file__).resolve().parents[2]
 LOG_DIR = BASE_DIR / "logs"
 REPORT_DIR = BASE_DIR / "reports"
+DOTENV_PATH = BASE_DIR / ".env"
 
 
 class Settings(BaseSettings):
@@ -21,8 +19,16 @@ class Settings(BaseSettings):
     
     # Download client settings (qBittorrent, etc.)
     download_client: str = Field(default="", alias="DOWNLOAD_CLIENT")
+    qbt_webui_url: str | None = Field(default=None, alias="QBT_WEBUI_URL")
     qbt_mcp_url: str | None = Field(default=None, alias="QBT_MCP_URL")
     qbt_mcp_api_key: str | None = Field(default=None, alias="QBT_MCP_API_KEY")
+    transmission_url: str | None = Field(default=None, alias="TRANSMISSION_URL")
+    transmission_user: str | None = Field(default=None, alias="TRANSMISSION_USER")
+    transmission_pass: str | None = Field(default=None, alias="TRANSMISSION_PASS")
+    deluge_url: str | None = Field(default=None, alias="DELUGE_URL")
+    deluge_password: str | None = Field(default=None, alias="DELUGE_PASSWORD")
+    qbt_webui_user: str | None = Field(default=None, alias="QBT_WEBUI_USER")
+    qbt_webui_pass: str | None = Field(default=None, alias="QBT_WEBUI_PASS")
     
     # Jellyfin settings
     jellyfin_base_url: str | None = Field(default=None, alias="JELLYFIN_BASE_URL")
@@ -44,11 +50,13 @@ class Settings(BaseSettings):
 
     # MCP access control. When true (default), all unauthenticated MCP requests
     # pass through. When false, /mcp requests must present a valid API key from
-    # MCP_KEYS_FILE (or ADMIN_UI_TOKEN).
+    # MCP_KEYS_FILE (or MCP_DEFAULT_TOKEN).
     mcp_allow_unauthenticated: bool = Field(default=True, alias="MCP_ALLOW_UNAUTHENTICATED")
     # Path to the JSON file holding hashed API keys for MCP access.
     mcp_keys_file: str = Field(default="config/mcp_keys.json", alias="MCP_KEYS_FILE")
-    # Optional master token accepted as a valid MCP key for the "admin" user.
+    # MCP master key for API use (bypasses per-client keys). Replaces ADMIN_UI_TOKEN.
+    mcp_default_token: str | None = Field(default=None, alias="MCP_DEFAULT_TOKEN")
+    # Deprecated alias for backward compat
     admin_ui_token: str | None = Field(default=None, alias="ADMIN_UI_TOKEN")
 
     # Paths settings
@@ -188,27 +196,51 @@ def _parse_series_title_aliases(raw: str) -> dict[str, str]:
 
 _settings: Settings | None = None
 
+_DOTENV_LINE_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
+
+
+def _read_dotenv(path: Path | None = None) -> dict[str, str]:
+    """Parse KEY=value lines from the .env file (comments/blanks skipped)."""
+    env_path = path or DOTENV_PATH
+    result: dict[str, str] = {}
+    if not env_path.exists():
+        return result
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        match = _DOTENV_LINE_RE.match(line)
+        if not match:
+            continue
+        key, raw_value = match.group(1), match.group(2)
+        value = raw_value.strip()
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            value = value[1:-1]
+        result[key] = value
+    return result
+
 
 def get_settings() -> Settings:
     global _settings
     if _settings is None:
-        _settings = Settings()
+        # The .env file is authoritative: parsed entries are fed as init
+        # kwargs (highest pydantic precedence), so it wins over inherited
+        # process env without anyone patching os.environ.
+        _settings = Settings(**_read_dotenv())
     return _settings
 
 
 def reset_settings() -> None:
-    """Drop the cached settings/config so the next read re-parses .env.
+    """Drop the cached settings so the next read re-parses .env.
 
-    Called by the env manager after live-applied variables are written to
-    os.environ, so per-request consumers (auth, JellyfinClient, model clients)
-    pick up the new values without a restart.
+    Called by the env manager after .env is rewritten, so per-request
+    consumers (auth, JellyfinClient, model clients) pick up the new values
+    without a restart. No os.environ mutation involved.
     """
     global _settings
     _settings = None
-    get_config.cache_clear()
 
 
-@lru_cache(maxsize=1)
 def get_config() -> AppConfig:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     REPORT_DIR.mkdir(parents=True, exist_ok=True)

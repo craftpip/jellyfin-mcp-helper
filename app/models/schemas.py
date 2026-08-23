@@ -5,7 +5,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-
 OperationMode = Literal["organize", "normalize"]
 ItemKind = Literal["movie", "series", "skip"]
 ScanStatus = Literal["running", "completed", "confirmed", "failed", "cancelled"]

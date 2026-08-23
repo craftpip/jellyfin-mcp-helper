@@ -26,7 +26,7 @@ Every variable is classified by `ENV_SPEC` (see
 
 - **Live** — read per request/operation from `os.environ` (Jellyfin and
   qBittorrent client settings, `UI_PANEL_PASSWORD`, `MCP_ALLOW_UNAUTHENTICATED` /
-  `MCP_KEYS_FILE` / `ADMIN_UI_TOKEN`). Saving them via the Settings page takes
+  `MCP_KEYS_FILE` / `MCP_DEFAULT_TOKEN`). Saving them via the Settings page takes
   effect immediately (no restart).
 - **Restart** — captured in the `ScanManager` snapshot or the startup lifespan
   (media roots, thresholds, `WEB_UI_*`). They need
@@ -94,9 +94,9 @@ LLM clients and are no longer read by the code.)
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `MCP_ALLOW_UNAUTHENTICATED` | `true` | Allow unauthenticated MCP requests. When `false`, every `/mcp` request needs a valid API key (`Authorization: Bearer` or `X-API-Key`) or `ADMIN_UI_TOKEN`. |
+| `MCP_ALLOW_UNAUTHENTICATED` | `true` | Allow unauthenticated MCP requests. When `false`, every `/mcp` request needs a valid API key (`Authorization: Bearer` or `X-API-Key`) or `MCP_DEFAULT_TOKEN`. |
 | `MCP_KEYS_FILE` | `config/mcp_keys.json` | Path to the hashed API-key store (see [backend/auth.md](../backend/auth.md)). |
-| `ADMIN_UI_TOKEN` | *(empty)* | Master key accepted by MCP auth for the user `"admin"`. |
+| `MCP_DEFAULT_TOKEN` | *(empty)* | Master key accepted by MCP auth for the user `"admin"`. |
 
 ## Derived config structures
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
 import time
@@ -8,11 +10,21 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import get_config, get_settings
+from app.core.constants import (  # single source of truth — re-exported for tests that import from server
+    BROWSE_IGNORED_DIR_NAMES,
+    BROWSE_IGNORED_NAME_PARTS,
+    BROWSE_SEARCH_CHILD_CAP,
+    BROWSE_SEARCH_RESULT_CAP,
+    BROWSE_VIDEO_COUNT_CAP,
+    BROWSE_VIDEO_EXTENSIONS,
+)
+from app.core.logging import set_request_id
 from app.core.version import VERSION
 from app.models.schemas import ScanPlan, ScanRequest
 from app.services.api_key_manager import ApiKeyManager
@@ -26,34 +38,20 @@ from app.services.presenters import (
 )
 from app.services.release_tracker import ReleaseTracker
 from app.services.resolver import PathResolver, normalize_text
+from app.services.scan_history import list_history, load_report
 from app.services.scan_manager import ScanManager
 from app.ui.auth import login, logout, require_panel_auth
 
 logger = logging.getLogger(__name__)
 
+# SSE progress streams (plan 3.2): tick faster than the old 2s poll so the UI
+# moves without the polling gap; hard lifetime cap avoids leaked generators.
+SSE_TICK_SECONDS = 0.5
+SSE_MAX_SECONDS = 900
+
 HERE = Path(__file__).resolve().parent
 REACT_INDEX_HTML = HERE / "react-dist" / "index.html"
 REACT_ASSETS_DIR = HERE / "react-dist" / "assets"
-
-BROWSE_VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv")
-BROWSE_IGNORED_DIR_NAMES = {".trickplay", ".thumbs", ".thumbnails", ".stfolder", "extrafanart", "extrathumbs"}
-BROWSE_VIDEO_COUNT_CAP = 500
-BROWSE_SEARCH_RESULT_CAP = 50
-BROWSE_SEARCH_CHILD_CAP = 600
-BROWSE_IGNORED_NAME_PARTS = (
-    "trickplay",
-    "extras",
-    "featurettes",
-    "behind the scenes",
-    "deleted scenes",
-    "deleted scene",
-    "sample",
-    "bonus",
-    "trailers",
-    "thumbs",
-    "scraped",
-    "chapter",
-)
 
 
 def _browse_root_configs(config) -> list[dict]:
@@ -394,11 +392,148 @@ def create_ui_app(
     @ui_app.get("/api/status")
     async def api_status():
         settings = get_settings()
+        roots_configured = any(
+            (value or "").strip()
+            for value in (
+                settings.download_roots,
+                settings.movie_roots,
+                settings.series_roots,
+            )
+        )
         return {
             "service": "JellySort UI",
             "version": VERSION,
             "auth": {"required": bool(settings.ui_panel_password)},
+            "roots_configured": roots_configured,
         }
+
+    # ── setup wizard helpers (first run, before media roots exist) ──
+    @ui_app.get("/api/setup/fs", dependencies=[Depends(require_panel_auth)])
+    async def api_setup_fs(path: str = "/"):
+        target = Path(path or "/")
+        if not target.is_absolute():
+            raise HTTPException(status_code=400, detail="path must be absolute")
+        if not target.is_dir():
+            raise HTTPException(status_code=400, detail=f"Path '{path}' is not a directory")
+        entries = []
+        try:
+            for child in sorted(target.iterdir(), key=lambda p: p.name.lower()):
+                if child.name.startswith("."):
+                    continue
+                try:
+                    if child.is_dir():
+                        entries.append({"name": child.name, "path": str(child)})
+                except OSError:
+                    continue
+        except PermissionError:
+            raise HTTPException(status_code=400, detail=f"Permission denied: {path}")
+        parent = str(target.parent) if target.parent != target else None
+        return {"path": str(target), "parent": parent, "entries": entries}
+
+    @ui_app.post("/api/admin/test-jellyfin", dependencies=[Depends(require_panel_auth)])
+    async def api_admin_test_jellyfin(payload: dict | None = None):
+        data = payload or {}
+        base_url = str(data.get("baseUrl") or "").strip().rstrip("/")
+        api_key = str(data.get("apiKey") or "").strip()
+        if not base_url:
+            raise HTTPException(status_code=400, detail="baseUrl is required")
+        headers = {"X-Emby-Token": api_key} if api_key else {}
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                resp = await client.get(f"{base_url}/System/Info/Public", headers=headers)
+                resp.raise_for_status()
+                info = resp.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Jellyfin unreachable at {base_url}: {exc}")
+        return {"ok": True, "serverName": info.get("ServerName", ""), "version": info.get("Version", "")}
+
+    @ui_app.post("/api/admin/test-download-client", dependencies=[Depends(require_panel_auth)])
+    async def api_admin_test_download_client(payload: dict | None = None):
+        data = payload or {}
+        client_type = str(data.get("clientType") or data.get("downloadClient") or "").strip().lower()
+        if not client_type:
+            raise HTTPException(status_code=400, detail="clientType is required")
+        # Build a temporary client config from payload
+        base_url = str(data.get("url") or data.get("baseUrl") or data.get("webuiUrl") or "").strip()
+        # Also support old field names for compat
+        if not base_url:
+            base_url = str(data.get("qbtMcpUrl") or data.get("qbtWebuiUrl") or "").strip()
+        if client_type == "qbittorrent" and base_url.endswith("/mcp"):
+            base_url = base_url[:-4].rstrip("/")
+        user = str(data.get("user") or data.get("username") or "").strip() or None
+        password = str(data.get("password") or "").strip() or None
+        if client_type == "qbittorrent":
+            if not base_url:
+                raise HTTPException(status_code=400, detail="WebUI URL is required for qBittorrent")
+            # Try to login and list torrents
+            try:
+                import httpx as _httpx
+
+                async with _httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+                    # Login
+                    login_data = {}
+                    if user:
+                        login_data["username"] = user
+                    if password:
+                        login_data["password"] = password
+                    resp = await client.post(f"{base_url.rstrip('/')}/api/v2/auth/login", data=login_data)
+                    if resp.status_code not in (200, 403):
+                        resp.raise_for_status()
+                    # Try to list torrents
+                    resp2 = await client.get(f"{base_url.rstrip('/')}/api/v2/torrents/info", params={"filter": "all"})
+                    resp2.raise_for_status()
+                    torrents = resp2.json()
+                    count = len(torrents) if isinstance(torrents, list) else 0
+                    return {"ok": True, "torrentCount": count, "clientType": client_type}
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"qBittorrent connection failed at {base_url}: {exc}")
+        elif client_type == "transmission":
+            if not base_url:
+                raise HTTPException(status_code=400, detail="Transmission URL is required")
+            try:
+                import base64 as _b64
+
+                import httpx as _httpx
+
+                headers = {"Content-Type": "application/json"}
+                if user and password:
+                    token = _b64.b64encode(f"{user}:{password}".encode()).decode()
+                    headers["Authorization"] = f"Basic {token}"
+                async with _httpx.AsyncClient(timeout=8.0) as client:
+                    # Get session id
+                    resp = await client.post(base_url, json={"method": "session-get"}, headers=headers)
+                    if resp.status_code == 409:
+                        sid = resp.headers.get("X-Transmission-Session-Id", "")
+                        if sid:
+                            headers["X-Transmission-Session-Id"] = sid
+                            resp = await client.post(base_url, json={"method": "session-get"}, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if "result" in data and data["result"] == "success":
+                        return {"ok": True, "clientType": client_type}
+                    raise ValueError(f"Unexpected response: {data}")
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Transmission connection failed at {base_url}: {exc}")
+        elif client_type == "deluge":
+            if not base_url:
+                raise HTTPException(status_code=400, detail="Deluge URL is required")
+            if not password:
+                raise HTTPException(status_code=400, detail="Deluge password is required")
+            try:
+                import httpx as _httpx
+
+                async with _httpx.AsyncClient(timeout=8.0) as client:
+                    payload = {"method": "auth.login", "params": [password], "id": 1}
+                    resp = await client.post(f"{base_url.rstrip('/')}/json", json=payload)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if data.get("result") is True:
+                        return {"ok": True, "clientType": client_type}
+                    raise ValueError(f"Deluge login failed: {data}")
+            except Exception as exc:
+                raise HTTPException(status_code=400, detail=f"Deluge connection failed at {base_url}: {exc}")
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown client type: {client_type}")
 
     @ui_app.post("/api/login")
     async def api_login(payload: dict | None = None):
@@ -463,6 +598,13 @@ def create_ui_app(
         if not manager.set_enabled(key_id, bool(payload["enabled"])):
             raise HTTPException(status_code=404, detail="key not found")
         return {"ok": True}
+
+    @ui_app.get("/api/admin/api-keys/{key_id}/reveal", dependencies=[Depends(require_panel_auth)])
+    async def admin_api_key_reveal(key_id: str):
+        key = ApiKeyManager().reveal_key(key_id)
+        if key is None:
+            raise HTTPException(status_code=404, detail="key not found or not revealable — recreate the key")
+        return {"key": key}
 
     @ui_app.delete("/api/admin/api-keys/{key_id}", dependencies=[Depends(require_panel_auth)])
     async def admin_api_key_delete(key_id: str):
@@ -535,6 +677,80 @@ def create_ui_app(
             return {"hint": "No scan found. Ask the user if they want to start a new scan before doing anything."}
         return format_scan_progress(scan)
 
+    # ── SSE progress streams (plan 3.2) ─────────────────────────────
+    # EventSource cannot send headers, so the panel token arrives as ?token=.
+    def _sse_authorized(token: str) -> bool:
+        from app.ui.auth import _sessions, password_required
+
+        if not password_required():
+            return True
+        return bool(token) and token in _sessions
+
+    def _sse_event(payload: dict) -> str:
+        return f"data: {json.dumps(payload)}\n\n"
+
+    @ui_app.get("/api/scans/progress/events")
+    async def api_scan_progress_events(request: Request, token: str = ""):
+        if not _sse_authorized(token):
+            raise HTTPException(status_code=401, detail="not authenticated")
+        manager: ScanManager = request.app.state.scan_manager
+
+        async def stream():
+            deadline = time.monotonic() + SSE_MAX_SECONDS
+            last_payload = None
+            while time.monotonic() < deadline:
+                if await request.is_disconnected():
+                    return
+                scan = manager.get_current_scan()
+                payload = format_scan_progress(scan) if scan else {"hint": "no scan"}
+                terminal = bool(payload.get("hint")) or payload.get("status") in ("completed", "failed", "idle")
+                if payload != last_payload or terminal:
+                    yield _sse_event(payload)
+                    last_payload = payload
+                if terminal:
+                    return
+                await asyncio.sleep(SSE_TICK_SECONDS)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @ui_app.get("/api/scans/confirm/events")
+    async def api_confirm_progress_events(request: Request, token: str = ""):
+        if not _sse_authorized(token):
+            raise HTTPException(status_code=401, detail="not authenticated")
+        manager: ScanManager = request.app.state.scan_manager
+
+        async def stream():
+            deadline = time.monotonic() + SSE_MAX_SECONDS
+            last_payload = None
+            while time.monotonic() < deadline:
+                if await request.is_disconnected():
+                    return
+                scan = manager.get_current_scan()
+                payload = format_confirm_progress(scan) if scan else {"hint": "no scan"}
+                queued = bool(payload.get("queue_length"))
+                status = payload.get("status")
+                # With batches still queued the backend flips straight back to
+                # 'running', so keep streaming through intermediate completes.
+                terminal = bool(payload.get("hint")) or (
+                    status in ("completed", "failed", "idle") and not queued
+                )
+                if payload != last_payload or terminal:
+                    yield _sse_event(payload)
+                    last_payload = payload
+                if terminal:
+                    return
+                await asyncio.sleep(SSE_TICK_SECONDS)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     @ui_app.get("/api/scans/{scan_id}/progress", dependencies=[Depends(require_panel_auth)])
     async def api_scan_progress(request: Request, scan_id: str):
         manager: ScanManager = request.app.state.scan_manager
@@ -554,6 +770,17 @@ def create_ui_app(
         manager: ScanManager = request.app.state.scan_manager
         scan = manager.get_scan(scan_id)
         return format_scan_report(scan)
+
+    @ui_app.get("/api/scans/history", dependencies=[Depends(require_panel_auth)])
+    async def api_scan_history(limit: int = 20):
+        return {"history": list_history(limit=min(limit, 50))}
+
+    @ui_app.get("/api/scans/history/{scan_id}", dependencies=[Depends(require_panel_auth)])
+    async def api_scan_history_item(scan_id: str):
+        report = load_report(scan_id)
+        if not report:
+            raise HTTPException(status_code=404, detail="History report not found")
+        return report
 
     @ui_app.patch("/api/scans/current/items", dependencies=[Depends(require_panel_auth)])
     async def api_update_current_items(request: Request, payload: dict | None = None):
@@ -612,6 +839,26 @@ def create_ui_app(
         manager: ScanManager = request.app.state.scan_manager
         scan = manager.get_scan(scan_id)
         return format_confirm_progress(scan)
+
+    # ── undo (plan 3.3) ─────────────────────────────────────────────
+    def _undo_response(manager: ScanManager, scan_id: str):
+        try:
+            return manager.undo_scan(scan_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    @ui_app.post("/api/scans/current/undo", dependencies=[Depends(require_panel_auth)])
+    async def api_undo_current_scan(request: Request):
+        manager: ScanManager = request.app.state.scan_manager
+        scan = manager.get_current_scan()
+        if not scan:
+            raise HTTPException(status_code=404, detail="no current scan")
+        return _undo_response(manager, scan.scan_id)
+
+    @ui_app.post("/api/scans/{scan_id}/undo", dependencies=[Depends(require_panel_auth)])
+    async def api_undo_scan(request: Request, scan_id: str):
+        manager: ScanManager = request.app.state.scan_manager
+        return _undo_response(manager, scan_id)
 
     @ui_app.delete("/api/scans/current/items", dependencies=[Depends(require_panel_auth)])
     async def api_delete_current_items(request: Request, payload: dict | None = None):
@@ -707,6 +954,7 @@ def create_ui_app(
         if not request.url.path.startswith("/api/"):
             return await call_next(request)
         request_id = uuid4().hex[:8]
+        set_request_id(request_id)
         started = time.perf_counter()
         client_host = request.client.host if request.client else "unknown"
         try:

@@ -1,20 +1,20 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
-import logging
 import unicodedata
+from difflib import SequenceMatcher
 from functools import cache
 from pathlib import Path
-from difflib import SequenceMatcher
-
-logger = logging.getLogger(__name__)
 
 from app.core.config import AppConfig
+from app.core.constants import VIDEO_EXTENSIONS
 from app.models.schemas import CandidateItem, CandidateTarget, ClassificationResult, ResolvedTarget
 from app.services.classifier import _candidate_has_movie_marker
-from app.services.scanner import VIDEO_EXTENSIONS, list_target_paths
+from app.services.scanner import list_target_paths
 
+logger = logging.getLogger(__name__)
 
 INVALID_PATH_CHARS = re.compile(r'[<>:"/\\|?*]')
 WORD_RE = re.compile(r"[a-z0-9]+")
@@ -144,7 +144,7 @@ def series_video_count(path: str) -> int:
     for file_path in root.rglob("*"):
         if _is_hidden_path(file_path):
             continue
-        if file_path.is_file() and file_path.suffix.lower() in {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv"}:
+        if file_path.is_file() and file_path.suffix.lower() in VIDEO_EXTENSIONS:
             count += 1
             if count >= 20:
                 return count
@@ -635,7 +635,6 @@ class PathResolver:
             if media_kind == "series" and not (tokenize(title) & tokenize(folder_name)):
                 continue
             alias_values = series_aliases(path) if media_kind == "series" else {folder_name}
-            folder_norm = ""
             folder_tokens: set[str] = set()
             best_alias_similarity = 0.0
             best_alias_starts_bonus = 0.0
@@ -651,7 +650,6 @@ class PathResolver:
                     best_alias_similarity = alias_similarity
                     best_alias_starts_bonus = alias_starts_bonus
                     best_alias_contains_bonus = alias_contains_bonus
-                    folder_norm = alias_norm
                     folder_tokens = alias_tokens
 
             shared_title = len(title_tokens & folder_tokens)

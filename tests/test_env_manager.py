@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from app.core.config import get_settings
 from app.services.env_manager import (
     ENV_FILE,
     ENV_SPEC,
@@ -79,9 +80,9 @@ class TestRewriteEnv:
     def test_appends_new_keys(self, tmp_path):
         env = tmp_path / ".env"
         env.write_text("MOVIE_ROOTS=/media1/movies\n", encoding="utf-8")
-        _rewrite_env({"ADMIN_UI_TOKEN": "secret"})
+        _rewrite_env({"MCP_DEFAULT_TOKEN": "secret"})
         text = env.read_text(encoding="utf-8")
-        assert "ADMIN_UI_TOKEN=secret" in text
+        assert "MCP_DEFAULT_TOKEN=secret" in text
         assert "MOVIE_ROOTS=/media1/movies" in text
 
     def test_atomic_write_leaves_no_tmp(self, tmp_path):
@@ -127,8 +128,8 @@ class TestListEnv:
         for key in list(os.environ):
             if key in ENV_SPEC_KEYS:
                 monkeypatch.delenv(key, raising=False)
-        os.environ["ADMIN_UI_TOKEN"] = "super-secret"
-        (tmp_path / ".env").write_text("ADMIN_UI_TOKEN=super-secret\n", encoding="utf-8")
+        os.environ["MCP_DEFAULT_TOKEN"] = "super-secret"
+        (tmp_path / ".env").write_text("MCP_DEFAULT_TOKEN=super-secret\n", encoding="utf-8")
 
         from app.core.config import reset_settings
 
@@ -138,7 +139,7 @@ class TestListEnv:
         finally:
             reset_settings()
 
-        entry = [e for e in result["spec"] if e["key"] == "ADMIN_UI_TOKEN"][0]
+        entry = [e for e in result["spec"] if e["key"] == "MCP_DEFAULT_TOKEN"][0]
         assert entry["saved"] == "********"
         assert entry["effective"] == "********"
         assert "super-secret" not in str(result)
@@ -189,9 +190,9 @@ class TestUpdateEnv:
         assert result["appliedLive"] == []
 
     def test_invalid_value_rejected(self, tmp_path):
-        (tmp_path / ".env").write_text("WEB_UI_PORT=18329\n", encoding="utf-8")
+        (tmp_path / ".env").write_text("MODEL_CLASSIFY_CONFIDENCE_THRESHOLD=0.65\n", encoding="utf-8")
         with pytest.raises(ValueError, match="Invalid setting"):
-            update_env({"WEB_UI_PORT": "not-a-port"})
+            update_env({"MODEL_CLASSIFY_CONFIDENCE_THRESHOLD": "not-a-float"})
 
     def test_no_changes_returns_empty(self, tmp_path):
         (tmp_path / ".env").write_text("MOVIE_ROOTS=/media1/movies\n", encoding="utf-8")
@@ -199,14 +200,20 @@ class TestUpdateEnv:
 
 
 class TestReloadSettings:
-    def test_applies_env_to_os_environ(self, tmp_path):
+    def test_saved_env_becomes_effective_without_restart(self, tmp_path, monkeypatch):
+        # .env is authoritative: a saved value wins over an older inherited
+        # env var as soon as the cache is reset — no os.environ patching.
+        monkeypatch.setenv("JELLYFIN_BASE_URL", "http://old:8096")
+        monkeypatch.setattr("app.core.config.DOTENV_PATH", tmp_path / ".env")
         (tmp_path / ".env").write_text("JELLYFIN_BASE_URL=http://jellyfin.local:8096\n", encoding="utf-8")
-        os.environ.pop("JELLYFIN_BASE_URL", None)
         reload_settings()
-        assert os.environ.get("JELLYFIN_BASE_URL") == "http://jellyfin.local:8096"
+        assert get_settings().jellyfin_base_url == "http://jellyfin.local:8096"
+        assert os.environ.get("JELLYFIN_BASE_URL") == "http://old:8096"
 
-    def test_removes_spec_keys_missing_from_env(self, tmp_path):
-        os.environ["MOVIE_ROOTS"] = "/media1/movies"
+    def test_env_var_falls_back_when_key_missing_from_dotenv(self, tmp_path, monkeypatch):
+        # A key absent from .env falls back to the inherited process env.
+        monkeypatch.setenv("MOVIE_ROOTS", "/media1/movies")
+        monkeypatch.setattr("app.core.config.DOTENV_PATH", tmp_path / ".env")
         (tmp_path / ".env").write_text("", encoding="utf-8")
         reload_settings()
-        assert "MOVIE_ROOTS" not in os.environ
+        assert get_settings().movie_roots == "/media1/movies"

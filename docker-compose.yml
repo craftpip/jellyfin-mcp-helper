@@ -6,6 +6,9 @@ services:
     image: jellysort:dev
     container_name: jellysort
     restart: unless-stopped
+    # Image default is USER jellysort (non-root, plan 0.2); dev bind-mount needs root
+    # because host-side logs/ and reports/ are owned by uid 0.
+    user: "0:0"
     ports:
       - "18328:18327"
     env_file:

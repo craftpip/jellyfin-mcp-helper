@@ -32,7 +32,7 @@ def require_mcp_auth(
     """Gate /mcp requests.
 
     - MCP_ALLOW_UNAUTHENTICATED=true (default) -> pass, user is "anonymous".
-    - Otherwise a valid API key from the key store or ADMIN_UI_TOKEN is required.
+    - Otherwise a valid API key from the key store or MCP_DEFAULT_TOKEN is required.
       Valid keys set request.state.mcp_user so the activity log can show "as <user>".
     """
     settings = get_settings()
@@ -45,7 +45,7 @@ def require_mcp_auth(
         request.state.mcp_user = None
         raise MCPUnauthorizedError()
 
-    admin_token = settings.admin_ui_token
+    admin_token = settings.mcp_default_token or settings.admin_ui_token
     if admin_token and hmac.compare_digest(raw_key, admin_token):
         request.state.mcp_user = "admin"
         return

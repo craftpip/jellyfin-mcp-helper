@@ -198,24 +198,25 @@ class TestQbittorrentClientFromEnv:
     def test_returns_none_when_no_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ENABLE_DOWNLOAD_CLIENT_CHECK", "true")
         monkeypatch.setenv("DOWNLOAD_CLIENT", "qbittorrent")
-        monkeypatch.delenv("QBT_MCP_URL", raising=False)
+        monkeypatch.setenv("QBT_WEBUI_URL", "")
+        monkeypatch.setenv("QBT_MCP_URL", "")
         assert QbittorrentClient.from_env() is None
 
     def test_returns_client_when_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ENABLE_DOWNLOAD_CLIENT_CHECK", "true")
         monkeypatch.setenv("DOWNLOAD_CLIENT", "qbittorrent")
-        monkeypatch.setenv("QBT_MCP_URL", "http://localhost:8080")
-        monkeypatch.setenv("QBT_MCP_API_KEY", "test-key")
+        monkeypatch.setenv("QBT_WEBUI_URL", "http://localhost:8080")
         monkeypatch.setenv("QBT_WEBUI_USER", "admin")
         monkeypatch.setenv("QBT_WEBUI_PASS", "pass")
         client = QbittorrentClient.from_env()
         assert client is not None
         assert client._base_url == "http://localhost:8080"
-        assert client._api_key == "test-key"
+        assert client._username == "admin"
 
     def test_returns_none_when_url_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("ENABLE_DOWNLOAD_CLIENT_CHECK", "true")
         monkeypatch.setenv("DOWNLOAD_CLIENT", "qbittorrent")
+        monkeypatch.setenv("QBT_WEBUI_URL", "  ")
         monkeypatch.setenv("QBT_MCP_URL", "  ")
         assert QbittorrentClient.from_env() is None
 
@@ -228,23 +229,21 @@ class TestQbittorrentClientAuth:
     def test_api_key_header(self, monkeypatch: pytest.MonkeyPatch) -> None:
         client = QbittorrentClient(
             base_url="http://localhost:8080",
-            api_key="my-key",
-            user=None,
-            password=None,
+            username="my-user",
+            password="my-pass",
         )
-        assert client._api_key == "my-key"
+        assert client._username == "my-user"
+        assert client._password == "my-pass"
 
     def test_basic_auth_when_no_api_key(self) -> None:
         user = "admin"
         password = "secret"
-        token = base64.b64encode(f"{user}:{password}".encode()).decode()
         client = QbittorrentClient(
             base_url="http://localhost:8080",
-            api_key=None,
-            user=user,
+            username=user,
             password=password,
         )
-        assert client._user == user
+        assert client._username == user
         assert client._password == password
 
 
@@ -256,9 +255,8 @@ class TestStopSeeding:
     def test_empty_candidates_returns_empty(self, tmp_path: Path) -> None:
         client = QbittorrentClient(
             base_url="http://localhost:8080",
-            api_key="key",
-            user=None,
-            password=None,
+            username="admin",
+            password="pass",
         )
         result = asyncio_run(client.stop_seeding_for_paths([]))
         assert result == []

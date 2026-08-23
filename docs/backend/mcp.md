@@ -16,7 +16,7 @@ MCP requests are gated by `require_mcp_auth` (`app/core/auth.py`):
   via `Authorization: Bearer <key>` **or** `X-API-Key: <key>`:
   - Valid key → request attributed to the key's `user` (logged as
     `as <user>`).
-  - `ADMIN_UI_TOKEN`, when set, is accepted as a master key for user `admin`
+  - `MCP_DEFAULT_TOKEN`, when set, is accepted as a master key for user `admin`
     (so the UI proxy / admin tooling can authenticate when unauthenticated
     access is off).
   - Missing/invalid key → HTTP `401` with a JSON-RPC error body

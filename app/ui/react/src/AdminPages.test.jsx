@@ -95,7 +95,7 @@ describe('page navigation', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
 
     expect(await screen.findByText(/Environment variables read from \.env\./)).toBeInTheDocument()
-    expect(screen.getByText('AI / Classification')).toBeInTheDocument()
+    expect(screen.getByText('Classification')).toBeInTheDocument()
     expect(screen.queryByText('Start Scan')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Settings' })).toHaveClass('active')
 
@@ -115,11 +115,12 @@ describe('page navigation', () => {
     expect(screen.getByText('server agent')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Create Key' })).toBeInTheDocument()
 
-    expect(screen.getByText(/jsort_abc123\*{6}9f2e/)).toBeInTheDocument()
-    expect(screen.getByText(/jsort_def456\*{6}77aa/)).toBeInTheDocument()
+    expect(screen.getByText((content) => content.includes('jsort_abc123') && content.includes('9f2e'))).toBeInTheDocument()
+    expect(screen.getByText((content) => content.includes('jsort_def456') && content.includes('77aa'))).toBeInTheDocument()
     expect(screen.getByText('Never used')).toBeInTheDocument()
     expect(screen.getByText(/Last used/)).toBeInTheDocument()
-    expect(screen.getAllByText(/Created/).length).toBe(2)
+    // Table header + 2 rows contain "Created", so check rows via table
+    expect(screen.getAllByRole('row').length).toBe(3) // header + 2 data rows
   })
 
   it('restores the page from the URL path on load', async () => {
@@ -150,8 +151,8 @@ describe('Settings page', () => {
     await screen.findByText('Start Scan')
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
 
-    await screen.findByText('AI / Classification')
-    expect(screen.getByLabelText('MODEL_CLASSIFY_CONFIDENCE_THRESHOLD')).toHaveValue(0.65)
+    await screen.findByText('Classification')
+    expect(screen.getByLabelText('MODEL_CLASSIFY_CONFIDENCE_THRESHOLD')).toHaveValue('0.65')
     expect(screen.getByLabelText('QBT_MCP_API_KEY')).toHaveAttribute('type', 'password')
     expect(screen.getByLabelText('QBT_MCP_API_KEY')).toHaveValue('')
     expect(screen.getAllByText('recreate').length).toBeGreaterThan(0)
@@ -162,7 +163,7 @@ describe('Settings page', () => {
     renderApp()
     await screen.findByText('Start Scan')
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
-    await screen.findByText('AI / Classification')
+    await screen.findByText('Classification')
 
     expect(screen.getByRole('button', { name: /Save Changes/ })).toBeDisabled()
   })
@@ -187,7 +188,7 @@ describe('Settings page', () => {
     renderApp()
     await screen.findByText('Start Scan')
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
-    await screen.findByText('AI / Classification')
+    await screen.findByText('Classification')
 
     await userEvent.clear(screen.getByLabelText('MODEL_CLASSIFY_CONFIDENCE_THRESHOLD'))
     await userEvent.type(screen.getByLabelText('MODEL_CLASSIFY_CONFIDENCE_THRESHOLD'), '0.7')
@@ -201,6 +202,112 @@ describe('Settings page', () => {
       expect(post).toBeTruthy()
       expect(JSON.parse(post.body)).toEqual({ updates: { MODEL_CLASSIFY_CONFIDENCE_THRESHOLD: '0.7' } })
     })
+  })
+
+  it('shows an inline error and blocks save for invalid numeric values', async () => {
+    const calls = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, opts) => {
+        const method = (opts?.method || 'GET').toUpperCase()
+        const path = String(url)
+        calls.push({ method, path })
+        let payload = {}
+        if (method === 'GET' && path === '/api/status') payload = { auth: { required: false } }
+        else if (method === 'GET' && path === '/api/libraries') payload = { libraries: [] }
+        else if (method === 'GET' && path === '/api/scans/current/report') payload = { hint: 'no scan' }
+        else if (method === 'GET' && path === '/api/admin/env') payload = ENV
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+      })
+    )
+    renderApp()
+    await screen.findByText('Start Scan')
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await screen.findByText('Classification')
+
+    const field = screen.getByLabelText('MODEL_CLASSIFY_CONFIDENCE_THRESHOLD')
+    expect(field).toHaveAttribute('type', 'text')
+    await userEvent.clear(field)
+    await userEvent.type(field, 'abc')
+
+    expect(await screen.findByText('Must be a number')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /Save Changes/ }))
+    expect(await screen.findByText(/Fix invalid values before saving/)).toBeInTheDocument()
+    expect(calls.find((c) => c.method === 'POST')).toBeUndefined()
+  })
+
+  it('toasts applied-live for live-only saves', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, opts) => {
+        const method = (opts?.method || 'GET').toUpperCase()
+        const path = String(url)
+        let payload = {}
+        if (method === 'GET' && path === '/api/status') payload = { auth: { required: false } }
+        else if (method === 'GET' && path === '/api/libraries') payload = { libraries: [] }
+        else if (method === 'GET' && path === '/api/scans/current/report') payload = { hint: 'no scan' }
+        else if (method === 'GET' && path === '/api/admin/env') payload = ENV
+        else if (method === 'POST' && path === '/api/admin/env') payload = { appliedLive: ['MCP_ALLOW_UNAUTHENTICATED'], needsRecreate: [] }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+      })
+    )
+    renderApp()
+    await screen.findByText('Start Scan')
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await screen.findByText('MCP Access Control')
+
+    const box = screen.getByLabelText('MCP_ALLOW_UNAUTHENTICATED')
+    await userEvent.click(box) // true -> false
+
+    await userEvent.click(screen.getByRole('button', { name: /Save Changes/ }))
+
+    expect(await screen.findByText(/applied live/)).toBeInTheDocument()
+    expect(screen.queryByText(/Recreate required/)).not.toBeInTheDocument()
+  })
+
+  it('shows the recreate banner with a copy button for restart-var saves', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, opts) => {
+        const method = (opts?.method || 'GET').toUpperCase()
+        const path = String(url)
+        let payload = {}
+        if (method === 'GET' && path === '/api/status') payload = { auth: { required: false } }
+        else if (method === 'GET' && path === '/api/libraries') payload = { libraries: [] }
+        else if (method === 'GET' && path === '/api/scans/current/report') payload = { hint: 'no scan' }
+        else if (method === 'GET' && path === '/api/admin/env') payload = ENV
+        else if (method === 'POST' && path === '/api/admin/env') payload = { appliedLive: [], needsRecreate: ['MODEL_CLASSIFY_CONFIDENCE_THRESHOLD'] }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+      })
+    )
+    renderApp()
+    await screen.findByText('Start Scan')
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await screen.findByText('Classification')
+
+    const field = screen.getByLabelText('MODEL_CLASSIFY_CONFIDENCE_THRESHOLD')
+    await userEvent.clear(field)
+    await userEvent.type(field, '0.8')
+
+    await userEvent.click(screen.getByRole('button', { name: /Save Changes/ }))
+
+    expect(await screen.findByText(/Recreate required/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy command' })).toBeInTheDocument()
+    expect(await screen.findByText(/Saved — 1 change need/)).toBeInTheDocument()
+  })
+
+  it('toggles the live/recreate/pending help box', async () => {
+    renderApp()
+    await screen.findByText('Start Scan')
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await screen.findByText('Classification')
+
+    expect(screen.queryByText(/baked into config snapshots/)).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '?' }))
+    expect(screen.getByText(/baked into config snapshots/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '?' }))
+    expect(screen.queryByText(/baked into config snapshots/)).not.toBeInTheDocument()
   })
 })
 

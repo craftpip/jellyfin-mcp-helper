@@ -70,6 +70,7 @@ class ApiKeyManager:
     def _public_record(record: dict[str, Any]) -> dict[str, Any]:
         public = dict(record)
         public.pop("key_hash", None)
+        public.pop("key", None)
         return public
 
     def _get_record(self, data: dict[str, Any], key_id: str) -> dict[str, Any] | None:
@@ -87,9 +88,10 @@ class ApiKeyManager:
             "id": "k_" + secrets.token_hex(6),
             "name": str(name).strip(),
             "user": str(user).strip() or "default",
-            "key_prefix": raw_key[:12],
-            "key_suffix": raw_key[-4:],
+            "key_prefix": raw_key[:16],
+            "key_suffix": raw_key[-8:],
             "key_hash": self._hash_key(raw_key),
+            "key": raw_key,
             "scopes": list(scopes) if scopes else ["*"],
             "enabled": True,
             "created_at": _now_iso(),
@@ -106,6 +108,14 @@ class ApiKeyManager:
     def list_keys(self) -> list[dict[str, Any]]:
         data = self._load()
         return [self._public_record(record) for record in data.get("keys", [])]
+
+    def reveal_key(self, key_id: str) -> str | None:
+        data = self._load()
+        record = self._get_record(data, key_id)
+        if record is None:
+            return None
+        # Return stored plain key if available (new keys), otherwise None
+        return record.get("key")
 
     def set_enabled(self, key_id: str, enabled: bool) -> bool:
         with self._lock:

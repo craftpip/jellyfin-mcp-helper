@@ -6,12 +6,11 @@ from typing import Any
 
 from guessit import guessit
 
+from app.core.constants import SAMPLE_SIZE_THRESHOLD
 from app.models.schemas import CandidateItem, ClassificationResult
-
 
 EXTRA_MARKERS = re.compile(r"\b(ncop\d*|nced\d*|op\d*|ed\d*|sp\d*|ova|ona|special|extras?|featurettes?|bonus|recap|trailer)\b", re.IGNORECASE)
 SAMPLE_MARKERS = re.compile(r"\bsample\b", re.IGNORECASE)
-SAMPLE_SIZE_THRESHOLD = 150 * 1024 * 1024  # 150MB
 SEASON_EPISODE_RE = re.compile(r"s\d{1,2}e\d{1,3}", re.IGNORECASE)
 SPECIAL_TAG_RE = re.compile(r"(?:^|[\s\[\]()_.-])sp(?:[\s\[\]()_.-]|$)", re.IGNORECASE)
 DECIMAL_EPISODE_RE = re.compile(r"(?:^|[^a-z0-9])s\d{1,2}e\d{1,3}\.\d+(?:[^a-z0-9]|$)", re.IGNORECASE)

@@ -9,7 +9,6 @@ from difflib import SequenceMatcher
 
 import httpx
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -25,19 +24,30 @@ class JellyfinClient:
 
     @classmethod
     def from_env(cls) -> "JellyfinClient | None":
-        enable_jellyfin = os.getenv("ENABLE_JELLYFIN_INTEGRATION", "true").strip().lower() in ("true", "1", "yes")
+
+        from app.core.config import get_settings
+
+        settings = get_settings()
+
+        def _get(key: str, attr: str, default: str | None = None) -> str | None:
+            if key in os.environ:
+                return os.getenv(key)
+            return getattr(settings, attr, default)
+
+        enable_raw = _get("ENABLE_JELLYFIN_INTEGRATION", "enable_jellyfin_integration", "true")
+        enable_jellyfin = str(enable_raw).strip().lower() in ("true", "1", "yes")
         if not enable_jellyfin:
             return None
         
-        api_key = os.getenv("JELLYFIN_API_KEY", "").strip()
+        api_key = (_get("JELLYFIN_API_KEY", "jellyfin_api_key", "") or "").strip()
         if not api_key:
             return None
-        base_url = os.getenv("JELLYFIN_BASE_URL", "http://host.docker.internal:8096").strip()
+        base_url = (_get("JELLYFIN_BASE_URL", "jellyfin_base_url", "http://host.docker.internal:8096") or "").strip()
         return cls(
             base_url=base_url,
             api_key=api_key,
-            movie_library=os.getenv("JELLYFIN_MOVIE_LIBRARY_NAME"),
-            series_library=os.getenv("JELLYFIN_SERIES_LIBRARY_NAME"),
+            movie_library=_get("JELLYFIN_MOVIE_LIBRARY_NAME", "jellyfin_movie_library_name"),
+            series_library=_get("JELLYFIN_SERIES_LIBRARY_NAME", "jellyfin_series_library_name"),
         )
 
     def library_name_for_kind(self, kind: str) -> str | None:
@@ -51,6 +61,48 @@ class JellyfinClient:
         """Returns all available Jellyfin libraries."""
         libraries = await self._api_get("/Library/VirtualFolders")
         return [{"name": item.get("Name", ""), "id": item.get("ItemId", "")} for item in libraries]
+
+    async def libraries_for_paths(self, target_paths: list[str], movie_roots: list[str], series_roots: list[str]) -> list[dict]:
+        """Find Jellyfin libraries that contain the given target paths by folder name.
+
+        Jellyfin's VirtualFolders use host paths like /mnt/media1t/downloads/series-r
+        while JellySort uses container paths like /media1/series-r. Only the final
+        folder name (e.g. 'series-r') is compared, as the user noted.
+        """
+        if not target_paths:
+            return []
+        try:
+            virtual = await self._api_get("/Library/VirtualFolders")
+        except Exception:
+            return []
+        # Build folder-name -> library map from Jellyfin's Locations
+        folder_to_lib: dict[str, dict] = {}
+        for lib in virtual:
+            name = lib.get("Name", "")
+            lib_id = lib.get("ItemId", "")
+            locations = lib.get("Locations") or []
+            for loc in locations:
+                # Host path last component e.g. 'series-r' from '/mnt/.../series-r'
+                folder = loc.rstrip("/").split("/")[-1].lower()
+                if folder:
+                    folder_to_lib[folder] = {"name": name, "id": lib_id}
+        # For each target path, find which configured root it belongs to
+        found: dict[str, dict] = {}
+        all_roots = [(p.rstrip("/"), p.rstrip("/").split("/")[-1].lower()) for p in (movie_roots + series_roots) if p]
+        for tpath in target_paths:
+            tpath_norm = tpath.rstrip("/").lower()
+            # Find the longest matching root prefix
+            best_folder = None
+            best_len = -1
+            for root_path, folder in all_roots:
+                if tpath_norm == root_path.lower() or tpath_norm.startswith(root_path.lower() + "/"):
+                    if len(root_path) > best_len:
+                        best_len = len(root_path)
+                        best_folder = folder
+            if best_folder and best_folder in folder_to_lib:
+                lib = folder_to_lib[best_folder]
+                found[lib["id"]] = lib
+        return list(found.values())
 
     async def scan_library(
         self,

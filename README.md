@@ -332,8 +332,8 @@ Important variables from `.env.example`:
 | `WEB_UI_ENABLED` | No | Enable the web UI (served on the same port as MCP, 18328) |
 | `WEB_UI_PORT` | No | Deprecated — unused. The web UI shares the MCP port |
 | `UI_PANEL_PASSWORD` | No | Panel password; when set, the web UI requires login |
-| `MCP_ALLOW_UNAUTHENTICATED` | No | Allow unauthenticated MCP requests (default `true`); when `false`, `/mcp` needs an API key or `ADMIN_UI_TOKEN` |
-| `ADMIN_UI_TOKEN` | No | Master key accepted by MCP auth for the `admin` user |
+| `MCP_ALLOW_UNAUTHENTICATED` | No | Allow unauthenticated MCP requests (default `true`); when `false`, `/mcp` needs an API key or `MCP_DEFAULT_TOKEN` |
+| `MCP_DEFAULT_TOKEN` | No | MCP master key — bypasses per-client keys for API use |
 
 Full variable reference and the live-vs-restart apply model:
 [docs/getting-started/configuration.md](docs/getting-started/configuration.md).

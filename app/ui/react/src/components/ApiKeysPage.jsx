@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAppStore } from '../store/AppStore.jsx'
 import { formatDateTime } from '../utils/format.js'
+import { apiGet } from '../api/apiClient.js'
 
 export default function ApiKeysPage() {
   const { state, actions } = useAppStore()
@@ -9,7 +10,24 @@ export default function ApiKeysPage() {
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [createdKey, setCreatedKey] = useState(null)
+  const [copiedId, setCopiedId] = useState(null)
+  const [revealingId, setRevealingId] = useState(null)
   const mcpUrl = (typeof window !== 'undefined' ? window.location.origin : 'http://<host>:18328') + '/mcp'
+
+  // Load env if not already loaded so we can check MCP_ALLOW_UNAUTHENTICATED
+  useEffect(() => {
+    if (!state.adminEnv && !state.adminLoading) {
+      actions.loadEnv()
+    }
+  }, [state.adminEnv, state.adminLoading])
+
+  const mcpAllowUnauth = (() => {
+    const entry = (state.adminEnv?.spec || []).find((e) => e.key === 'MCP_ALLOW_UNAUTHENTICATED')
+    if (!entry) return null
+    // effective is string "true"/"false" from list_env
+    const v = String(entry.effective || '').toLowerCase()
+    return v === 'true' || v === '1' || v === 'yes'
+  })()
 
   function openCreate() {
     setName('')
@@ -42,15 +60,43 @@ export default function ApiKeysPage() {
     actions.deleteApiKey(key.id)
   }
 
+  async function copyKey(keyId, name) {
+    setRevealingId(keyId)
+    try {
+      const res = await apiGet('/admin/api-keys/' + keyId + '/reveal')
+      const fullKey = res.key
+      await actions.copyText(fullKey)
+      setCopiedId(keyId)
+      setTimeout(() => setCopiedId(null), 2000)
+    } catch (err) {
+      actions.toast(err.message || 'Key not revealable — recreate it', 'err')
+    } finally {
+      setRevealingId(null)
+    }
+  }
+
   return (
     <div className="admin-page">
       <div className="admin-header">
         <h2>API Keys</h2>
         <div className="hint">
           Keys are used to authenticate MCP clients on {mcpUrl} when <code>MCP_ALLOW_UNAUTHENTICATED=false</code>.
-          Full keys are only stored hashed and shown once at creation.
+          Full keys are stored and can be copied anytime.
         </div>
       </div>
+
+      {mcpAllowUnauth === true && (
+        <div className="panel" style={{ background: 'var(--jf-primary-dim)', borderColor: 'var(--jf-primary)', display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
+          <div style={{ fontSize: '1.2rem', lineHeight: '1' }}>ℹ️</div>
+          <div>
+            <strong>Authentication is currently disabled</strong>
+            <div className="hint" style={{ marginTop: '4px' }}>
+              <code>MCP_ALLOW_UNAUTHENTICATED=true</code> — MCP allows unauthenticated requests, so API keys will not be enforced.
+              Set it to <code>false</code> in <a href="/settings" onClick={(e) => { e.preventDefault(); actions.setPage('settings') }} style={{ color: 'var(--jf-primary-hover)' }}>Settings</a> and recreate the container to require authentication.
+            </div>
+          </div>
+        </div>
+      )}
 
       <section className="panel">
         <div className="keys-header">
@@ -66,24 +112,52 @@ export default function ApiKeysPage() {
         ) : keys.length === 0 ? (
           <div className="hint">No API keys yet. Click "Create Key" to let MCP clients authenticate.</div>
         ) : (
-          <div className="keys-list">
-            {keys.map((key) => (
-              <div className="keys-row" key={key.id}>
-                <span className="key-name">{key.name}</span>
-                <span className="key-created">Created {formatDateTime(key.created_at)}</span>
-                <code className="key-masked" title="Only the start and end of the key are shown">
-                  {key.key_prefix}
-                  {'*'.repeat(6)}
-                  {key.key_suffix || ''}
-                </code>
-                <span className={'key-used' + (key.last_used_at ? '' : ' never')}>
-                  {key.last_used_at ? 'Last used ' + formatDateTime(key.last_used_at) : 'Never used'}
-                </span>
-                <button type="button" className="small danger" onClick={() => onDelete(key)}>
-                  Delete
-                </button>
-              </div>
-            ))}
+          <div style={{ overflowX: 'auto' }}>
+            <table className="admin-table apikeys-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>API Key</th>
+                  <th>Created</th>
+                  <th>Last Used</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {keys.map((key) => (
+                  <tr key={key.id}>
+                    <td>
+                      <span className="key-name">{key.name}</span>
+                    </td>
+                    <td>
+                      <code className="key-masked" title={key.key_prefix + '...' + (key.key_suffix || '')}>
+                        {key.key_prefix}
+                        <span className="key-mask">{"•".repeat(8)}</span>
+                        {key.key_suffix || ''}
+                      </code>
+                    </td>
+                    <td className="key-created">{formatDateTime(key.created_at)}</td>
+                    <td className={'key-used' + (key.last_used_at ? '' : ' never')}>
+                      {key.last_used_at ? 'Last used ' + formatDateTime(key.last_used_at) : 'Never used'}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap', display: 'flex', gap: '6px' }}>
+                      <button
+                        type="button"
+                        className="small"
+                        onClick={() => copyKey(key.id, key.name)}
+                        disabled={revealingId === key.id}
+                        title="Copy full key to clipboard"
+                      >
+                        {revealingId === key.id ? '...' : copiedId === key.id ? 'Copied!' : 'Copy'}
+                      </button>
+                      <button type="button" className="small danger" onClick={() => onDelete(key)}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
@@ -138,8 +212,7 @@ export default function ApiKeysPage() {
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Key created — store it now</h3>
             <p className="hint">
-              The full key is only shown this once. It is stored hashed on disk and cannot be retrieved again. If you
-              lose it, delete this key and create a new one.
+              The full key can be copied anytime from the table below. If you lose it, delete and recreate.
             </p>
             <div className="key-display">
               <code>{createdKey.key}</code>

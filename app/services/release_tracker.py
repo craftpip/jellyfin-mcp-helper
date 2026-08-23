@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import BASE_DIR
 
-
 DEFAULT_RELEASE_TRACKER_PATH = BASE_DIR / "config" / "ongoing_releases.json"
 
 

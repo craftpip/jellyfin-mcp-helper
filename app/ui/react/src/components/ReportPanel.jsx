@@ -1,8 +1,26 @@
-import { useState } from 'react'
 import { useAppStore } from '../store/AppStore.jsx'
 import { formatBytes } from '../utils/format.js'
 import { matchesFilter, isCrossDriveItem } from '../utils/report.js'
 import PathPills from './PathPills.jsx'
+
+function highlight(text, query) {
+  if (!query || !text) return text
+  const q = query.trim()
+  if (!q) return text
+  const lower = text.toLowerCase()
+  const idx = lower.indexOf(q.toLowerCase())
+  if (idx === -1) return text
+  const before = text.slice(0, idx)
+  const match = text.slice(idx, idx + q.length)
+  const after = text.slice(idx + q.length)
+  return (
+    <>
+      {before}
+      <mark style={{ background: 'rgba(0,164,220,0.25)', color: 'inherit', padding: '0 1px', borderRadius: '2px' }}>{match}</mark>
+      {after}
+    </>
+  )
+}
 
 const FILTER_DEFS = [
   ['all', 'All'],
@@ -14,7 +32,7 @@ const FILTER_DEFS = [
 
 export default function ReportPanel() {
   const { state, actions } = useAppStore()
-  const [query, setQuery] = useState('')
+  const query = state.searchQuery || ''
   const {
     reportVisible,
     reportAll,
@@ -28,6 +46,7 @@ export default function ReportPanel() {
   if (!reportVisible) return null
 
   const actionable = reportAll.filter((i) => i.action !== 'skip')
+  const skipped = reportAll.filter((i) => i.action === 'skip')
   const counts = {
     all: actionable.length,
     move: actionable.filter((i) => i.action === 'move').length,
@@ -36,6 +55,8 @@ export default function ReportPanel() {
     new: actionable.filter((i) => !i.fileExists).length,
   }
   const hasItems = actionable.length > 0
+  const hasSkippedOnly = !hasItems && skipped.length > 0
+  const skippedSize = skipped.reduce((s, i) => s + (Number(i.fileSize) || 0), 0)
 
   // Mirror the legacy updateSelectionSummary: "visible" = actionable rows in
   // expanded groups (filter-independent), selected among them.
@@ -56,6 +77,8 @@ export default function ReportPanel() {
   } else if (hasItems) {
     selectionSummary =
       '0 of 0 visible (of ' + actionable.length + ' total, try adjusting filters)'
+  } else if (hasSkippedOnly) {
+    selectionSummary = skipped.length + ' skipped — nothing to move right now'
   } else {
     selectionSummary = 'No report items loaded yet.'
   }
@@ -100,49 +123,87 @@ export default function ReportPanel() {
         </div>
       </div>
 
+      {state.reportServiceErrors && Object.keys(state.reportServiceErrors).length > 0 && (
+        <div className="warn-box" style={{ marginTop: '12px' }}>
+          <strong>Some paths could not be scanned</strong> — check skipped items below.
+          {Object.entries(state.reportServiceErrors).map(([k, v]) => (
+            <div key={k} style={{ marginTop: '6px', fontSize: '0.82rem', wordBreak: 'break-word' }}>
+              <strong>{k}:</strong> {typeof v === 'string' ? v.slice(0, 300) : JSON.stringify(v).slice(0, 300)}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!hasItems && (
+        <div className={'empty-celebration' + (hasSkippedOnly ? ' has-skipped' : '')}>
+          {hasSkippedOnly ? (
+            <>
+              <div className="empty-icon">✓</div>
+              <div>
+                <strong>All caught up</strong> — nothing to move. {skipped.length} file(s) skipped {skippedSize ? '(' + formatBytes(skippedSize) + ')' : ''}{skipped.every((i) => (i.reason || '').toLowerCase().includes('in-progress')) ? ' — in-progress downloads will appear after they finish' : ''}.
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="empty-icon">○</div>
+              <div>No items to review. Run a scan to see what can be organized.</div>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="search-bar">
         <input
           type="text"
           id="filterInput"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => actions.setSearchQuery(e.target.value)}
           placeholder="Search by title, path..."
         />
+        {query && (
+          <button className="small" onClick={() => actions.setSearchQuery('')} title="Clear search">
+            Clear
+          </button>
+        )}
       </div>
 
-      <div className="filter-chips" id="filterChips">
-        {FILTER_DEFS.map(([k, label]) => (
-          <button
-            key={k}
-            className={'filter-chip' + (currentFilter === k ? ' active' : '')}
-            onClick={() => actions.setFilter(k)}
-          >
-            {label} <span className="chip-count">{counts[k]}</span>
-          </button>
-        ))}
-      </div>
+      {hasItems && (
+        <div className="filter-chips" id="filterChips">
+          {FILTER_DEFS.map(([k, label]) => (
+            <button
+              key={k}
+              className={'filter-chip' + (currentFilter === k ? ' active' : '')}
+              onClick={() => actions.setFilter(k)}
+            >
+              {label} <span className="chip-count">{counts[k]}</span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="report-toolbar">
         <div className="hint" id="selectionSummary">
           {selectionSummary}
         </div>
-        <div className="report-actions">
-          <button className="small" id="btnSelectAll" disabled={!hasItems} onClick={() => actions.setCheckedItems('all')}>
-            Select All
-          </button>
-          <button className="small" id="btnSelectNone" disabled={!hasItems} onClick={() => actions.setCheckedItems('none')}>
-            Select None
-          </button>
-          <button className="small" id="btnSelectExisting" disabled={!hasItems} onClick={() => actions.setCheckedItems('existing')}>
-            Select existing paths
-          </button>
-          <button className="small" id="btnSelectMove" disabled={!hasItems} onClick={() => actions.setCheckedItems('move')}>
-            Select all new
-          </button>
-          <button className="small" id="btnSelectReplace" disabled={!hasItems} onClick={() => actions.setCheckedItems('replace')}>
-            Select all existing
-          </button>
-        </div>
+        {hasItems && (
+          <div className="report-actions">
+            <button className="small" id="btnSelectAll" onClick={() => actions.setCheckedItems('all')}>
+              Select All
+            </button>
+            <button className="small" id="btnSelectNone" onClick={() => actions.setCheckedItems('none')}>
+              Select None
+            </button>
+            <button className="small" id="btnSelectExisting" onClick={() => actions.setCheckedItems('existing')}>
+              Select existing paths
+            </button>
+            <button className="small" id="btnSelectMove" onClick={() => actions.setCheckedItems('move')}>
+              Select all new
+            </button>
+            <button className="small" id="btnSelectReplace" onClick={() => actions.setCheckedItems('replace')}>
+              Select all existing
+            </button>
+          </div>
+        )}
       </div>
 
       <div id="reportItems">
@@ -172,7 +233,7 @@ export default function ReportPanel() {
   )
 }
 
-function ReportGroup({ gid, gi, group, expanded, visibleItems }) {
+function ReportGroup({ gid, gi, group, expanded, visibleItems, query }) {
   const { state, actions } = useAppStore()
   const isSeries = group.items[0].itemType === 'series'
   const skipOnly = group.items.every((i) => i.action === 'skip')
@@ -187,7 +248,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems }) {
     <>
       <div className="group-header" onClick={() => actions.toggleGroup(gid)}>
         <span className={'arrow' + (expanded ? '' : ' collapsed')}>▾</span>
-        <span className="g-title">{group.title}</span>
+        <span className="g-title">{highlight(group.title, query)}</span>
         <span className="g-count">{group.items.length} item(s)</span>
         {group.totalSize > 0 && <span className="g-size">{formatBytes(group.totalSize)}</span>}
       </div>
@@ -244,7 +305,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems }) {
           </thead>
           <tbody>
             {visibleItems.map((item) => (
-              <ReportRow key={item.confirmId} item={item} isSeries={isSeries} />
+              <ReportRow key={item.confirmId} item={item} isSeries={isSeries} query={query} />
             ))}
           </tbody>
         </table>
@@ -253,7 +314,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems }) {
   )
 }
 
-function ReportRow({ item, isSeries }) {
+function ReportRow({ item, isSeries, query }) {
   const { state, actions } = useAppStore()
   const selected = state.selectedIds.includes(item.confirmId)
   const liveTarget = item._liveTarget || item.targetPath
@@ -278,9 +339,9 @@ function ReportRow({ item, isSeries }) {
         <td colSpan={2}>
           <div className="path-cell">
             <div className="source-name" title={item.sourcePath || item.sourceName || ''}>
-              {item.sourcePath || item.sourceName || ''}
+              {highlight(item.sourcePath || item.sourceName || '', query)}
             </div>
-            <span className="skip-reason">{item.reason || ''}</span>
+            <span className="skip-reason">{highlight(item.reason || '', query)}</span>
           </div>
         </td>
         <td style={{ whiteSpace: 'nowrap', textAlign: 'right', color: '#9aa4ab', fontSize: '0.8rem' }}>
@@ -337,7 +398,7 @@ function ReportRow({ item, isSeries }) {
       <td colSpan={2}>
         <div className="path-cell">
           <div className="source-name" title={item.sourcePath || item.sourceName || ''}>
-            {item.sourcePath || item.sourceName || ''}
+            {highlight(item.sourcePath || item.sourceName || '', query)}
           </div>
           <input
             type="text"

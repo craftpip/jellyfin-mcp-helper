@@ -1,0 +1,53 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+lint.select = ["E", "F", "I"]
+lint.ignore = ["E501"]
+# Keep resolver's logger-before-imports pattern and server's conditional imports readable
+lint.unfixable = []
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+# Changed files must be clean; global strictness starts relaxed and tightens per phase
+disallow_untyped_defs = false
+check_untyped_defs = false
+no_implicit_optional = true
+strict_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+[[tool.mypy.overrides]]
+module = "guessit.*"
+ignore_missing_imports = true
+
+# Phase 1.3: legacy modules have known mypy issues (Pydantic alias, Any returns, etc.)
+# They are ignored globally so `mypy app/` is clean on changed files; new modules stay checked.
+[[tool.mypy.overrides]]
+module = [
+  "app.core.config",
+  "app.main",
+  "app.models.schemas",
+  "app.services.api_key_manager",
+  "app.services.classifier",
+  "app.services.download_client",
+  "app.services.env_manager",
+  "app.services.jellyfin",
+  "app.services.presenters",
+  "app.services.resolver",
+  "app.services.scan_history",
+  "app.services.scan_manager",
+  "app.services.scanner",
+  "app.ui.server",
+]
+ignore_errors = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

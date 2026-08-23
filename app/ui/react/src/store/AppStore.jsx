@@ -1,7 +1,11 @@
-import { createContext, useContext, useEffect, useReducer, useRef } from 'react'
+import { createContext, useContext, useEffect, useReducer, useRef, useCallback } from 'react'
 import { apiDelete, apiGet, apiPatch, apiPost, getAuthToken, setAuthToken } from '../api/apiClient.js'
 import { computePathSync, defaultSelection, groupItems, isCrossDriveItem, mapReportItems } from '../utils/report.js'
 import { buildTransferQueue, deriveTransferQueue, TRANSFER_DONE_REMOVE_MS } from '../utils/transfer.js'
+import { usePoll } from '../hooks/usePoll.js'
+import { reportInitialState, reportReducer, toggleInList } from './slices/reportSlice.js'
+import { scanInitialState, scanReducer } from './slices/scanSlice.js'
+import { adminInitialState, adminReducer } from './slices/adminSlice.js'
 
 const AppStoreContext = createContext(null)
 
@@ -18,17 +22,49 @@ function pathForPage(page) {
   return page === 'scan' ? '/' : '/' + page
 }
 
+function getInitialFilter() {
+  if (typeof window !== 'undefined') {
+    try {
+      const url = new URL(window.location.href)
+      const f = url.searchParams.get('filter')
+      if (f && ['all', 'move', 'replace', 'existing', 'new'].includes(f)) return f
+    } catch {}
+    try {
+      const s = localStorage.getItem('jsort_filter')
+      if (s && ['all', 'move', 'replace', 'existing', 'new'].includes(s)) return s
+    } catch {}
+  }
+  return 'all'
+}
+
+function getInitialQuery() {
+  if (typeof window !== 'undefined') {
+    try {
+      const url = new URL(window.location.href)
+      const q = url.searchParams.get('q')
+      if (q !== null) return q
+    } catch {}
+    try {
+      const s = localStorage.getItem('jsort_query')
+      if (s) return s
+    } catch {}
+  }
+  return ''
+}
+
 const initialState = {
+  // Connection & auth
   connStatus: 'connecting',
   connMessage: 'connecting...',
   authRequired: false,
   authed: false,
+  rootsConfigured: true,
   page: 'scan',
   jellyfinLibraries: [],
   libraryScanning: null,
-  scanId: null,
-  scanRunning: false,
-  scanProgress: null,
+  // Scan slice
+  ...scanInitialState,
+  // Report slice
   reportLoading: false,
   reportVisible: false,
   reportAll: [],
@@ -37,6 +73,11 @@ const initialState = {
   reportGroups: [],
   selectedIds: [],
   expandedGroups: [],
+  currentFilter: getInitialFilter(),
+  searchQuery: getInitialQuery(),
+  reportServiceErrors: null,
+  undoTick: 0,
+  // Confirm & transfer
   confirmActive: false,
   confirmButtonLabel: 'Confirm Selected',
   confirmModal: { open: false, itemIds: [], label: '', progress: null },
@@ -46,32 +87,31 @@ const initialState = {
   transferQueue: [],
   transferSummary: null,
   browseModal: null,
-  adminEnv: null,
-  adminEnvPending: [],
-  adminKeys: [],
-  adminLoading: false,
+  // Admin slice
+  ...adminInitialState,
 }
 
-function toggleInList(list, value) {
-  return list.includes(value) ? list.filter((v) => v !== value) : [...list, value]
-}
+const REPORT_TYPES = new Set(['SET_REPORT', 'SET_SELECTION', 'SET_ITEMS', 'TOGGLE_GROUP', 'SET_GROUPS_EXPANDED', 'SET_FILTER', 'SET_SEARCH_QUERY'])
+const SCAN_TYPES = new Set(['SET_SCAN_ID', 'SET_SCAN_RUNNING', 'SET_SCAN_PROGRESS'])
+const ADMIN_TYPES = new Set(['SET_ADMIN_ENV', 'SET_ADMIN_KEYS', 'SET_ADMIN_LOADING'])
 
 function reducer(state, action) {
+  if (REPORT_TYPES.has(action.type)) return reportReducer(state, action)
+  if (SCAN_TYPES.has(action.type)) return scanReducer(state, action)
+  if (ADMIN_TYPES.has(action.type)) return adminReducer(state, action)
   switch (action.type) {
     case 'SET_CONN':
       return { ...state, connStatus: action.status, connMessage: action.message }
     case 'SET_AUTH':
       return { ...state, authRequired: action.authRequired, authed: action.authed }
+    case 'SET_ROOTS_CONFIGURED':
+      return { ...state, rootsConfigured: action.rootsConfigured }
+    case 'SET_UNDO_TICK':
+      return { ...state, undoTick: state.undoTick + 1 }
     case 'SET_LIBRARIES':
       return { ...state, jellyfinLibraries: action.libraries }
     case 'SET_LIBRARY_SCANNING':
       return { ...state, libraryScanning: action.name }
-    case 'SET_SCAN_ID':
-      return { ...state, scanId: action.scanId }
-    case 'SET_SCAN_RUNNING':
-      return { ...state, scanRunning: action.scanRunning }
-    case 'SET_SCAN_PROGRESS':
-      return { ...state, scanProgress: action.progress }
     case 'SET_REPORT_LOADING':
       return { ...state, reportLoading: action.reportLoading }
     case 'SET_CONFIRM_ACTIVE':
@@ -80,16 +120,6 @@ function reducer(state, action) {
       return { ...state, confirmButtonLabel: action.label }
     case 'SET_CONFIRM_MODAL':
       return { ...state, confirmModal: action.modal }
-    case 'SET_REPORT':
-      return { ...state, ...action.payload, reportLoading: false }
-    case 'SET_SELECTION':
-      return { ...state, selectedIds: action.selectedIds }
-    case 'SET_ITEMS':
-      return { ...state, currentItems: action.currentItems, reportGroups: action.reportGroups }
-    case 'TOGGLE_GROUP':
-      return { ...state, expandedGroups: toggleInList(state.expandedGroups, action.gid) }
-    case 'SET_GROUPS_EXPANDED':
-      return { ...state, expandedGroups: action.list }
     case 'ADD_LOG':
       return { ...state, logEntries: [...state.logEntries, action.entry].slice(-LOG_LIMIT) }
     case 'SET_LOGS_VISIBLE':
@@ -108,12 +138,6 @@ function reducer(state, action) {
       return { ...state, browseModal: action.browse }
     case 'SET_PAGE':
       return { ...state, page: action.page }
-    case 'SET_ADMIN_ENV':
-      return { ...state, adminEnv: action.env, adminEnvPending: action.env?.pending || [] }
-    case 'SET_ADMIN_KEYS':
-      return { ...state, adminKeys: action.keys || [] }
-    case 'SET_ADMIN_LOADING':
-      return { ...state, adminLoading: action.loading }
     default:
       return state
   }
@@ -125,7 +149,7 @@ export function AppStoreProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState, (base) => ({ ...base, page: pageFromPath() }))
   const stateRef = useRef(state)
   stateRef.current = state
-  const timers = useRef({ scanPoll: null, confirmPoll: null, paste: null, transferRemoval: {} })
+  const timers = useRef({ scanPoll: null, confirmPoll: null, paste: null, transferRemoval: {}, search: null })
   const confirmStateRef = useRef({ completed: 0, failed: 0 })
   const confirmActiveRef = useRef(false)
   const pendingBatchesRef = useRef([])
@@ -202,6 +226,7 @@ export function AppStoreProvider({ children }) {
         reportVisible: true,
         reportAll: all,
         reportSummary: s,
+        reportServiceErrors: report.service_errors || null,
         currentItems: withLive,
         reportGroups: groups,
         selectedIds: defaultSelection(withLive),
@@ -232,7 +257,7 @@ export function AppStoreProvider({ children }) {
         dispatch({ type: 'SET_SCAN_PROGRESS', progress: result.progress })
         if (result.progress.scan_id) dispatch({ type: 'SET_SCAN_ID', scanId: result.progress.scan_id })
         if (result.summary?.scan_id) dispatch({ type: 'SET_SCAN_ID', scanId: result.summary.scan_id })
-        pollScanProgress()
+        subscribeScanProgress()
         return
       }
       dispatch({ type: 'SET_SCAN_RUNNING', scanRunning: false })
@@ -244,6 +269,30 @@ export function AppStoreProvider({ children }) {
       dispatch({ type: 'SET_REPORT_LOADING', reportLoading: false })
       log('Report error: ' + e.message, 'err')
       toast('Report error: ' + e.message, 'err')
+    }
+  }
+
+  async function undoScan(scanId = 'current') {
+    try {
+      const result = await apiPost(`/scans/${scanId}/undo`)
+      if (!result?.ok) throw new Error(result?.error || 'undo failed')
+      const restored = result.restored_count || 0
+      const skipped = (result.skipped || []).length
+      if (restored > 0) {
+        toast(`Undone: ${restored} file${restored === 1 ? '' : 's'} moved back to downloads` + (skipped ? ` · ${skipped} skipped` : ''), 'good')
+        log(`Undo complete — ${restored} restored, ${skipped} skipped`, 'good')
+      } else {
+        toast('Nothing to undo — no restorable moves found', 'warn')
+      }
+      dispatch({ type: 'SET_UNDO_TICK' })
+      fetchReport()
+      return { ...result, error: null }
+    } catch (e) {
+      if (handleApiError(e)) return null
+      const msg = e.status === 404 ? 'No scan found to undo' : 'Undo failed: ' + e.message
+      toast(msg, 'err')
+      log(msg, 'err')
+      return null
     }
   }
 
@@ -285,6 +334,8 @@ export function AppStoreProvider({ children }) {
     } catch (e) {
       /* token may already be invalid */
     }
+    closeScanStream()
+    closeConfirmStream()
     setAuthToken('')
     dispatch({ type: 'SET_AUTH', authRequired: true, authed: false })
   }
@@ -297,11 +348,18 @@ export function AppStoreProvider({ children }) {
     fetchReport()
   }
 
+  // ---- setup wizard ----
+  function dismissSetup() {
+    dispatch({ type: 'SET_ROOTS_CONFIGURED', rootsConfigured: true })
+    toast('Setup skipped — configure paths later in Settings', 'info')
+  }
+
   // ---- connection ----
   async function checkConnection() {
     try {
       const st = await apiGet('/status')
       const required = !!(st.auth?.required || st.auth_required)
+      dispatch({ type: 'SET_ROOTS_CONFIGURED', rootsConfigured: st.roots_configured !== false })
       if (required && !getAuthToken()) {
         dispatch({ type: 'SET_AUTH', authRequired: true, authed: false })
         dispatch({ type: 'SET_CONN', status: 'connected', message: 'login required' })
@@ -380,7 +438,7 @@ export function AppStoreProvider({ children }) {
         'info'
       )
       dispatch({ type: 'SET_SCAN_PROGRESS', progress: result })
-      await pollScanProgress()
+      subscribeScanProgress()
     } catch (e) {
       log('Scan error: ' + e.message, 'err')
       toast('Scan error: ' + e.message, 'err')
@@ -388,32 +446,73 @@ export function AppStoreProvider({ children }) {
     }
   }
 
+  function handleScanProgress(result) {
+    if (!result || result.hint) {
+      log(result?.hint || 'No active scan found', 'warn')
+      dispatch({ type: 'SET_SCAN_PROGRESS', progress: null })
+      dispatch({ type: 'SET_SCAN_ID', scanId: null })
+      dispatch({ type: 'SET_SCAN_RUNNING', scanRunning: false })
+      return true
+    }
+    if (result.status === 'running' || result.status === 'completed') {
+      log('Progress: ' + result.processed + '/' + result.total + ' (' + (result.percent || 0) + '%)', 'info')
+      if (result.current_file) log('  File: ' + result.current_file, 'info')
+    }
+    if (result.scan_id) dispatch({ type: 'SET_SCAN_ID', scanId: result.scan_id })
+    dispatch({ type: 'SET_SCAN_PROGRESS', progress: result })
+
+    if (result.status === 'completed') {
+      dispatch({ type: 'SET_SCAN_RUNNING', scanRunning: false })
+      dispatch({ type: 'SET_REPORT_LOADING', reportLoading: true })
+      toast('Scan completed — loading report...', 'good')
+      dispatch({ type: 'SET_SCAN_PROGRESS', progress: null })
+      setTimeout(fetchReport, 500)
+      return true
+    }
+    return false
+  }
+
+  function closeScanStream() {
+    if (timers.current.scanEs) {
+      try { timers.current.scanEs.close() } catch { /* already closed */ }
+      timers.current.scanEs = null
+    }
+  }
+
+  function subscribeScanProgress() {
+    closeScanStream()
+    // EventSource is unavailable in some environments — fall back to polling.
+    if (typeof EventSource === 'undefined') {
+      timers.current.scanPoll = setTimeout(pollScanProgress, 0)
+      return
+    }
+    const es = new EventSource('/api/scans/progress/events?token=' + encodeURIComponent(getAuthToken()))
+    timers.current.scanEs = es
+    es.onmessage = (ev) => {
+      let data
+      try { data = JSON.parse(ev.data) } catch { return }
+      const done = handleScanProgress(data)
+      if (done) closeScanStream()
+    }
+    es.onerror = () => {
+      closeScanStream()
+      if (stateRef.current.scanRunning && !timers.current.scanPoll) {
+        log('Live progress unavailable — falling back to polling', 'warn')
+        timers.current.scanPoll = setTimeout(pollScanProgress, 0)
+      }
+    }
+  }
+
   async function pollScanProgress() {
     try {
       const result = await apiGet('/scans/current/progress')
-      if (!result || result.hint) {
-        log(result?.hint || 'No active scan found', 'warn')
-        dispatch({ type: 'SET_SCAN_PROGRESS', progress: null })
-        dispatch({ type: 'SET_SCAN_ID', scanId: null })
-        dispatch({ type: 'SET_SCAN_RUNNING', scanRunning: false })
-        return
-      }
-      if (result.status === 'running' || result.status === 'completed') {
-        log('Progress: ' + result.processed + '/' + result.total + ' (' + (result.percent || 0) + '%)', 'info')
-        if (result.current_file) log('  File: ' + result.current_file, 'info')
-      }
-      if (result.scan_id) dispatch({ type: 'SET_SCAN_ID', scanId: result.scan_id })
-      dispatch({ type: 'SET_SCAN_PROGRESS', progress: result })
-
-      if (result.status === 'completed') {
-        dispatch({ type: 'SET_SCAN_RUNNING', scanRunning: false })
-        dispatch({ type: 'SET_REPORT_LOADING', reportLoading: true })
-        toast('Scan completed — loading report...', 'good')
-        dispatch({ type: 'SET_SCAN_PROGRESS', progress: null })
-        setTimeout(fetchReport, 500)
-      } else if (result.status === 'running') {
+      const done = handleScanProgress(result)
+      if (!done && stateRef.current.scanRunning) {
         if (timers.current.scanPoll) clearTimeout(timers.current.scanPoll)
         timers.current.scanPoll = setTimeout(pollScanProgress, POLL_INTERVAL_MS)
+      } else if (!done && !stateRef.current.scanRunning) {
+        // Terminal-but-not-completed statuses (e.g. failed): stop silently,
+        // matching the pre-SSE behaviour.
       }
     } catch (e) {
       log('Progress error: ' + e.message, 'err')
@@ -592,7 +691,7 @@ export function AppStoreProvider({ children }) {
         log('Confirm queued — ' + itemIds.length + ' item(s) behind the current move', 'info')
         toast('Added to queue — will start after the current move finishes', 'good')
         if (timers.current.confirmPoll) clearTimeout(timers.current.confirmPoll)
-        pollConfirmProgress()
+        subscribeConfirmProgress()
         return
       }
       confirmActiveRef.current = true
@@ -611,7 +710,7 @@ export function AppStoreProvider({ children }) {
       dispatch({ type: 'SET_CONFIRM_MODAL', modal: { open: false, itemIds: [], label: '', progress: null } })
       log('Confirm started! ID: ' + stateRef.current.scanId, 'good')
       toast('Confirm started in background', 'good')
-      pollConfirmProgress()
+      subscribeConfirmProgress()
     } catch (e) {
       log('Confirm error: ' + e.message, 'err')
       toast('Confirm error: ' + e.message, 'err')
@@ -624,78 +723,117 @@ export function AppStoreProvider({ children }) {
     }
   }
 
+  function applyConfirmProgress(result) {
+    const p = result.processed ?? 0
+    const t = result.total ?? 0
+    const queueLength = result.queue_length || 0
+    log(
+      'Confirm progress: ' + p + '/' + t + ' (' + (result.status || 'unknown') + ')' +
+        (queueLength > 0 ? ' · ' + queueLength + ' queued' : ''),
+      'info'
+    )
+
+    if (result.status === 'running' && p < confirmStateRef.current.completed) {
+      // A queued confirm batch just started: the backend reset the per-batch
+      // counters, so this tab must swap its transfer queue to the new batch.
+      log('Queued confirm batch started — ' + queueLength + ' still behind', 'info')
+      const next = pendingBatchesRef.current.shift()
+      if (next) {
+        const queue = buildTransferQueue(next.itemIds, stateRef.current.currentItems)
+        dispatch({ type: 'SET_TRANSFER_QUEUE', queue })
+      }
+      confirmStateRef.current = { completed: 0, failed: 0 }
+      toast('Queued move started', 'good')
+    }
+
+    const derived = deriveTransferQueue(stateRef.current.transferQueue, result, confirmStateRef.current)
+    confirmStateRef.current = derived.state
+    dispatch({ type: 'SET_TRANSFER_QUEUE', queue: derived.queue })
+    dispatch({
+      type: 'SET_TRANSFER_SUMMARY',
+      summary: {
+        processed: result.processed ?? 0,
+        total: result.total ?? 0,
+        status: result.status,
+        counts: result.counts || {},
+        queueLength,
+        queueItems: result.queue_items || 0,
+      },
+    })
+    scheduleTransferRemovals(derived.queue)
+
+    if (result.status === 'completed' || result.status === 'idle') {
+      if (queueLength === 0) {
+        closeConfirmStream()
+        confirmActiveRef.current = false
+        dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
+        dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
+        const moved = result.counts?.moved || 0
+        const replaced = result.counts?.replaced || 0
+        const failed = result.counts?.failed || 0
+        log('Confirm completed. Moved: ' + moved + ', Replaced: ' + replaced + ', Failed: ' + failed, 'good')
+        toast('Confirm completed! Moved: ' + moved + ', Replaced: ' + replaced + ', Failed: ' + failed, 'good')
+        setTimeout(fetchReport, 800)
+        return true
+      }
+      // Defensive: a queued batch remains and the backend starts it right after
+      // marking this one complete, so keep confirmActive and keep listening.
+    }
+    if (result.status === 'failed') {
+      if (queueLength === 0) {
+        closeConfirmStream()
+        confirmActiveRef.current = false
+        dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
+        dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
+        return true
+      }
+      // Defensive: queued batches remain and the backend starts the next one
+      // right after the failure, so keep confirmActive and keep listening.
+    }
+    if (result.status === 'running') {
+      const label = 'Moving ' + p + '/' + t + '...' + (queueLength > 0 ? ' · ' + queueLength + ' queued' : '')
+      dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label })
+    }
+    return false
+  }
+
+  function closeConfirmStream() {
+    if (timers.current.confirmEs) {
+      try { timers.current.confirmEs.close() } catch { /* already closed */ }
+      timers.current.confirmEs = null
+    }
+  }
+
+  function subscribeConfirmProgress() {
+    if (!confirmActiveRef.current) return
+    closeConfirmStream()
+    // EventSource is unavailable in some environments — fall back to polling.
+    if (typeof EventSource === 'undefined') {
+      if (!timers.current.confirmPoll) timers.current.confirmPoll = setTimeout(pollConfirmProgress, 0)
+      return
+    }
+    const es = new EventSource('/api/scans/confirm/events?token=' + encodeURIComponent(getAuthToken()))
+    timers.current.confirmEs = es
+    es.onmessage = (ev) => {
+      let data
+      try { data = JSON.parse(ev.data) } catch { return }
+      applyConfirmProgress(data)
+    }
+    es.onerror = () => {
+      closeConfirmStream()
+      if (confirmActiveRef.current && !timers.current.confirmPoll) {
+        log('Live progress stream lost — falling back to polling', 'warn')
+        timers.current.confirmPoll = setTimeout(pollConfirmProgress, 0)
+      }
+    }
+  }
+
   async function pollConfirmProgress() {
     if (!confirmActiveRef.current) return
     try {
       const result = await apiGet('/scans/current/confirm-progress')
-      const p = result.processed ?? 0
-      const t = result.total ?? 0
-      const queueLength = result.queue_length || 0
-      log(
-        'Confirm progress: ' + p + '/' + t + ' (' + (result.status || 'unknown') + ')' +
-          (queueLength > 0 ? ' · ' + queueLength + ' queued' : ''),
-        'info'
-      )
-
-      if (result.status === 'running' && p < confirmStateRef.current.completed) {
-        // A queued confirm batch just started: the backend reset the per-batch
-        // counters, so this tab must swap its transfer queue to the new batch.
-        log('Queued confirm batch started — ' + queueLength + ' still behind', 'info')
-        const next = pendingBatchesRef.current.shift()
-        if (next) {
-          const queue = buildTransferQueue(next.itemIds, stateRef.current.currentItems)
-          dispatch({ type: 'SET_TRANSFER_QUEUE', queue })
-        }
-        confirmStateRef.current = { completed: 0, failed: 0 }
-        toast('Queued move started', 'good')
-      }
-
-      const derived = deriveTransferQueue(stateRef.current.transferQueue, result, confirmStateRef.current)
-      confirmStateRef.current = derived.state
-      dispatch({ type: 'SET_TRANSFER_QUEUE', queue: derived.queue })
-      dispatch({
-        type: 'SET_TRANSFER_SUMMARY',
-        summary: {
-          processed: result.processed ?? 0,
-          total: result.total ?? 0,
-          status: result.status,
-          counts: result.counts || {},
-          queueLength,
-          queueItems: result.queue_items || 0,
-        },
-      })
-      scheduleTransferRemovals(derived.queue)
-
-      if (result.status === 'completed' || result.status === 'idle') {
-        if (queueLength === 0) {
-          confirmActiveRef.current = false
-          dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
-          dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
-          const moved = result.counts?.moved || 0
-          const replaced = result.counts?.replaced || 0
-          const failed = result.counts?.failed || 0
-          log('Confirm completed. Moved: ' + moved + ', Replaced: ' + replaced + ', Failed: ' + failed, 'good')
-          toast('Confirm completed! Moved: ' + moved + ', Replaced: ' + replaced + ', Failed: ' + failed, 'good')
-          setTimeout(fetchReport, 800)
-          return
-        }
-        // Defensive: a queued batch remains and the backend starts it right after
-        // marking this one complete, so keep confirmActive and keep polling.
-      }
-      if (result.status === 'failed') {
-        if (queueLength === 0) {
-          confirmActiveRef.current = false
-          dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
-          dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
-          return
-        }
-        // Defensive: queued batches remain and the backend starts the next one
-        // right after the failure, so keep confirmActive and keep polling.
-      }
-      if (result.status === 'running') {
-        const label = 'Moving ' + p + '/' + t + '...' + (queueLength > 0 ? ' · ' + queueLength + ' queued' : '')
-        dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label })
-      }
+      const done = applyConfirmProgress(result)
+      if (done) return
     } catch (e) {
       log('Confirm progress error: ' + e.message, 'err')
     }
@@ -810,6 +948,32 @@ export function AppStoreProvider({ children }) {
     if (page === 'apikeys' && !stateRef.current.adminKeys.length && !stateRef.current.adminLoading) loadApiKeys()
   }
 
+  function setFilter(filter) {
+    const valid = ['all', 'move', 'replace', 'existing', 'new'].includes(filter) ? filter : 'all'
+    dispatch({ type: 'SET_FILTER', filter: valid })
+    try {
+      localStorage.setItem('jsort_filter', valid)
+      const url = new URL(window.location.href)
+      if (valid === 'all') url.searchParams.delete('filter')
+      else url.searchParams.set('filter', valid)
+      window.history.replaceState({}, '', url.pathname + url.search + url.hash)
+    } catch {}
+  }
+
+  function setSearchQuery(query) {
+    dispatch({ type: 'SET_SEARCH_QUERY', query })
+    if (timers.current.search) clearTimeout(timers.current.search)
+    timers.current.search = setTimeout(() => {
+      try {
+        localStorage.setItem('jsort_query', query)
+        const url = new URL(window.location.href)
+        if (!query) url.searchParams.delete('q')
+        else url.searchParams.set('q', query)
+        window.history.replaceState({}, '', url.pathname + url.search + url.hash)
+      } catch {}
+    }, 200)
+  }
+
   // ---- admin: environment settings ----
   async function loadEnv() {
     dispatch({ type: 'SET_ADMIN_LOADING', loading: true })
@@ -899,6 +1063,21 @@ export function AppStoreProvider({ children }) {
     const onPopState = () => {
       const page = pageFromPath()
       if (page !== stateRef.current.page) dispatch({ type: 'SET_PAGE', page })
+      try {
+        const url = new URL(window.location.href)
+        const f = url.searchParams.get('filter')
+        const q = url.searchParams.get('q')
+        if (f && ['all', 'move', 'replace', 'existing', 'new'].includes(f) && f !== stateRef.current.currentFilter) {
+          dispatch({ type: 'SET_FILTER', filter: f })
+        } else if (!f && stateRef.current.currentFilter !== 'all') {
+          dispatch({ type: 'SET_FILTER', filter: 'all' })
+        }
+        if (q !== null && q !== stateRef.current.searchQuery) {
+          dispatch({ type: 'SET_SEARCH_QUERY', query: q })
+        } else if (q === null && stateRef.current.searchQuery) {
+          dispatch({ type: 'SET_SEARCH_QUERY', query: '' })
+        }
+      } catch {}
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
@@ -918,6 +1097,14 @@ export function AppStoreProvider({ children }) {
       if (timers.current.scanPoll) clearTimeout(timers.current.scanPoll)
       if (timers.current.confirmPoll) clearTimeout(timers.current.confirmPoll)
       Object.values(timers.current.transferRemoval || {}).forEach(clearTimeout)
+      if (timers.current.scanEs) {
+        try { timers.current.scanEs.close() } catch { /* already closed */ }
+        timers.current.scanEs = null
+      }
+      if (timers.current.confirmEs) {
+        try { timers.current.confirmEs.close() } catch { /* already closed */ }
+        timers.current.confirmEs = null
+      }
     }
   }, [])
 
@@ -927,6 +1114,7 @@ export function AppStoreProvider({ children }) {
     toggleLogs,
     copyText,
     checkConnection,
+    dismissSetup,
     login,
     logout,
     loadLibraries,
@@ -934,6 +1122,7 @@ export function AppStoreProvider({ children }) {
     startScan,
     pollScanProgress,
     fetchReport,
+    undoScan,
     toggleGroup,
     toggleAllGroups,
     selectItem,
@@ -953,6 +1142,8 @@ export function AppStoreProvider({ children }) {
     closeBrowse,
     retargetItem,
     setPage,
+    setFilter,
+    setSearchQuery,
     loadEnv,
     saveEnv,
     loadApiKeys,

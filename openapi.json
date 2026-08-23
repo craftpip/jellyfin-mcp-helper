@@ -1,0 +1,1009 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "JellySort",
+    "version": "0.0.4"
+  },
+  "paths": {
+    "/mcp": {
+      "post": {
+        "summary": "Mcp",
+        "operationId": "mcp_mcp_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          },
+          {
+            "name": "x-api-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Health Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scans": {
+      "post": {
+        "summary": "Create Scan",
+        "operationId": "create_scan_scans_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanPlan"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scans/current/progress": {
+      "get": {
+        "summary": "Get Current Scan Progress",
+        "operationId": "get_current_scan_progress_scans_current_progress_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scans/{scan_id}/progress": {
+      "get": {
+        "summary": "Get Scan Progress",
+        "operationId": "get_scan_progress_scans__scan_id__progress_get",
+        "parameters": [
+          {
+            "name": "scan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scan Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scans/current/report": {
+      "get": {
+        "summary": "Get Current Scan Report",
+        "operationId": "get_current_scan_report_scans_current_report_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scans/{scan_id}/report": {
+      "get": {
+        "summary": "Get Scan Report",
+        "operationId": "get_scan_report_scans__scan_id__report_get",
+        "parameters": [
+          {
+            "name": "scan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scan Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scans/current": {
+      "get": {
+        "summary": "Get Current Scan",
+        "operationId": "get_current_scan_scans_current_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanPlan"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Current Scan",
+        "operationId": "delete_current_scan_scans_current_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object",
+                  "title": "Response Delete Current Scan Scans Current Delete"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scans/{scan_id}": {
+      "get": {
+        "summary": "Get Scan",
+        "operationId": "get_scan_scans__scan_id__get",
+        "parameters": [
+          {
+            "name": "scan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scan Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanPlan"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/scans/{scan_id}/confirm": {
+      "post": {
+        "summary": "Confirm Scan",
+        "operationId": "confirm_scan_scans__scan_id__confirm_post",
+        "parameters": [
+          {
+            "name": "scan_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Scan Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanPlan"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/current": {
+      "get": {
+        "summary": "Get Current Run",
+        "operationId": "get_current_run_runs_current_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs": {
+      "post": {
+        "summary": "Start Run",
+        "operationId": "start_run_runs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "type": "object",
+                "title": "Request"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CandidateTarget": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "evidence": {
+            "type": "string",
+            "title": "Evidence"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "folder"
+          },
+          "reclassify_as_movie": {
+            "type": "boolean",
+            "title": "Reclassify As Movie",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "label",
+          "evidence"
+        ],
+        "title": "CandidateTarget"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ScanCounts": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "default": 0
+          },
+          "movies": {
+            "type": "integer",
+            "title": "Movies",
+            "default": 0
+          },
+          "series": {
+            "type": "integer",
+            "title": "Series",
+            "default": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped",
+            "default": 0
+          },
+          "moved": {
+            "type": "integer",
+            "title": "Moved",
+            "default": 0
+          },
+          "replaced": {
+            "type": "integer",
+            "title": "Replaced",
+            "default": 0
+          },
+          "failed": {
+            "type": "integer",
+            "title": "Failed",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "ScanCounts"
+      },
+      "ScanPlan": {
+        "properties": {
+          "scan_id": {
+            "type": "string",
+            "title": "Scan Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "confirmed",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "organize",
+              "normalize"
+            ],
+            "title": "Operation"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ScannedItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ScanCounts"
+          },
+          "skipped_in_progress": {
+            "type": "integer",
+            "title": "Skipped In Progress",
+            "default": 0
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "total_candidates": {
+            "type": "integer",
+            "title": "Total Candidates",
+            "default": 0
+          },
+          "processed_candidates": {
+            "type": "integer",
+            "title": "Processed Candidates",
+            "default": 0
+          },
+          "current_candidate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Candidate"
+          },
+          "current_candidate_index": {
+            "type": "integer",
+            "title": "Current Candidate Index",
+            "default": 0
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmed At"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "service_errors": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Service Errors"
+          },
+          "confirm_status": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "running",
+              "completed",
+              "failed"
+            ],
+            "title": "Confirm Status",
+            "default": "idle"
+          },
+          "confirm_phase": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "preparing",
+              "stopping_seeding",
+              "moving",
+              "deleting_source",
+              "triggering_jellyfin",
+              "completed",
+              "failed"
+            ],
+            "title": "Confirm Phase",
+            "default": "idle"
+          },
+          "confirm_current_item": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Current Item"
+          },
+          "confirm_current_target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Current Target"
+          },
+          "confirm_started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Started At"
+          },
+          "confirm_total": {
+            "type": "integer",
+            "title": "Confirm Total",
+            "default": 0
+          },
+          "confirm_processed": {
+            "type": "integer",
+            "title": "Confirm Processed",
+            "default": 0
+          },
+          "confirm_start_moved": {
+            "type": "integer",
+            "title": "Confirm Start Moved",
+            "default": 0
+          },
+          "confirm_start_replaced": {
+            "type": "integer",
+            "title": "Confirm Start Replaced",
+            "default": 0
+          },
+          "confirm_start_failed": {
+            "type": "integer",
+            "title": "Confirm Start Failed",
+            "default": 0
+          },
+          "confirm_current_size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Current Size Bytes"
+          },
+          "confirm_current_copied_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Current Copied Bytes"
+          },
+          "confirm_current_speed_bytes": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Current Speed Bytes"
+          },
+          "confirm_current_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Current Percent"
+          },
+          "confirm_cross_drive": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Cross Drive"
+          },
+          "confirm_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Note"
+          },
+          "confirm_last_update_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Last Update At"
+          },
+          "confirm_queue_length": {
+            "type": "integer",
+            "title": "Confirm Queue Length",
+            "default": 0
+          },
+          "confirm_queue_items": {
+            "type": "integer",
+            "title": "Confirm Queue Items",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "scan_id",
+          "status",
+          "operation",
+          "created_at"
+        ],
+        "title": "ScanPlan"
+      },
+      "ScanRequest": {
+        "properties": {
+          "replaceExisting": {
+            "type": "boolean",
+            "title": "Replaceexisting",
+            "default": true
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "organize",
+              "normalize"
+            ],
+            "title": "Operation",
+            "default": "organize"
+          }
+        },
+        "type": "object",
+        "title": "ScanRequest"
+      },
+      "ScannedItem": {
+        "properties": {
+          "confirmId": {
+            "type": "string",
+            "title": "Confirmid"
+          },
+          "sourcePath": {
+            "type": "string",
+            "title": "Sourcepath"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "item_type": {
+            "type": "string",
+            "enum": [
+              "movie",
+              "series",
+              "skip"
+            ],
+            "title": "Item Type"
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "target_path": {
+            "type": "string",
+            "title": "Target Path"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "move",
+              "replace",
+              "skip"
+            ],
+            "title": "Action"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "title": "Confirmed",
+            "default": false
+          },
+          "showFolderExists": {
+            "type": "boolean",
+            "title": "Showfolderexists",
+            "default": false
+          },
+          "seasonFolderExists": {
+            "type": "boolean",
+            "title": "Seasonfolderexists",
+            "default": false
+          },
+          "fileExists": {
+            "type": "boolean",
+            "title": "Fileexists",
+            "default": false
+          },
+          "fileSize": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filesize"
+          },
+          "crossDrive": {
+            "type": "boolean",
+            "title": "Crossdrive",
+            "default": false
+          },
+          "suspect": {
+            "type": "boolean",
+            "title": "Suspect",
+            "default": false
+          },
+          "flags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Flags"
+          },
+          "corrected": {
+            "type": "boolean",
+            "title": "Corrected",
+            "default": false
+          },
+          "correction_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Note"
+          },
+          "candidateTargets": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateTarget"
+            },
+            "type": "array",
+            "title": "Candidatetargets"
+          }
+        },
+        "type": "object",
+        "required": [
+          "confirmId",
+          "sourcePath",
+          "name",
+          "item_type",
+          "confidence",
+          "reason",
+          "target_path",
+          "action"
+        ],
+        "title": "ScannedItem"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

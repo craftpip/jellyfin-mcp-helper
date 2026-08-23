@@ -19,7 +19,7 @@ No jellysort skill is installed in this environment yet — do not try to load o
 
 - app/core/config.py: settings and config models
 - app/core/logging.py: logging setup
-- app/core/auth.py: MCP auth dependency (require_mcp_auth, ADMIN_UI_TOKEN as admin key)
+- app/core/auth.py: MCP auth dependency (require_mcp_auth, MCP_DEFAULT_TOKEN as admin key)
 - app/models/schemas.py: Pydantic models
 - app/services/api_key_manager.py: hashed MCP API-key store (state in config/mcp_keys.json)
 - app/services/classifier.py: guessit-based and regex media classification
@@ -456,7 +456,7 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 ### MCP auth + admin pages
 
-**Design:** `MCP_ALLOW_UNAUTHENTICATED` defaults to `true`. When `false`, `/mcp` requests must present a valid API key (`Authorization: Bearer` or `X-API-Key`) or `ADMIN_UI_TOKEN`; the activity log line appends `as <user>`. Keys live hashed in `config/mcp_keys.json` (gitignored); the full key is returned exactly once at creation. Unauthenticated rejections are HTTP 401 with a JSON-RPC body `{code: -32001, message: "unauthorized"}` keeping the request `id`. Full write-up: `docs/backend/auth.md`.
+**Design:** `MCP_ALLOW_UNAUTHENTICATED` defaults to `true`. When `false`, `/mcp` requests must present a valid API key (`Authorization: Bearer` or `X-API-Key`) or `MCP_DEFAULT_TOKEN`; the activity log line appends `as <user>`. Keys live hashed in `config/mcp_keys.json` (gitignored); the full key is returned exactly once at creation. Unauthenticated rejections are HTTP 401 with a JSON-RPC body `{code: -32001, message: "unauthorized"}` keeping the request `id`. Full write-up: `docs/backend/auth.md`.
 
 **Key code locations:**
 - `app/core/auth.py` — `require_mcp_auth` dependency + `MCPUnauthorizedError`; handler in `app/main.py:273`.

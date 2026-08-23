@@ -16,7 +16,7 @@ environment variables.
 - `MCP_ALLOW_UNAUTHENTICATED=true` (default) → pass;
   `request.state.mcp_user = "anonymous"`.
 - Otherwise, a valid `Authorization: Bearer <key>` or `X-API-Key: <key>` sets
-  `request.state.mcp_user` to the key's `user`; `ADMIN_UI_TOKEN` is accepted as
+  `request.state.mcp_user` to the key's `user`; `MCP_DEFAULT_TOKEN` is accepted as
   user `"admin"`; missing/invalid keys raise `MCPUnauthorizedError` → HTTP 401
   with the JSON-RPC body `{"code": -32001, "message": "unauthorized"}` (request
   `id` preserved). The MCP activity log line appends `as <user>`.
@@ -40,7 +40,7 @@ Writes are guarded by a `threading.Lock` and use atomic file replacement.
 
 The Settings page backend. `ENV_SPEC` is the manifest of every setting
 `{key, section, type, secret, apply, description}` mirroring `.env.example`
-sections; secret keys (`*API_KEY*`, `QBT_WEBUI_PASS`, `ADMIN_UI_TOKEN`) are
+sections; secret keys (`*API_KEY*`, `QBT_WEBUI_PASS`, `MCP_DEFAULT_TOKEN`) are
 masked. `apply` is `"live"` or `"restart"` (see
 [getting-started/configuration](../getting-started/configuration.md)).
 

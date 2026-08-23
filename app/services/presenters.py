@@ -5,8 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.config import get_config
-from app.models.schemas import ScanPlan, ScannedItem
-
+from app.models.schemas import ScannedItem, ScanPlan
 
 EPISODE_TAG_RE = re.compile(r"S\d{2}E\d{2,3}", re.IGNORECASE)
 
@@ -449,6 +448,9 @@ def format_scan_report(scan: ScanPlan) -> dict:
         "movies": scan.counts.movies,
         "series": scan.counts.series,
         "skipped": scan.counts.skipped,
+        "moved": scan.counts.moved,
+        "replaced": scan.counts.replaced,
+        "failed": scan.counts.failed,
         "action_required": len(items_by_action["move"]) + len(items_by_action["replace"]),
     }
 

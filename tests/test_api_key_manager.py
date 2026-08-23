@@ -20,8 +20,8 @@ class TestCreateAndList:
         assert result["scopes"] == ["*"]
         assert result["enabled"] is True
         assert result["key"].startswith(KEY_PREFIX)
-        assert result["key_prefix"] == result["key"][:12]
-        assert result["key_suffix"] == result["key"][-4:]
+        assert result["key_prefix"] == result["key"][:16]
+        assert result["key_suffix"] == result["key"][-8:]
         assert "key_hash" not in result
 
     def test_stored_record_is_hashed(self, manager):
@@ -38,7 +38,8 @@ class TestCreateAndList:
         assert len(keys) == 1
         assert "key_hash" not in keys[0]
         assert "key" not in keys[0]
-        assert len(keys[0]["key_suffix"]) == 4
+        assert len(keys[0]["key_suffix"]) == 8
+        assert len(keys[0]["key_prefix"]) == 16
 
     def test_multiple_keys_and_default_scopes(self, manager):
         a = manager.create_key("a", user="alice", scopes=["scan"])

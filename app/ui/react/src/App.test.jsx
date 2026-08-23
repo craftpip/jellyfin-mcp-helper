@@ -296,6 +296,70 @@ describe('App integration', () => {
     expect(confirmPosts).toBe(1)
   })
 
+  it('consumes confirm progress from the SSE stream when EventSource is available', async () => {
+    class FakeEventSource {
+      constructor(url) {
+        FakeEventSource.instances.push(this)
+        this.url = url
+        this.closed = false
+      }
+      close() {
+        this.closed = true
+      }
+      emit(data) {
+        this.onmessage({ data: JSON.stringify(data) })
+      }
+    }
+    FakeEventSource.instances = []
+    vi.stubGlobal('EventSource', FakeEventSource)
+
+    let confirmProgressGets = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, opts) => {
+        const method = (opts?.method || 'GET').toUpperCase()
+        const path = String(url)
+        let payload = {}
+        if (method === 'GET' && path === '/api/status') {
+          payload = { auth: { required: false } }
+        } else if (method === 'GET' && path === '/api/libraries') {
+          payload = { libraries: [] }
+        } else if (method === 'GET' && path === '/api/scans/current/report') {
+          payload = REPORT
+        } else if (method === 'POST' && path === '/api/scans/current/confirm') {
+          payload = { scan_id: 'scan1', status: 'running', processed: 0, total: 1, queue_length: 0 }
+        } else if (method === 'GET' && path === '/api/scans/current/confirm-progress') {
+          confirmProgressGets += 1
+        }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+      })
+    )
+    renderApp()
+    await screen.findAllByText('Movie (2024)')
+
+    await userEvent.click(screen.getAllByText('Confirm')[0])
+    await userEvent.click(await screen.findByText('Start Move'))
+    expect(await screen.findByText('Confirm started in background')).toBeInTheDocument()
+
+    const es = FakeEventSource.instances[0]
+    expect(es).toBeTruthy()
+    expect(es.url).toContain('/api/scans/confirm/events')
+
+    es.emit({ scan_id: 'scan1', status: 'running', processed: 1, total: 1, queue_length: 0 })
+    es.emit({
+      scan_id: 'scan1',
+      status: 'completed',
+      processed: 1,
+      total: 1,
+      queue_length: 0,
+      counts: { moved: 1, replaced: 0, failed: 0 },
+    })
+
+    expect(await screen.findByText(/Confirm completed! Moved: 1/)).toBeInTheDocument()
+    expect(es.closed).toBe(true)
+    expect(confirmProgressGets).toBe(0)
+  })
+
   it('shows scan progress after page load when a scan is already running', async () => {
     vi.stubGlobal(
       'fetch',

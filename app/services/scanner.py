@@ -6,12 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.config import PathsConfig
+from app.core.constants import VIDEO_EXTENSIONS
 from app.models.schemas import CandidateItem
 
-
-VIDEO_EXTENSIONS = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv"}
 SKIP_DIR_MARKERS = {".trickplay"}
-SAMPLE_SIZE_THRESHOLD = 150 * 1024 * 1024  # 150MB
 
 
 @dataclass(slots=True)

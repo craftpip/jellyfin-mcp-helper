@@ -4,15 +4,15 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from app.core.auth import MCPUnauthorizedError, require_mcp_auth
-from app.core.config import get_config, get_settings
-from app.core.logging import configure_logging
+from app.core.config import get_config
+from app.core.logging import configure_logging, set_request_id
 from app.core.version import VERSION
 from app.models.schemas import ScanPlan, ScanRequest
 from app.services.jellyfin import JellyfinClient
@@ -32,7 +32,6 @@ from app.services.presenters import (
 from app.services.release_tracker import ReleaseTracker
 from app.services.scan_manager import ScanManager
 from app.ui.server import create_ui_app
-
 
 # Backward-compat aliases for the former private formatter names (used by tests).
 _format_scan_report = format_scan_report
@@ -228,14 +227,12 @@ async def lifespan(app: FastAPI):
     app.state.release_tracker = ReleaseTracker()
     global _cached_library_list
 
-    settings = get_settings()
-    if settings.web_ui_enabled:
-        ui_app = create_ui_app(app.state.scan_manager, app.state.release_tracker)
-        ui_app.state.scan_manager = app.state.scan_manager
-        ui_app.state.release_tracker = app.state.release_tracker
-        app.state.ui_app = ui_app
-        app.mount("/", ui_app)
-        logger.info("Web UI mounted at / on the MCP app (single port, shares ScanManager/ReleaseTracker)")
+    ui_app = create_ui_app(app.state.scan_manager, app.state.release_tracker)
+    ui_app.state.scan_manager = app.state.scan_manager
+    ui_app.state.release_tracker = app.state.release_tracker
+    app.state.ui_app = ui_app
+    app.mount("/", ui_app)
+    logger.info("Web UI mounted at / on the MCP app (single port, shares ScanManager/ReleaseTracker)")
 
     try:
         client = JellyfinClient.from_env()
@@ -268,7 +265,10 @@ async def log_requests(request: Request, call_next):
     if request.url.path == "/health":
         return await call_next(request)
 
-    request_id = uuid4().hex[:8]
+    # Honor a client-supplied X-Request-ID (plan 0.3) so callers can correlate logs;
+    # fall back to a generated id. Cap length to keep log lines sane.
+    request_id = (request.headers.get("X-Request-ID") or "").strip()[:64] or uuid4().hex[:8]
+    set_request_id(request_id)
     started = time.perf_counter()
     client_host = request.client.host if request.client else "unknown"
     request_body = await request.body() if request.url.path == "/mcp" else b""
@@ -305,13 +305,14 @@ async def log_requests(request: Request, call_next):
 
     timestamp = datetime.now().strftime("%H:%M:%S")
     logger.info(
-        "[%s] ✅ %s %s completed — %sms, HTTP %s, from %s",
+        "[%s] ✅ %s %s completed — %sms, HTTP %s, from %s [rid:%s]",
         timestamp,
         request.method,
         request.url.path,
         duration_ms,
         response.status_code,
         client_host,
+        request_id,
     )
     return response
 

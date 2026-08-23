@@ -11,6 +11,7 @@ from app.core.config import AppConfig, ModelConfig, PathsConfig
 from app.main import _format_confirm_progress, _format_scan_progress, _format_scan_report
 from app.models.schemas import ScanPlan, ScanRequest, ScannedItem
 from app.services.download_client import _extract_paths
+from app.services.scan_history import load_report
 from app.services.scan_manager import ScanManager
 from app.services.scanner import ScanCandidatesResult, ScanPathError, scan_candidates
 
@@ -526,6 +527,16 @@ def test_confirm_stops_seeding_once_for_selected_items(tmp_path, monkeypatch) ->
     asyncio.run(run_test())
 
 
+async def _wait_for_history(scan_id: str, report_dir, expect=None):
+    """Poll for the async history write; returns report dict or None."""
+    for _ in range(200):
+        saved = load_report(scan_id, report_dir=report_dir)
+        if saved is not None and (expect is None or saved.get("summary", {}).get(expect[0]) == expect[1]):
+            return saved
+        await asyncio.sleep(0.01)
+    return load_report(scan_id, report_dir=report_dir)
+
+
 def test_confirm_queues_batch_behind_running_move(tmp_path, monkeypatch) -> None:
     sources = []
     targets = []
@@ -534,7 +545,6 @@ def test_confirm_queues_batch_behind_running_move(tmp_path, monkeypatch) -> None
         src.write_bytes(f"video-{i}".encode())
         sources.append(src)
         targets.append(tmp_path / "library" / f"download-{i}.mkv")
-
     manager = ScanManager(
         AppConfig(
             paths=PathsConfig(downloadRoots=[]),
@@ -590,6 +600,72 @@ def test_confirm_queues_batch_behind_running_move(tmp_path, monkeypatch) -> None
         assert scan.counts.moved == 3
         assert all(item.confirmed for item in scan.items)
         assert all(target.exists() for target in targets)
+
+        # History must reflect post-confirm counts (report re-persisted).
+        saved = await _wait_for_history(scan.scan_id, tmp_path, expect=("moved", 3))
+        assert saved is not None
+        assert saved["summary"]["moved"] == 3
+
+    asyncio.run(run_test())
+
+
+def test_confirm_repersists_history_with_post_confirm_counts(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "download.mkv"
+    source.write_bytes(b"video")
+    target = tmp_path / "library" / "download.mkv"
+
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(downloadRoots=[]),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+
+    async def run_test() -> None:
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        scan.items = [
+            ScannedItem(
+                confirmId="c1",
+                sourcePath=str(source),
+                name=source.name,
+                item_type="movie",
+                confidence=1.0,
+                reason="test",
+                target_path=str(target),
+                action="move",
+            )
+        ]
+        scan.counts.movies = 1
+
+        async def fake_stop_seeding(items) -> None:
+            return None
+
+        async def fake_trigger_jellyfin(updated_paths) -> None:
+            return None
+
+        monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
+        monkeypatch.setattr(manager, "_trigger_jellyfin_scans", fake_trigger_jellyfin)
+
+        # Snapshot before confirm: the completion-time report has moved=0.
+        pre = await _wait_for_history(scan.scan_id, tmp_path)
+        assert pre is not None
+        assert pre["summary"]["moved"] == 0
+
+        await manager.confirm_scan(scan.scan_id, item_ids=["c1"])
+        while scan.confirm_status == "running":
+            await asyncio.sleep(0)
+
+        assert scan.confirm_status == "completed"
+        assert scan.counts.moved == 1
+        assert target.exists()
+
+        saved = await _wait_for_history(scan.scan_id, tmp_path, expect=("moved", 1))
+        assert saved is not None
+        assert saved["summary"]["moved"] == 1
 
     asyncio.run(run_test())
 
