@@ -64,17 +64,21 @@
 
 ## 5. Testing Flow — Iterate Until Zero Errors (Self-Criticism) — No Shortcuts
 
-**Do not stop at first green.** After every code change, run the full matrix **again and again** until **zero failures**:
+**Do not deliver as soon as possible.** Take your time. Many things are still missing (e.g., History cannot “Move on all” groups, flat table was a shortcut). Test again and again, check what is missing, and question yourself before delivering:
 
-1. `docker exec jellysort python3 -m pytest tests/ -q` → must be `407 passed` (or current count) with **no** `FAILED`, no `warnings` that hide failures. If any `FAILED`, read the full traceback, fix the root cause (not a stub), and re-run from step 1.
-2. `npm test` in `app/ui/react` → must be `12 passed` / `104 passed` with **no** `failed`. If any `failed`, open the `expect` diff, fix the component/reducer (not the test to hide the bug), and re-run from step 1.
-3. `npm run build` in `app/ui/react` → must be `✓ built` with no `ERROR: Expected ")"` etc. If any `error`, fix the JSX/TS and re-run from step 1.
-4. `docker restart jellysort` → `curl -s http://127.0.0.1:18327/health` → `{"status":"ok"}`, then `curl /api/history` + `curl /api/scans/history` + UI screenshot `http://10.69.1.164:18328/history` → History shows cards exactly like Scan report (header `▼/▶`, `Source → Target` table, `PathPills`/`Suspect`/`Corrected`, `Browse…`, filters with `✓`, `Move again`/`Undo`). If any mismatch, fix and re-run from step 1.
+- **Do not stop at first green.** After every code change, run the full matrix **again and again** until **zero failures**:
 
-**Self-criticism — learn to criticize yourself:**
+  1. `docker exec jellysort python3 -m pytest tests/ -q` → must be `407 passed` (or current count) with **no** `FAILED`, no `warnings` that hide failures. If any `FAILED`, read the full traceback, fix the root cause (not a stub), and re-run from step 1.
+  2. `npm test` in `app/ui/react` → must be `12 passed` / `104 passed` with **no** `failed`. If any `failed`, open the `expect` diff, fix the component/reducer (not the test to hide the bug), and re-run from step 1.
+  3. `npm run build` in `app/ui/react` → must be `✓ built` with no `ERROR: Expected ")"` etc. If any `error`, fix the JSX/TS and re-run from step 1.
+  4. `docker restart jellysort` → `curl -s http://127.0.0.1:18327/health` → `{"status":"ok"}`, then `curl /api/history` + `curl /api/scans/history` + UI screenshot `http://10.69.1.164:18328/history` → History shows cards exactly like Scan report (header `▼/▶`, `Source → Target` table, `PathPills`/`Suspect`/`Corrected`, `Browse…`, filters with `✓`, `Move again` per group **and** `Move on all` for the whole scan, `Undo`). If any mismatch, fix and re-run from step 1.
 
-- After each green run, ask: *What did I assume? What did I not test? What edge case did I skip to save time?* (e.g., “Did I test `filter=extra` when `valid` list rejected it?” — that was the `Extras 37` bug). Write the answer in the commit message or `plans/` notes.
-- If you catch yourself thinking “this is good enough” or “the test is too strict,” treat it as a **red flag** — the test is right, you are shortcutting. Revert the shortcut and do the full `groupItems`/`matchesFilter` path.
+- **Check what is missing before delivering:** After each green run, manually open `http://10.69.1.164:18328/history` and `http://10.69.1.164:18328/` side-by-side and compare: Does History have the same `Source → Target` table, `PathPills`, `Suspect`/`Corrected` badges, `Browse…`, `Move again` per group, **and** a top-level `Move on all` for the scan? Does `Move on all` actually call `POST /api/scans/{id}/confirm` with all `itemIds` and show queued progress? If any of those are missing or stubbed, it is still not deliverable.
+
+**Self-criticism — learn to criticize yourself (per your instruction — never apply shortcuts):**
+
+- After each green run, ask: *What did I assume? What did I not test? What edge case did I skip to save time to deliver quickly?* (e.g., “Did I test `filter=extra` when `valid` list rejected it?” — that was the `Extras 37` bug; “Can I Move on all groups at once?” — currently missing). Write the answer in the commit message or `plans/` notes.
+- **Never deliver as soon as possible** — deliver only when the full matrix is green **and** manual History vs Scan report comparison is pixel-identical in functionality. If you catch yourself thinking “this is good enough” or “the test is too strict,” treat it as a **red flag** — the test is right, you are shortcutting. Revert the shortcut and do the full `groupItems`/`matchesFilter`/`Move on all` path.
 - Every fix must be verified by **re-running the full matrix**, not just the one test you touched. Keep a checklist in this plan and tick it only after the full matrix is green.
 
-**Status:** Plan updated with testing flow — still plan only, no code changed. Awaiting your `go` to implement exactly, no shortcuts.
+**Status:** Plan updated per your “do not deliver as soon as possible, take time, test again and again, question yourself, many things missing, can’t Move on all” — still plan only, no code changed. Awaiting your `go` to implement exactly, no shortcuts.
