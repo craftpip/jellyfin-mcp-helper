@@ -169,7 +169,7 @@ export default function ReportPanel() {
               className={'filter-chip' + (currentFilter === k ? ' active' : '')}
               onClick={() => actions.setFilter(k)}
             >
-              {label} <span className="chip-count">{counts[k]}</span>
+              {currentFilter === k ? '✓ ' : ''}{label} <span className="chip-count">{counts[k]}</span>
             </button>
           ))}
         </div>
