@@ -259,6 +259,7 @@ td input[type="checkbox"] { accent-color: var(--jf-primary); }
 }
 .badge.move { background: var(--jf-success-bg); color: var(--jf-success); }
 .badge.replace { background: var(--jf-warn-bg); color: var(--jf-warn); }
+.badge.extra { background: rgba(155, 107, 255, 0.15); color: #b08cff; border: 1px solid rgba(155, 107, 255, 0.3); }
 .badge.skip { background: var(--jf-surface-raised); color: var(--jf-text-muted); }
 
 .spinner {
@@ -442,6 +443,7 @@ a.search-btn svg { flex: none; }
 
 .badge.action-move { background: var(--jf-success-bg); color: var(--jf-success); }
 .badge.action-replace { background: var(--jf-warn-bg); color: var(--jf-warn); }
+.badge.action-extra { background: rgba(155, 107, 255, 0.15); color: #b08cff; border: 1px solid rgba(155, 107, 255, 0.3); }
 .badge.action-skip { background: var(--jf-surface-raised); color: var(--jf-text-muted); }
 
 .row-skipped .skip-reason {

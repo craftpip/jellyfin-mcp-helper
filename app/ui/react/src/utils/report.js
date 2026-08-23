@@ -102,6 +102,7 @@ export function matchesFilter(item, query, filterVal) {
   if (query && !itemSearchText(item).includes(query.toLowerCase())) match = false
   if (filterVal === 'move' && item.action !== 'move') match = false
   if (filterVal === 'replace' && item.action !== 'replace') match = false
+  if (filterVal === 'extra' && item.itemType !== 'extra') match = false
   if (filterVal === 'existing' && !item.fileExists) match = false
   if (filterVal === 'new' && item.fileExists) match = false
   return match

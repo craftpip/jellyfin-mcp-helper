@@ -221,23 +221,23 @@ def test_standalone_tagged_file_without_episode_marker_defaults_to_movie() -> No
     assert result.episode is None
 
 
-def test_ova_is_skipped() -> None:
+def test_ova_is_extra() -> None:
     result = classify_candidate(_candidate(name="[Group] Show - OVA.mkv"))
-    assert result.kind == "skip"
+    assert result.kind == "extra"
     assert "extras" in result.reason.lower() or "special" in result.reason.lower()
 
 
-def test_nced_is_skipped() -> None:
+def test_nced_is_extra() -> None:
     result = classify_candidate(_candidate(name="NCED.mkv"))
-    assert result.kind == "skip"
+    assert result.kind == "extra"
 
 
-def test_ncop_is_skipped() -> None:
+def test_ncop_is_extra() -> None:
     result = classify_candidate(_candidate(name="NCOP.mkv"))
-    assert result.kind == "skip"
+    assert result.kind == "extra"
 
 
-def test_ova_in_subfolder_is_skipped() -> None:
+def test_ova_in_subfolder_is_extra() -> None:
     result = classify_candidate(
         _candidate(
             name="[Group] Show - OVA.mkv",
@@ -245,15 +245,15 @@ def test_ova_in_subfolder_is_skipped() -> None:
             relative_path="[Group] Show - OVA.mkv",
         )
     )
-    assert result.kind == "skip"
+    assert result.kind == "extra"
 
 
-def test_extra_in_episode_title_is_skipped() -> None:
+def test_extra_in_episode_title_is_extra() -> None:
     result = classify_candidate(_candidate(name="[Group] Show - S01E01 - NCED.mkv"))
-    assert result.kind == "skip"
+    assert result.kind == "extra"
 
 
-def test_bonus_recap_is_skipped() -> None:
+def test_bonus_recap_is_extra() -> None:
     result = classify_candidate(
         _candidate(
             name="Neutral Show - Bonus - Recap 18.5.mkv",
@@ -261,10 +261,10 @@ def test_bonus_recap_is_skipped() -> None:
             relative_path="Neutral Show - Bonus - Recap 18.5.mkv",
         )
     )
-    assert result.kind == "skip"
+    assert result.kind == "extra"
 
 
-def test_featurette_is_skipped() -> None:
+def test_featurette_is_extra() -> None:
     result = classify_candidate(
         _candidate(
             name="Neutral Show - Featurettes - Behind the Scenes.mkv",
@@ -272,10 +272,10 @@ def test_featurette_is_skipped() -> None:
             relative_path="Neutral Show - Featurettes - Behind the Scenes.mkv",
         )
     )
-    assert result.kind == "skip"
+    assert result.kind == "extra"
 
 
-def test_featurette_in_folder_is_skipped() -> None:
+def test_featurette_in_folder_is_extra() -> None:
     result = classify_candidate(
         _candidate(
             name="Behind the Scenes [Featurettes].mkv",
@@ -283,10 +283,10 @@ def test_featurette_in_folder_is_skipped() -> None:
             relative_path="Neutral Show - Featurettes/Behind the Scenes [Featurettes].mkv",
         )
     )
-    assert result.kind == "skip"
+    assert result.kind == "extra"
 
 
-def test_sp_decimal_episode_is_skipped() -> None:
+def test_sp_decimal_episode_is_extra() -> None:
     result = classify_candidate(
         _candidate(
             name="S01E13.5 [SP]-To Make Everyone Happy with My Singing [8D781429].mkv",
@@ -294,7 +294,7 @@ def test_sp_decimal_episode_is_skipped() -> None:
             relative_path="S01E13.5 [SP]-To Make Everyone Happy with My Singing [8D781429].mkv",
         )
     )
-    assert result.kind == "skip"
+    assert result.kind == "extra"
 
 
 def test_episode_prefers_fuller_container_title() -> None:

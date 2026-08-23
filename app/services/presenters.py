@@ -50,6 +50,7 @@ def format_report_md(
     lines = []
     movies = [i for i in items_by_action["move"] + items_by_action["replace"] if i.item_type == "movie"]
     series = [i for i in items_by_action["move"] + items_by_action["replace"] if i.item_type == "series"]
+    extras = [i for i in items_by_action["move"] + items_by_action["replace"] if i.item_type == "extra"]
 
     if movies:
         lines.append("## Movies (%d)" % len(movies))
@@ -96,6 +97,15 @@ def format_report_md(
             lines.append("### %s candidates" % title)
             lines.extend(blocks)
             lines.append("")
+
+    if extras:
+        lines.append("## Extras (%d)" % len(extras))
+        lines.append("| cid | Source | Path Exists | Target |")
+        lines.append("|-----|--------|-------------|--------|")
+        for item in extras:
+            source = item.source_path
+            lines.append("| %s | %s | %s | `%s` |" % (item.confirm_id, source, format_path_exists(item), item.target_path))
+        lines.append("")
 
     if items_by_action["skip"]:
         by_reason: dict[str, list[str]] = {}

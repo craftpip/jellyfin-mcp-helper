@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 OperationMode = Literal["organize", "normalize"]
-ItemKind = Literal["movie", "series", "skip"]
+ItemKind = Literal["movie", "series", "skip", "extra"]
 ScanStatus = Literal["running", "completed", "confirmed", "failed", "cancelled"]
 
 
@@ -40,6 +40,7 @@ class ScannedItem(BaseModel):
     candidate_targets: list[CandidateTarget] = Field(default_factory=list, alias="candidateTargets")
     container_path: str | None = Field(default=None, alias="containerPath")
     source_folder: str | None = Field(default=None, alias="sourceFolder")
+    extra_type: str | None = Field(default=None, alias="extraType")
 
     model_config = {"populate_by_name": True}
 
@@ -120,6 +121,7 @@ class ClassificationResult(BaseModel):
     episode: int | None = None
     confidence: float = 0.0
     reason: str = ""
+    extra_type: str | None = None
 
     model_config = {"populate_by_name": True}
 

@@ -128,10 +128,11 @@ def classify_candidate(candidate: CandidateItem, series_title_aliases: dict[str,
             kind = "movie"
             confidence = max(confidence, 0.85)
             reason = "Detected franchise movie marker"
-    if _looks_like_extra(label, parsed) and kind in ("series", "movie"):
-        kind = "skip"
-        confidence = max(confidence, 0.75)
-        reason = "Detected extras/specials marker"
+    extra_type = _extra_type(label, parsed) if _looks_like_extra(label, parsed) else None
+    if extra_type and kind in ("series", "movie"):
+        kind = "extra"
+        confidence = max(confidence, 0.85)
+        reason = f"Detected {extra_type} extra/specials marker"
 
     if kind == "movie" and _looks_like_sample(label, parsed, candidate.file_size):
         kind = "skip"
@@ -152,6 +153,7 @@ def classify_candidate(candidate: CandidateItem, series_title_aliases: dict[str,
         episode=episode,
         confidence=confidence,
         reason=reason,
+        extra_type=extra_type,
     )
 
 
@@ -551,6 +553,35 @@ def _looks_like_extra(label: str, parsed: dict[str, Any]) -> bool:
     if isinstance(episode_title, str) and EXTRA_MARKERS.search(episode_title):
         return True
     return False
+
+
+def _extra_type(label: str, parsed: dict[str, Any]) -> str | None:
+    # Determine the specific extra type for routing to extras/ folder
+    text = label.lower()
+    episode_title = parsed.get("episode_title")
+    if isinstance(episode_title, str):
+        text += " " + episode_title.lower()
+    # Check for specific markers in order of specificity
+    if re.search(r"\btrailer\b", text):
+        return "trailer"
+    if re.search(r"\bbehindthescenes\b", text) or re.search(r"behind.*scene", text):
+        return "behindthescenes"
+    if re.search(r"\bdeleted", text):
+        return "deleted"
+    if re.search(r"\binterview\b", text):
+        return "interview"
+    if re.search(r"\bfeaturette\b", text):
+        return "featurette"
+    if re.search(r"\bshort\b", text):
+        return "short"
+    if re.search(r"\bsp\d*\b", text) or re.search(r"\bspecial\b", text):
+        return "special"
+    if re.search(r"\bextra\b", text):
+        return "extra"
+    # Fallback for any extra marker
+    if EXTRA_MARKERS.search(label) or SPECIAL_TAG_RE.search(label) or DECIMAL_EPISODE_RE.search(label):
+        return "special"
+    return None
 
 
 def _looks_like_sample(label: str, parsed: dict[str, Any], file_size: int | None = None) -> bool:

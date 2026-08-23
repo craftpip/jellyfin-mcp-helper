@@ -26,6 +26,7 @@ const FILTER_DEFS = [
   ['all', 'All'],
   ['move', 'New'],
   ['replace', 'Replace'],
+  ['extra', 'Extras'],
   ['existing', 'Existing path'],
   ['new', 'New path'],
 ]
@@ -51,6 +52,7 @@ export default function ReportPanel() {
     all: actionable.length,
     move: actionable.filter((i) => i.action === 'move').length,
     replace: actionable.filter((i) => i.action === 'replace').length,
+    extra: actionable.filter((i) => i.itemType === 'extra').length,
     existing: actionable.filter((i) => i.fileExists).length,
     new: actionable.filter((i) => !i.fileExists).length,
   }

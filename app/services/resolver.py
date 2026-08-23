@@ -188,9 +188,97 @@ class PathResolver:
         )
 
     async def resolve(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
+        if classification.kind == "extra":
+            return await self._resolve_extra(candidate, classification)
         if classification.kind == "movie":
             return await self._resolve_movie(candidate, classification)
         return await self._resolve_series(candidate, classification)
+
+    async def _resolve_extra(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
+        # All extras go to a single "extras" folder under the show/movie, preserving relative path under extras/
+        # Determine if it's a movie or series extra based on the classification's title/year and candidate
+        # For simplicity, try to find the best matching show/movie folder, then use its extras subfolder
+        # If we can't determine, fall back to the download root's extras
+        is_series_extra = classification.season is not None or classification.episode is not None or "special" in (classification.extra_type or "") or "extra" in (classification.extra_type or "")
+        # Try to resolve as series first if it looks like a series extra (has season/episode)
+        if is_series_extra or classification.extra_type in ("special", "extra"):
+            # Try series resolution but force extras subfolder
+            # Use the show name from classification or folder
+            show_name = sanitize_name(classification.title or Path(candidate.container_path or candidate.source_path).name)
+            # Find the best matching series folder
+            all_series_paths = list(self._series_existing_paths)
+            if not self._scan_prepared:
+                for root in self._config.paths.series_roots.values():
+                    all_series_paths.extend(list_target_paths(root))
+            best_show = await self._pick_existing_path(
+                media_kind="series",
+                title=show_name,
+                year=classification.year,
+                target_paths=all_series_paths,
+                desired_name=show_name,
+            )
+            if best_show:
+                show_dir = Path(best_show)
+            else:
+                # Fallback to series root
+                series_roots_list = list(self._config.paths.series_roots.values())
+                index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0
+                series_root = self._pick_drive_root(candidate.source_path, series_roots_list, index)
+                show_dir = Path(series_root) / show_name
+            # extras folder under the show
+            extras_dir = show_dir / "extras"
+            # Preserve relative path under extras if the torrent had subfolders
+            rel = Path(candidate.relative_path or candidate.name)
+            # If the torrent is a folder of extras, keep its structure under extras/
+            target_path = str(extras_dir / rel.name)
+            # Also preserve subfolders if any
+            if candidate.relative_path and "/" in candidate.relative_path:
+                # Keep the relative path under extras
+                target_path = str(extras_dir / Path(candidate.relative_path).name)
+                # For nested extras folders, keep them
+                if len(Path(candidate.relative_path).parts) > 1:
+                    target_path = str(extras_dir / candidate.relative_path)
+            return ResolvedTarget(
+                root_key=candidate.source_root_key,
+                target_dir=str(extras_dir),
+                target_path=target_path,
+                existing_match=best_show,
+                show_folder_exists=show_dir.exists(),
+                season_folder_exists=extras_dir.exists(),
+                candidate_targets=[],
+            )
+        # Movie extra
+        movie_roots_list = list(self._config.paths.movie_roots.values())
+        index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0
+        movie_root = self._pick_drive_root(candidate.source_path, movie_roots_list, index)
+        folder_name = self._movie_folder_name(classification)
+        # Find best matching movie folder
+        all_movie_paths = list(self._movie_existing_paths)
+        if not self._scan_prepared:
+            for root in movie_roots_list:
+                all_movie_paths.extend(list_target_paths(root))
+        best_movie = await self._pick_existing_path(
+            media_kind="movie",
+            title=classification.title or candidate.name,
+            year=classification.year,
+            target_paths=all_movie_paths,
+            desired_name=folder_name,
+        )
+        movie_dir = Path(best_movie) if best_movie else Path(movie_root) / folder_name
+        extras_dir = movie_dir / "extras"
+        rel = Path(candidate.relative_path or candidate.name)
+        target_path = str(extras_dir / rel.name)
+        if candidate.relative_path and "/" in candidate.relative_path:
+            target_path = str(extras_dir / candidate.relative_path)
+        return ResolvedTarget(
+            root_key=candidate.source_root_key,
+            target_dir=str(extras_dir),
+            target_path=target_path,
+            existing_match=best_movie,
+            show_folder_exists=movie_dir.exists(),
+            season_folder_exists=extras_dir.exists(),
+            candidate_targets=[],
+        )
 
     async def _resolve_movie(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
         index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0
