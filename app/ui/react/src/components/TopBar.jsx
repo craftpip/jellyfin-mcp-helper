@@ -45,7 +45,7 @@ export default function TopBar() {
                 disabled={state.confirmActive}
                 onClick={() => { setScanMenuOpen(false); actions.startScan({ fullRescan: false }) }}
                 title="Scan for new files only (preserves edits)"
-                style={{ borderTopRightRadius: scanMenuOpen ? 0 : undefined, borderBottomRightRadius: scanMenuOpen ? 0 : undefined }}
+                style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
               >
                 Scan
               </button>
@@ -60,24 +60,24 @@ export default function TopBar() {
                 ▾
               </button>
               {scanMenuOpen && (
-                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--jf-bg-raised)', border: '1px solid var(--jf-border)', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 50, minWidth: 180 }}>
+                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--jf-bg-raised)', border: '1px solid var(--jf-border)', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 50, minWidth: 220, maxWidth: 'min(300px, 90vw)' }}>
                   <button
                     type="button"
                     className="small"
-                    style={{ display: 'block', width: '100%', textAlign: 'left', border: 'none', background: 'transparent', padding: '8px 12px' }}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', border: 'none', background: 'transparent', padding: '8px 12px', height: 'auto', whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.3 }}
                     onClick={() => { setScanMenuOpen(false); actions.startScan({ fullRescan: false }) }}
                   >
                     Scan new only
-                    <span style={{ display: 'block', fontSize: '0.72rem', color: 'var(--jf-text-muted)' }}>Add new files, keep edits</span>
+                    <span style={{ display: 'block', fontSize: '0.72rem', color: 'var(--jf-text-muted)', whiteSpace: 'normal', wordBreak: 'break-word' }}>Add new files, keep edits</span>
                   </button>
                   <button
                     type="button"
                     className="small"
-                    style={{ display: 'block', width: '100%', textAlign: 'left', border: 'none', background: 'transparent', padding: '8px 12px', borderTop: '1px solid var(--jf-border)' }}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', border: 'none', background: 'transparent', padding: '8px 12px', borderTop: '1px solid var(--jf-border)', height: 'auto', whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.3 }}
                     onClick={() => { setScanMenuOpen(false); actions.startScan({ fullRescan: true }) }}
                   >
                     Rescan all (overwrite)
-                    <span style={{ display: 'block', fontSize: '0.72rem', color: 'var(--jf-text-muted)' }}>Rebuild report, discard edits</span>
+                    <span style={{ display: 'block', fontSize: '0.72rem', color: 'var(--jf-text-muted)', whiteSpace: 'normal', wordBreak: 'break-word' }}>Rebuild report, discard edits</span>
                   </button>
                 </div>
               )}
