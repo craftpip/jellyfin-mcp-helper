@@ -28,3 +28,8 @@ htmlcov/
 tests/tests/
 ongoing_releases.json
 mcp_keys.json
+# SQLite database and backups
+config/app.db
+config/app.db-wal
+config/app.db-shm
+config/*.bak
