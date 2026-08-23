@@ -89,7 +89,8 @@ describe('App integration', () => {
     expect((await screen.findAllByText('Skipped items')).length).toBeGreaterThan(0)
 
     expect(screen.getByText('Actions Needed')).toBeInTheDocument()
-    expect(screen.getByText(/scan_id: scan1/)).toBeInTheDocument()
+    // scan_id no longer shown in the report header (removed per user request)
+    expect(screen.queryByText(/scan_id: scan1/)).not.toBeInTheDocument()
     expect(screen.getAllByText('Cross-drive').length).toBeGreaterThan(0)
     expect(screen.getByText('S01E01')).toBeInTheDocument()
 
@@ -111,13 +112,14 @@ describe('App integration', () => {
     })
   })
 
-  it('select mode buttons update the selection summary', async () => {
+  it('selection summary updates when an item is toggled', async () => {
     renderApp()
     await screen.findAllByText('Movie (2024)')
-
-    await userEvent.click(screen.getByText('Select all new'))
-
-    // c1 is a move item -> only 1 selected after the mode button
+    expect(await screen.findByText('2 of 2 item(s) selected')).toBeInTheDocument()
+    // Click the first actionable item checkbox (skip the Skipped group's item)
+    const actionableChecks = document.querySelectorAll('.item-check:not(.skip-check)')
+    expect(actionableChecks.length).toBe(2)
+    await userEvent.click(actionableChecks[0])
     expect(await screen.findByText('1 of 2 item(s) selected')).toBeInTheDocument()
   })
 

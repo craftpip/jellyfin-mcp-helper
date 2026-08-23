@@ -99,17 +99,17 @@ export default function ReportPanel() {
             <strong>{value}</strong> {label}
           </div>
         ))}
-        <div className="search-bar" style={{ marginLeft: 'auto', maxWidth: 280, flex: '1 1 220px', minWidth: 180, marginBottom: 0 }}>
+        <div className="search-bar" style={{ marginLeft: 8, maxWidth: 260, flex: '0 1 240px', minWidth: 180, marginBottom: 0 }}>
           <input
             type="text"
             id="filterInput"
             value={query}
             onChange={(e) => actions.setSearchQuery(e.target.value)}
             placeholder="Search by title, path..."
-            style={{ borderRadius: 8 }}
+            style={{ borderRadius: 999 }}
           />
           {query && (
-            <button className="small" onClick={() => actions.setSearchQuery('')} title="Clear search" style={{ borderRadius: 8 }}>
+            <button className="small" onClick={() => actions.setSearchQuery('')} title="Clear search" style={{ borderRadius: 999 }}>
               Clear
             </button>
           )}
