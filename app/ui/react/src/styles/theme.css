@@ -361,7 +361,7 @@ td input[type="checkbox"] { accent-color: var(--jf-primary); }
   display: block; color: var(--jf-text-strong); font-size: 0.82rem; margin-bottom: 4px;
 }
 .summary-strip {
-  display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 12px 0;
+  display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 12px 0; align-items: center;
 }
 .summary-pill {
   background: var(--jf-bg-raised); border: 1px solid var(--jf-border); border-radius: 999px;
