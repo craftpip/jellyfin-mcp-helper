@@ -382,8 +382,9 @@ td input[type="checkbox"] { accent-color: var(--jf-primary); }
   display: flex; justify-content: space-between; align-items: center;
   gap: 8px; flex-wrap: wrap; margin-bottom: 10px;
 }
+.report-toolbar .hint { display: flex; align-items: center; min-height: 28px; }
 .report-actions {
-  display: flex; gap: 8px; flex-wrap: wrap;
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
 }
 
 .group-header {
