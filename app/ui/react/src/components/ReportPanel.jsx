@@ -161,32 +161,31 @@ export default function ReportPanel() {
         )}
       </div>
 
-      {hasItems && (
-        <div className="filter-chips" id="filterChips">
-          {FILTER_DEFS.map(([k, label]) => (
-            <button
-              key={k}
-              className={'filter-chip' + (currentFilter === k ? ' active' : '')}
-              onClick={() => actions.setFilter(k)}
-            >
-              {currentFilter === k ? '✓ ' : ''}{label} <span className="chip-count">{counts[k]}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
       <div className="report-toolbar">
         <div className="hint" id="selectionSummary">
           {selectionSummary}
         </div>
         {hasItems && (
-          <div className="report-actions">
-            <button className="small" onClick={() => actions.toggleAllGroups(false)}>
-              Collapse all
-            </button>
-            <button className="small" onClick={() => actions.toggleAllGroups(true)}>
-              Expand all
-            </button>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginLeft: 'auto' }}>
+            <div className="filter-chips" id="filterChips" style={{ margin: 0 }}>
+              {FILTER_DEFS.map(([k, label]) => (
+                <button
+                  key={k}
+                  className={'filter-chip' + (currentFilter === k ? ' active' : '')}
+                  onClick={() => actions.setFilter(k)}
+                >
+                  {currentFilter === k ? '✓ ' : ''}{label} <span className="chip-count">{counts[k]}</span>
+                </button>
+              ))}
+            </div>
+            <div className="report-actions">
+              <button className="small" onClick={() => actions.toggleAllGroups(false)}>
+                Collapse all
+              </button>
+              <button className="small" onClick={() => actions.toggleAllGroups(true)}>
+                Expand all
+              </button>
+            </div>
           </div>
         )}
       </div>
