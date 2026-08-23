@@ -74,8 +74,7 @@ export default function ReportPanel() {
   if (visibleActionable > 0) {
     selectionSummary = selectedVisible + ' of ' + visibleActionable + ' item(s) selected'
   } else if (hasItems) {
-    selectionSummary =
-      '0 of 0 visible (of ' + actionable.length + ' total, try adjusting filters)'
+    selectionSummary = '0 of 0 visible (of ' + actionable.length + ' total)'
   } else if (hasSkippedOnly) {
     selectionSummary = skipped.length + ' skipped — nothing to move right now'
   } else {
