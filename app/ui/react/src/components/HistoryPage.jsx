@@ -5,7 +5,6 @@ import { useAppStore } from '../store/AppStore.jsx'
 export default function HistoryPage() {
   const { actions } = useAppStore()
   const [groups, setGroups] = useState([])
-  const [scans, setScans] = useState([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState({})
   const [editing, setEditing] = useState({}) // history_id -> {confirmId -> newTarget}
@@ -14,12 +13,8 @@ export default function HistoryPage() {
   async function load() {
     setLoading(true)
     try {
-      const [res, scanRes] = await Promise.all([
-        apiGet('/history?limit=50').catch(() => ({ groups: [] })),
-        apiGet('/scans/history?limit=50').catch(() => ({ history: [] })),
-      ])
+      const res = await apiGet('/history?limit=50')
       setGroups(res.groups || [])
-      setScans(scanRes.history || [])
     } catch (e) {
       actions.toast('Failed to load history: ' + e.message, 'err')
     } finally {
@@ -86,51 +81,11 @@ export default function HistoryPage() {
     )
   }
 
-  if (!groups.length && !scans.length) {
+  if (!groups.length) {
     return (
       <div className="panel">
         <h2>History</h2>
-        <div className="hint">No confirms yet — scan and confirm a group to see it here. No scans in history either.</div>
-      </div>
-    )
-  }
-
-  if (!groups.length && scans.length) {
-    return (
-      <div className="admin-page" style={{ maxWidth: 'none' }}>
-        <div className="admin-header">
-          <h2>History</h2>
-          <div className="hint">No confirms yet — scan and confirm a group to see confirm history. Below are your past scans (migrated from files).</div>
-        </div>
-        <div className="panel" style={{ padding: '12px' }}>
-          <h3 style={{ margin: '0 0 8px 0' }}>Scans history ({scans.length})</h3>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="admin-table" style={{ width: '100%' }}>
-              <thead>
-                <tr>
-                  <th>Scan ID</th>
-                  <th>Date</th>
-                  <th>Movies</th>
-                  <th>Series</th>
-                  <th>Skipped</th>
-                  <th>To move</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scans.map((s) => (
-                  <tr key={s.scan_id}>
-                    <td style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{s.scan_id.slice(0, 8)}</td>
-                    <td style={{ fontSize: '0.78rem' }}>{s.saved_at ? new Date(s.saved_at).toLocaleString() : ''}</td>
-                    <td>{s.movies ?? ''}</td>
-                    <td>{s.series ?? ''}</td>
-                    <td>{s.skipped ?? ''}</td>
-                    <td>{s.action_required ?? ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <div className="hint">No confirms yet — scan and confirm a group to see it here.</div>
       </div>
     )
   }
@@ -141,38 +96,6 @@ export default function HistoryPage() {
         <h2>History</h2>
         <div className="hint">Every confirmed group is saved here. You can review, undo, or rename folders and move again. The full path trail is kept for display.</div>
       </div>
-
-      {scans.length > 0 && (
-        <div className="panel" style={{ padding: '12px', marginBottom: 12 }}>
-          <h3 style={{ margin: '0 0 8px 0' }}>Scans history ({scans.length}) — migrated from files</h3>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="admin-table" style={{ width: '100%' }}>
-              <thead>
-                <tr>
-                  <th>Scan ID</th>
-                  <th>Date</th>
-                  <th>Movies</th>
-                  <th>Series</th>
-                  <th>Skipped</th>
-                  <th>To move</th>
-                </tr>
-              </thead>
-              <tbody>
-                {scans.map((s) => (
-                  <tr key={s.scan_id}>
-                    <td style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>{s.scan_id.slice(0, 8)}</td>
-                    <td style={{ fontSize: '0.78rem' }}>{s.saved_at ? new Date(s.saved_at).toLocaleString() : ''}</td>
-                    <td>{s.movies ?? ''}</td>
-                    <td>{s.series ?? ''}</td>
-                    <td>{s.skipped ?? ''}</td>
-                    <td>{s.action_required ?? ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {groups.map((group) => {
         const isExpanded = !!expanded[group.history_id]
