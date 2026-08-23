@@ -159,12 +159,12 @@ export default function ReportPanel() {
       )}
 
       <div className="report-toolbar">
-        <div className="hint" id="selectionSummary">
-          {selectionSummary}
-        </div>
-        {hasItems && (
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginLeft: 'auto' }}>
-            <div className="filter-chips" id="filterChips" style={{ margin: 0 }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div className="hint" id="selectionSummary" style={{ display: 'flex', alignItems: 'center', minHeight: 28 }}>
+            {selectionSummary}
+          </div>
+          {hasItems && (
+            <div className="filter-chips" id="filterChips" style={{ margin: 0, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
               {FILTER_DEFS.map(([k, label]) => (
                 <button
                   key={k}
@@ -175,11 +175,13 @@ export default function ReportPanel() {
                 </button>
               ))}
             </div>
-            <div className="report-actions">
-              <button className="small" onClick={() => actions.toggleAllGroups(!allExpanded)}>
-                {allExpanded ? 'Collapse all' : 'Expand all'}
-              </button>
-            </div>
+          )}
+        </div>
+        {hasItems && (
+          <div className="report-actions" style={{ marginLeft: 'auto' }}>
+            <button className="small" onClick={() => actions.toggleAllGroups(!allExpanded)}>
+              {allExpanded ? 'Collapse all' : 'Expand all'}
+            </button>
           </div>
         )}
       </div>
