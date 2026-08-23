@@ -392,6 +392,7 @@ td input[type="checkbox"] { accent-color: var(--jf-primary); }
   display: flex; align-items: center; gap: 10px;
   user-select: none;
 }
+.group-header.expanded { border-radius: 6px 6px 0 0; }
 .group-header:hover { background: var(--jf-surface-raised); }
 .group-header .arrow { color: var(--jf-text-muted); font-size: 0.7rem; transition: transform .15s; }
 .group-header .arrow.collapsed { transform: rotate(-90deg); }

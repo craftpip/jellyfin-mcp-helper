@@ -261,7 +261,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, query }) {
 
   return (
     <>
-      <div className="group-header" onClick={() => actions.toggleGroup(gid)}>
+      <div className={'group-header' + (expanded ? ' expanded' : ' collapsed')} onClick={() => actions.toggleGroup(gid)}>
         <span className={'arrow' + (expanded ? '' : ' collapsed')}>▾</span>
         <span className="g-title">{highlight(group.title, query)}</span>
         <span className="g-count">{group.items.length} item(s)</span>
