@@ -316,8 +316,9 @@ class PathResolver:
             season_dir = show_dir / f"Season {season_number:02d}"
             logger.info("  [resolver] new season dir: %s", season_dir)
         ext = Path(candidate.source_path).suffix or ".mkv"
-        episode_title = sanitize_name(classification.episode_title or classification.title or show_dir.name)
-        episode_base = f"{episode_title} - S{season_number:02d}E{episode_number:02d}"
+        # Trust the folder for the show title - the episode title is not the show
+        show_title = sanitize_name(classification.title or show_dir.name)
+        episode_base = f"{show_title} - S{season_number:02d}E{episode_number:02d}"
         target_path = str(season_dir / f"{episode_base}{ext}")
         # Check if an existing file for this episode already exists in the season dir
         episode_tag = f"s{season_number:02d}e{episode_number:02d}"
