@@ -178,7 +178,11 @@ describe('computePathSync', () => {
     const base = buildItems()
     const items = itemWithTargets(base)
     items[0].title = 'Show Name (2020)'
+    items[0].sourceFolder = 'Show.S01'
+    items[0].containerPath = '/media1/torrents/Show.S01'
     items[1].title = 'Show Name (2020)'
+    items[1].sourceFolder = 'Show.S01'
+    items[1].containerPath = '/media1/torrents/Show.S01'
     items[0].targetPath = '/media1/series/Show Name (2020)/Season 01/Show Name S01E01.mkv'
     items[0]._liveTarget = items[0].targetPath
     items[1].targetPath = '/media1/series/Show Name (2020)/Season 01/Show Name S01E02.mkv'
@@ -208,6 +212,8 @@ describe('computePathSync', () => {
 
   it('keeps the edit (no revert) when the row is alone in its group', () => {
     const items = seriesRows()
+    items[1].sourceFolder = 'Other.S01'
+    items[1].containerPath = '/media1/torrents/Other.S01'
     items[1].title = 'Other Show'
     items[1]._liveTarget = '/media1/series/Other Show/Season 01/Other Show S01E01.mkv'
     items[1].targetPath = items[1]._liveTarget
@@ -222,11 +228,15 @@ describe('computePathSync', () => {
 
   it('does not touch rows in other groups even when the prefix matches', () => {
     const items = seriesRows()
+    items[1].sourceFolder = 'Show.S01'
+    items[1].containerPath = '/media1/torrents/Show.S01'
     items[1].title = 'Show Name (2020)'
     const other = itemWithTargets(buildItems())
     items.push({
       ...other[1],
       title: 'Other Show',
+      sourceFolder: 'Other.S01',
+      containerPath: '/media1/torrents/Other.S01',
       _liveTarget: '/media1/series/Show Name (2020)/Season 01/Show Name S01E03.mkv',
     })
     const synced = computePathSync(
@@ -237,7 +247,7 @@ describe('computePathSync', () => {
     )
     expect(synced.updates.length).toBe(1)
     expect(synced.updates[0].idx).toBe(1)
-    expect(synced.updates.every((u) => items[u.idx].title === 'Show Name (2020)')).toBe(true)
+    expect(synced.updates.every((u) => (items[u.idx].sourceFolder || items[u.idx].containerPath) === 'Show.S01')).toBe(true)
   })
 
   it('returns null when value is unchanged', () => {

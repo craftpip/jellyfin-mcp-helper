@@ -72,10 +72,15 @@ export function mapReportItems(report) {
 }
 
 export function groupItems(items) {
+  const GENERIC_FOLDERS = new Set(['downloads', 'torrents', 'download', 'complete', 'incomplete'])
   const groups = {}
   items.forEach((item, idx) => {
     // Group by source folder (torrent folder) per plan 12 — all files in one torrent folder stay together
-    const key = item.sourceFolder || item.containerPath?.split('/').filter(Boolean).pop() || item.title || 'Unknown'
+    // But if the sourceFolder is a generic download root (like 'downloads'), fall back to title
+    let key = item.sourceFolder || item.containerPath?.split('/').filter(Boolean).pop() || item.title || 'Unknown'
+    if (GENERIC_FOLDERS.has(key.toLowerCase())) {
+      key = item.title || 'Unknown'
+    }
     if (!groups[key]) {
       groups[key] = { title: key, type: item.itemType, items: [], totalSize: 0, sourceFolder: key, containerPath: item.containerPath || '' }
     }
@@ -108,15 +113,15 @@ export function matchesFilter(item, query, filterVal) {
   return match
 }
 
-// Legacy smart path sync (group-scoped). Given the edited row index and new value,
+// Smart path sync (group-scoped by source folder). Given the edited row index and new value,
 // computes { updates: [{idx, value}...] } for sibling rows whose live path shares
 // the same prefix/chunk, or { revert: true } if siblings existed but none matched.
-// Solo groups (no other rows with the same title) keep the edit — no revert, no sync.
+// Solo groups (no other rows with the same source folder) keep the edit — no revert, no sync.
 export function computePathSync(changedIdx, oldPath, newPath, items) {
   if (oldPath === newPath) return null
   const changedItem = items[changedIdx]
   if (!changedItem) return null
-  const groupTitle = changedItem.title
+  const groupKey = changedItem.sourceFolder || changedItem.containerPath || changedItem.title
 
   let i1 = 0
   while (i1 < oldPath.length && i1 < newPath.length && oldPath[i1] === newPath[i1]) i1++
@@ -137,7 +142,8 @@ export function computePathSync(changedIdx, oldPath, newPath, items) {
   const updates = []
   items.forEach((item, idx) => {
     if (idx === changedIdx) return
-    if (item.title !== groupTitle) return
+    const itemKey = item.sourceFolder || item.containerPath || item.title
+    if (itemKey !== groupKey) return
     hasSameGroupSibling = true
     const livePath = item._liveTarget || item.targetPath
     if (!livePath.startsWith(prefix)) return
