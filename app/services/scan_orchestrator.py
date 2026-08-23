@@ -196,6 +196,15 @@ async def run_scan_task(manager, scan_id: str, request, previous_task=None) -> N
                 await to_thread(save_report, scan_id, report, manager._config.report_dir)
             except Exception as save_exc:
                 logger.warning("Failed to save scan %s to history: %s", scan_id, save_exc)
+            # Persist singleton for restart recovery (plan 14)
+            try:
+                from app.services.scan_history import save_singleton
+
+                logger.info("Saving singleton for scan %s to %s", scan_id, manager._config.report_dir)
+                p = await to_thread(save_singleton, scan, manager._config.report_dir)
+                logger.info("Singleton saved to %s exists=%s", p, p.exists())
+            except Exception as singleton_exc:
+                logger.warning("Failed to save singleton for scan %s: %s", scan_id, singleton_exc, exc_info=True)
     except Exception as exc:
         scan = manager._scan_plans.get(scan_id)
         if scan:

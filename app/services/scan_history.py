@@ -10,6 +10,40 @@ from app.core.db import get_db, init_db
 
 HISTORY_DIR_NAME = "history"
 MAX_HISTORY = 20
+SINGLETON_NAME = "current.json"
+
+
+def singleton_path(report_dir: Path | None = None) -> Path:
+    d = report_dir or get_config().report_dir
+    d.mkdir(parents=True, exist_ok=True)
+    return d / SINGLETON_NAME
+
+
+def save_singleton(scan, report_dir: Path | None = None) -> Path:
+    """Persist the live single-report ScanPlan for restart recovery."""
+    path = singleton_path(report_dir)
+    try:
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(scan.model_dump(mode="json"), indent=2) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        pass
+    return path
+
+
+def load_singleton(report_dir: Path | None = None):
+    """Load the persisted single-report ScanPlan if present."""
+    path = singleton_path(report_dir)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        from app.models.schemas import ScanPlan
+
+        return ScanPlan.model_validate(data)
+    except Exception:
+        return None
+
 
 def history_dir(report_dir: Path | None = None) -> Path:
     d = (report_dir or get_config().report_dir) / HISTORY_DIR_NAME

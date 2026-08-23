@@ -117,4 +117,4 @@
 - Live: `POST /api/scans {"fullRescan": false}` with pre-edited report → edits preserved, new file appended, count +1; `POST /api/scans {"fullRescan": true}` → report replaced, previous snapshot in history. `POST /mcp tools/call get move new downloads scan report {"format":"json","groupBy":"sourceFolder"}` → JSON with `groups[].sourceFolder` keys.
 - `docker compose build && docker compose restart && curl /health` — singleton report survives restart via file/DB.
 
-**Status:** Draft — awaiting user confirmation before implementation.
+**Status:** Implemented 2026-08-24 — core incremental + fullRescan + JSON grouped report + singleton persistence + UI dropdown + tests. Verified: `407 passed` (`docker exec jellysort python3 -m pytest`), `104 passed` (`npm test` in `app/ui/react`), MCP `tools/list` advertises `fullRescan`/`format`/`groupBy`, manual incremental test preserved retarget, singleton `reports/current.json` created and restored on `ScanManager` restart.

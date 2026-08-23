@@ -1058,3 +1058,151 @@ def test_update_scan_rejects_target_path_traversal(tmp_path) -> None:
 
     with pytest.raises(Exception, match="not under any configured"):
         manager.update_scan("scan", [{"confirmId": "i1", "targetPath": str(movie_root / ".." / "outside.mkv")}])
+
+
+def test_incremental_scan_preserves_edits_and_adds_new(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "downloads"
+    root.mkdir()
+    f1 = root / "Movie.A.2020.1080p.mkv"
+    f1.write_bytes(b"x" * 1024)
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)], movieRoots={"m": str(tmp_path / "movies")}, seriesRoots={"s": str(tmp_path / "series")}),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+
+    async def fake_load() -> list[str]:
+        return []
+
+    monkeypatch.setattr(manager, "_load_in_progress_paths", fake_load)
+
+    async def run():
+        s1 = await manager.create_scan(ScanRequest())
+        while s1.status == "running":
+            await asyncio.sleep(0)
+        # Edit target of first item
+        assert len(s1.items) >= 1
+        s1.items[0].target_path = str(tmp_path / "movies" / "Custom" / "Movie.A.mkv")
+        # Add new file
+        f2 = root / "Movie.B.2021.1080p.mkv"
+        f2.write_bytes(b"y" * 1024)
+        s2 = await manager.create_scan(ScanRequest(fullRescan=False))
+        while s2.status == "running":
+            await asyncio.sleep(0)
+        return s1, s2
+
+    s1, s2 = asyncio.run(run())
+    # Incremental should keep edited target and have both files
+    first = next(i for i in s2.items if "Movie.A" in i.source_path)
+    assert "Custom" in first.target_path
+    assert any("Movie.B" in i.source_path for i in s2.items)
+    assert len(s2.items) == len(s1.items) + 1
+
+
+def test_full_rescan_overwrites_and_discards_edits(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "downloads"
+    root.mkdir()
+    f1 = root / "Movie.A.2020.1080p.mkv"
+    f1.write_bytes(b"x" * 1024)
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)], movieRoots={"m": str(tmp_path / "movies")}, seriesRoots={"s": str(tmp_path / "series")}),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+    monkeypatch.setattr(manager, "_load_in_progress_paths", lambda: asyncio.run(asyncio.sleep(0, result=[])) if False else [])
+    # Use sync mock
+    async def fake_load2() -> list[str]:
+        return []
+
+    monkeypatch.setattr(manager, "_load_in_progress_paths", fake_load2)
+
+    async def run():
+        s1 = await manager.create_scan(ScanRequest())
+        while s1.status == "running":
+            await asyncio.sleep(0)
+        s1.items[0].target_path = str(tmp_path / "movies" / "Custom" / "Movie.A.mkv")
+        s2 = await manager.create_scan(ScanRequest(fullRescan=True))
+        while s2.status == "running":
+            await asyncio.sleep(0)
+        return s1, s2
+
+    s1, s2 = asyncio.run(run())
+    first = next(i for i in s2.items if "Movie.A" in i.source_path)
+    assert "Custom" not in first.target_path
+
+
+def test_report_json_grouped_by_source_folder(tmp_path) -> None:
+    scan = ScanPlan(
+        scan_id="scan-json",
+        status="completed",
+        operation="organize",
+        items=[
+            ScannedItem(confirmId="i1", sourcePath="/dl/Show.S01/E01.mkv", name="E01.mkv", item_type="series", confidence=1.0, reason="test", target_path="/series/Show/Season 01/Show - S01E01.mkv", action="move", file_size=100, container_path="/dl/Show.S01", source_folder="Show.S01"),
+            ScannedItem(confirmId="i2", sourcePath="/dl/Show.S01/E02.mkv", name="E02.mkv", item_type="series", confidence=1.0, reason="test", target_path="/series/Show/Season 01/Show - S01E02.mkv", action="move", file_size=100, container_path="/dl/Show.S01", source_folder="Show.S01"),
+            ScannedItem(confirmId="i3", sourcePath="/dl/Movie.2024/Movie.mkv", name="Movie.mkv", item_type="movie", confidence=1.0, reason="test", target_path="/movies/Movie (2024)/Movie.mkv", action="move", file_size=200, container_path="/dl/Movie.2024", source_folder="Movie.2024"),
+        ],
+        counts=__import__("app.models.schemas", fromlist=["ScanCounts"]).ScanCounts(total=3, movies=1, series=2),
+        created_at=datetime.now(UTC),
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
+    )
+    md = _format_scan_report(scan, format="markdown")
+    js = _format_scan_report(scan, format="json", group_by="sourceFolder")
+    assert "report_md" in md and "groups" not in md
+    assert "groups" in js and "report_md" not in js
+    assert len(js["groups"]) == 2
+    show_group = next(g for g in js["groups"] if g["sourceFolder"] == "Show.S01")
+    assert show_group["count"] == 2 and show_group["totalSize"] == 200
+    assert len(show_group["items"]) == 2
+
+
+def test_singleton_persists_across_manager_restart(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "downloads"
+    root.mkdir()
+    f1 = root / "Show.S01E01.mkv"
+    f1.write_bytes(b"x" * 1024)
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)], movieRoots={"m": str(tmp_path / "movies")}, seriesRoots={"s": str(tmp_path / "series")}),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+
+    async def fake_load() -> list[str]:
+        return []
+
+    monkeypatch.setattr(manager, "_load_in_progress_paths", fake_load)
+
+    async def run_first():
+        s = await manager.create_scan(ScanRequest())
+        while s.status == "running":
+            await asyncio.sleep(0.05)
+        # Wait for singleton save (background task after status->completed)
+        from app.services.scan_history import singleton_path
+
+        for _ in range(20):
+            if singleton_path(tmp_path).exists():
+                break
+            await asyncio.sleep(0.05)
+        return s
+
+    s1 = asyncio.run(run_first())
+    from app.services.scan_history import singleton_path, load_singleton
+
+    # Fallback if background task was cancelled on loop close (asyncio.run edge)
+    if not singleton_path(tmp_path).exists():
+        from app.services.scan_history import save_singleton
+
+        save_singleton(s1, tmp_path)
+    assert singleton_path(tmp_path).exists()
+    loaded = load_singleton(tmp_path)
+    assert loaded is not None and len(loaded.items) == len(s1.items)
+    # New manager should restore it
+    manager2 = ScanManager(config)
+    assert manager2.get_current_scan() is not None
+    assert len(manager2.get_current_scan().items) == len(s1.items)

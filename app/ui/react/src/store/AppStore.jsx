@@ -413,22 +413,27 @@ export function AppStoreProvider({ children }) {
   }
 
   // ---- scan ----
-  async function startScan() {
+  async function startScan(opts = {}) {
+    const fullRescan = !!opts.fullRescan
+    if (fullRescan) {
+      const ok = window.confirm('Rescan all will overwrite the current report and discard any edits (retargets). New files will still be found with a normal Scan. Continue with full rescan?')
+      if (!ok) return
+    }
     if (stateRef.current.scanRunning || stateRef.current.confirmActive) return
     dispatch({ type: 'SET_SCAN_RUNNING', scanRunning: true })
     dispatch({ type: 'SET_REPORT_LOADING', reportLoading: false })
-    log('Starting scan...', 'info')
+    log(fullRescan ? 'Starting full rescan (overwrite)...' : 'Starting scan...', 'info')
     if (timers.current.scanPoll) clearTimeout(timers.current.scanPoll)
     dispatch({
       type: 'SET_SCAN_PROGRESS',
       progress: {
         percent: 0,
         status: 'starting',
-        lines: ['Starting scan...', 'Waiting for backend to create the scan plan'],
+        lines: [fullRescan ? 'Starting full rescan...' : 'Starting scan...', 'Waiting for backend to create the scan plan'],
       },
     })
     try {
-      const result = await apiPost('/scans', {})
+      const result = await apiPost('/scans', fullRescan ? { fullRescan: true } : {})
       const scanId = result.scan_id || null
       dispatch({ type: 'SET_SCAN_ID', scanId })
       log('Scan started! ID: ' + scanId + ' — ' + (result.message || ''), 'good')

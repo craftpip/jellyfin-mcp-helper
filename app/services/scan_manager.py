@@ -36,6 +36,16 @@ class ScanManager:
         self._store = ScanStore()
         self._loop = None
         self._confirm_queue = ConfirmQueue()
+        # Restore single-report singleton if present (restart recovery)
+        try:
+            from app.services.scan_history import load_singleton
+
+            restored = load_singleton(self._config.report_dir)
+            if restored is not None:
+                self._store.current = restored
+                logger.info("Restored singleton report %s with %d items from %s", restored.scan_id, len(restored.items), self._config.report_dir)
+        except Exception as exc:
+            logger.warning("Failed to restore singleton report: %s", exc)
 
     # ---- state delegates (state lives in ScanStore; call sites stay untouched) ----
     @property
@@ -167,7 +177,14 @@ class ScanManager:
         return f"i{len(scan.items) + 1}"
 
     def update_scan(self, scan_id: str, items: list[dict]) -> ScanPlan:
-        return retarget.update_scan(self, scan_id, items)
+        result = retarget.update_scan(self, scan_id, items)
+        try:
+            from app.services.scan_history import save_singleton
+
+            save_singleton(result, self._config.report_dir)
+        except Exception:
+            pass
+        return result
 
     def retarget_item(
         self,
@@ -177,7 +194,14 @@ class ScanManager:
         apply_to_group: bool = False,
         reclassify_as_movie: bool = False,
     ) -> ScanPlan:
-        return retarget.retarget_item(self, scan_id, confirm_id, directory, apply_to_group, reclassify_as_movie)
+        result = retarget.retarget_item(self, scan_id, confirm_id, directory, apply_to_group, reclassify_as_movie)
+        try:
+            from app.services.scan_history import save_singleton
+
+            save_singleton(result, self._config.report_dir)
+        except Exception:
+            pass
+        return result
 
     @staticmethod
     def _is_show_level_dir(path: Path) -> bool:
@@ -371,10 +395,27 @@ class ScanManager:
         await move_executor.trigger_jellyfin_scans(self, updated_paths)
 
     async def delete_items(self, scan_id: str, item_ids: list[str]) -> ScanPlan:
-        return await scan_orchestrator.delete_items(self, scan_id, item_ids)
+        result = await scan_orchestrator.delete_items(self, scan_id, item_ids)
+        # Persist singleton after delete
+        try:
+            from app.services.scan_history import save_singleton
+
+            if self._current_scan:
+                save_singleton(self._current_scan, self._config.report_dir)
+        except Exception:
+            pass
+        return result
 
     def delete_scan(self) -> None:
         self._current_scan = None
+        try:
+            from app.services.scan_history import singleton_path
+
+            p = singleton_path(self._config.report_dir)
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass
 
     def undo_scan(self, scan_id: str) -> dict:
         """Undo confirmed moves of a scan (memory first, history fallback)."""
