@@ -142,13 +142,13 @@ export default function HistoryPage() {
             {isExpanded && (
               <div style={{ marginTop: '12px' }}>
                 <div style={{ overflowX: 'auto' }}>
-                  <table className="admin-table" style={{ width: '100%' }}>
+                  <table className="admin-table" style={{ width: '100%', tableLayout: 'fixed' }}>
                     <thead>
                       <tr>
                         <th style={{ width: '150px' }}>Action</th>
-                        <th>Source → Target Path</th>
+                        <th style={{ minWidth: 0 }}>Source → Target Path</th>
                         <th style={{ width: '90px', textAlign: 'right' }}>Size</th>
-                        <th style={{ width: '220px' }}>Trail</th>
+                        <th style={{ width: '140px', textAlign: 'left' }}>Trail</th>
                         <th style={{ width: '90px' }}>Status</th>
                         <th style={{ width: '70px', textAlign: 'right' }}></th>
                       </tr>
