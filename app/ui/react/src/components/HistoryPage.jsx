@@ -13,6 +13,7 @@ export default function HistoryPage() {
   const [editing, setEditing] = useState({}) // history_id -> {confirmId -> newTarget}
   const [busy, setBusy] = useState(null)
   const [browseRow, setBrowseRow] = useState(null) // {historyId, confirmId, title}
+  const [trailPopup, setTrailPopup] = useState(null) // {pathHistory, title}
 
   async function load() {
     setLoading(true)
@@ -156,7 +157,10 @@ export default function HistoryPage() {
                       {group.items.map((item) => {
                         const currentTarget = item.target_path
                         const edited = groupEdits[item.confirm_id] ?? currentTarget
-                        const trail = item.pathHistory && item.pathHistory.length ? item.pathHistory.join(' → ') : `${item.source_path} → ${item.target_path}`
+                        const history = item.pathHistory && item.pathHistory.length ? item.pathHistory : [item.source_path, item.target_path].filter(Boolean)
+                        const hops = Math.max(0, history.length - 1)
+                        const trailSummary = hops === 0 ? '—' : hops === 1 ? '1 hop' : `${hops} hops`
+                        const trail = history.join(' → ')
                         return (
                           <tr key={item.confirm_id}>
                             <td>
@@ -209,8 +213,16 @@ export default function HistoryPage() {
                             <td style={{ whiteSpace: 'nowrap', textAlign: 'right', color: '#9aa4ab', fontSize: '0.8rem' }}>
                               {item.file_size ? formatBytes(item.file_size) : ''}
                             </td>
-                            <td style={{ fontSize: '0.7rem', color: 'var(--jf-text-muted)', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={trail}>
-                              {trail}
+                            <td style={{ textAlign: 'center' }}>
+                              <button
+                                type="button"
+                                className="small"
+                                style={{ fontSize: '0.7rem', padding: '2px 6px', whiteSpace: 'nowrap' }}
+                                title={trail}
+                                onClick={() => setTrailPopup({ pathHistory: history, title: item.source_path })}
+                              >
+                                {trailSummary} <span style={{ color: 'var(--jf-text-muted)', fontWeight: 400 }}>• {history.length} paths</span>
+                              </button>
                             </td>
                             <td>
                               <span className={`badge ${item.status === 'failed' ? 'skip' : item.status === 'undone' ? 'skip' : 'move'}`}>
@@ -262,6 +274,57 @@ export default function HistoryPage() {
           onPick={(directory) => handleEditChange(browseRow.historyId, browseRow.confirmId, directory)}
           onClose={() => setBrowseRow(null)}
         />
+      )}
+
+      {trailPopup && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 60,
+            padding: '20px',
+          }}
+          onClick={() => setTrailPopup(null)}
+        >
+          <div
+            style={{
+              background: 'var(--jf-bg-raised, #242629)',
+              border: '1px solid var(--jf-border, #2E3229)',
+              borderRadius: '10px',
+              maxWidth: '720px',
+              width: '100%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+              padding: '16px',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '12px' }}>
+              <strong style={{ fontSize: '0.9rem' }}>Full trail</strong>
+              <button type="button" className="small" onClick={() => setTrailPopup(null)}>
+                Close
+              </button>
+            </div>
+            {trailPopup.title && (
+              <div style={{ fontSize: '0.75rem', color: 'var(--jf-text-muted)', marginBottom: '10px', wordBreak: 'break-all' }}>{trailPopup.title}</div>
+            )}
+            <ol style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {trailPopup.pathHistory.map((p, idx) => (
+                <li key={idx} style={{ fontSize: '0.8rem', wordBreak: 'break-all', color: idx === trailPopup.pathHistory.length - 1 ? 'var(--jf-text-primary, #F5F0E6)' : 'var(--jf-text-muted)' }}>
+                  <span style={{ color: 'var(--jf-text-muted)', marginRight: '6px' }}>{idx + 1}.</span>
+                  {p}
+                  {idx < trailPopup.pathHistory.length - 1 && <span style={{ color: 'var(--jf-primary, #00A4DC)', marginLeft: '6px' }}>→</span>}
+                </li>
+              ))}
+            </ol>
+            <div style={{ fontSize: '0.7rem', color: 'var(--jf-text-muted)', marginTop: '12px' }}>{trailPopup.pathHistory.length} paths • {Math.max(0, trailPopup.pathHistory.length - 1)} moves chained</div>
+          </div>
+        </div>
       )}
     </div>
   )
