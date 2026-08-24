@@ -86,7 +86,7 @@ export default function TopBar() {
               )}
             </div>
           )}
-          {state.page === 'scan' && state.jellyfinLibraries.length > 0 && <LibraryScanDropdown />}
+          {state.jellyfinLibraries.length > 0 && <LibraryScanDropdown />}
           <button
             type="button"
             className={`small ${state.page === 'history' ? 'active' : ''}`}
@@ -110,9 +110,6 @@ export default function TopBar() {
             title="Manage API keys"
           >
             API Keys
-          </button>
-          <button type="button" className="small" onClick={actions.toggleLogs} title="Show or hide the log panel">
-            {state.logsVisible ? 'Hide Logs' : 'Show Logs'}
           </button>
           {state.authRequired && state.authed && (
             <button type="button" className="small logout-btn" onClick={actions.logout} title="Log out of this panel">

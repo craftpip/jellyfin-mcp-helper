@@ -427,11 +427,9 @@ describe('App integration', () => {
     renderApp()
 
     await screen.findByText('Start Scan')
-    await userEvent.click(screen.getByText('Show Logs'))
-
+    expect(screen.queryByText('Show Logs')).not.toBeInTheDocument()
+    expect(screen.queryByText('Hide Logs')).not.toBeInTheDocument()
     expect(screen.getByText('Start Scan')).toBeInTheDocument()
-    expect(screen.getByText('Hide Logs')).toBeInTheDocument()
-    expect(screen.getByText('Log')).toBeInTheDocument()
   })
 
   it('shows the login screen when auth is required and unlocks after login', async () => {

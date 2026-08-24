@@ -90,7 +90,8 @@ describe('page navigation', () => {
 
     expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'API Keys' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Show Logs' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Show Logs' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Hide Logs' })).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
 
