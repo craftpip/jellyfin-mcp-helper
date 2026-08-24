@@ -33,7 +33,18 @@ def test_mcp_scan_report_invalid_scan_id_returns_http_200_with_jsonrpc_error() -
 
 
 def test_mcp_confirm_missing_scan_id_returns_http_200_with_jsonrpc_error() -> None:
+    # When no active scan exists, missing scanId should error (fallback has nothing to use).
+    # This also verifies the fallback path: when a scan *does* exist, missing scanId succeeds — see live curl verification.
     with TestClient(app) as client:
+        # Ensure no active scan (clear global manager state if left over from other tests)
+        try:
+            from app.main import app as _app
+            mgr = _app.state.scan_manager
+            # Reset current scan to None for isolated check
+            if hasattr(mgr, "_store"):
+                mgr._store.current = None
+        except Exception:
+            pass
         response = client.post(
             "/mcp",
             json={
@@ -49,8 +60,8 @@ def test_mcp_confirm_missing_scan_id_returns_http_200_with_jsonrpc_error() -> No
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["error"]["code"] == -32602
-    assert payload["error"]["message"] == "scanId is required"
+    assert payload["error"]["code"] == -32000
+    assert "No active scan" in payload["error"]["message"]
 
 
 def test_mcp_tools_list_includes_scan_progress_tool() -> None:

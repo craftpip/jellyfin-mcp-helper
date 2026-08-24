@@ -385,7 +385,7 @@ def _mcp_tools() -> list[dict[str, object]]:
                 "properties": {
                     "scanId": {
                         "type": "string",
-                        "description": "The scan_id returned by 'move new downloads scan'."
+                        "description": "Optional scan_id returned by 'move new downloads scan'. If omitted, the current active scan is used."
                     },
                     "itemIds": {
                         "type": "array",
@@ -403,7 +403,7 @@ def _mcp_tools() -> list[dict[str, object]]:
                         "description": "Optional list of source path prefixes to confirm selectively, such as the parent download folder for one release or batch."
                     }
                 },
-                "required": ["scanId"]
+                "required": []
             },
         },
         {
@@ -899,7 +899,11 @@ async def mcp(request: dict) -> JSONResponse:
         if name == "confirm move new downloads scan":
             scan_id = arguments.get("scanId")
             if not scan_id:
-                return _mcp_error_response(request_id, -32602, "scanId is required")
+                current = manager.get_current_scan()
+                if current:
+                    scan_id = current.scan_id
+                else:
+                    return _mcp_error_response(request_id, -32000, "No active scan — scanId is required when no current scan exists. Run 'move new downloads scan' first.")
 
             item_ids = arguments.get("itemIds")
             source_paths = arguments.get("sourcePaths")

@@ -131,10 +131,12 @@ def format_report_items(scan: ScanPlan, items_by_action: dict[str, list[ScannedI
     for item in items_by_action.get("move", []) + items_by_action.get("replace", []):
         result.append({
             "confirmId": item.confirm_id,
+            "id": item.confirm_id,
             "sourcePath": item.source_path,
             "name": item.name,
             "targetPath": item.target_path,
             "itemType": item.item_type,
+            "item_type": item.item_type,
             "action": item.action,
             "pathExists": format_path_exists(item),
             "showFolderExists": item.show_folder_exists,
@@ -164,9 +166,11 @@ def format_report_items(scan: ScanPlan, items_by_action: dict[str, list[ScannedI
     for item in items_by_action.get("skip", []):
         result.append({
             "confirmId": item.confirm_id,
+            "id": item.confirm_id,
             "sourcePath": item.source_path,
             "name": item.name,
             "itemType": item.item_type,
+            "item_type": item.item_type,
             "action": "skip",
             "fileSize": item.file_size,
             "reason": item.reason,
@@ -440,10 +444,12 @@ def format_report_grouped(items_by_action: dict[str, list[ScannedItem]]) -> list
                 entry["totalSize"] += int(item.file_size)
             entry["items"].append({
                 "confirmId": item.confirm_id,
+                "id": item.confirm_id,
                 "sourcePath": item.source_path,
                 "name": item.name,
                 "targetPath": item.target_path,
                 "itemType": item.item_type,
+                "item_type": item.item_type,
                 "action": item.action,
                 "fileSize": item.file_size,
                 "showFolderExists": item.show_folder_exists,
