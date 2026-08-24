@@ -139,14 +139,17 @@ export default function HistoryPage() {
               <span className="badge" style={{ background: 'var(--jf-primary-dim)', color: 'var(--jf-primary)' }}>{group.history_id.slice(0, 6)}</span>
             </div>
 
-            {isExpanded && (
+            {(() => {
+              const isGroupSeries = group.items.some((it) => (it.item_type || it.itemType) === 'series')
+              return (
               <div style={{ marginTop: '12px' }}>
                 <div style={{ overflowX: 'auto' }}>
                   <table className="admin-table" style={{ width: '100%', tableLayout: 'fixed' }}>
                     <thead>
                       <tr>
                         <th style={{ width: '150px' }}>Action</th>
-                        <th style={{ minWidth: 0 }}>Source → Target Path</th>
+                        {isGroupSeries && <th style={{ width: '90px' }}>Episode</th>}
+                        <th style={{ minWidth: 0 }} colSpan={isGroupSeries ? 1 : 1}>Source → Target Path</th>
                         <th style={{ width: '90px', textAlign: 'right' }}>Size</th>
                         <th style={{ width: '140px', textAlign: 'left' }}>Trail</th>
                         <th style={{ width: '90px' }}>Status</th>
@@ -161,6 +164,8 @@ export default function HistoryPage() {
                         const hops = Math.max(0, history.length - 1)
                         const trailSummary = hops === 0 ? '—' : hops === 1 ? '1 hop' : `${hops} hops`
                         const trail = history.join(' → ')
+                        const epMatch = (item.target_path || '').match(/S\d{2}E\d{2,3}/i)
+                        const episode = epMatch ? epMatch[0].toUpperCase() : ''
                         return (
                           <tr key={item.confirm_id}>
                             <td>
@@ -185,6 +190,7 @@ export default function HistoryPage() {
                                 </span>
                               </div>
                             </td>
+                            {isGroupSeries && <td style={{ fontSize: '0.8rem', textAlign: 'left' }}>{episode}</td>}
                             <td>
                               <div className="path-cell">
                                 <div className="source-name" title={item.source_path}>
@@ -263,7 +269,8 @@ export default function HistoryPage() {
                   </button>
                 </div>
               </div>
-            )}
+            )
+            })()}
           </div>
         )
       })}

@@ -835,10 +835,14 @@ def create_ui_app(
         return {"restored": restored, "skipped": skipped, "history_id": history_id}
 
     @ui_app.post("/api/history/{history_id}/retarget", dependencies=[Depends(require_panel_auth)])
-    async def api_history_retarget(history_id: str, payload: dict | None = None):
+    async def api_history_retarget(history_id: str, payload: dict | None = None, request: Request = None):
         from app.services.history_store import append_to_path_history, get_history_group
         import shutil
         from pathlib import Path
+
+        from app.models.schemas import ScannedItem
+        from app.services import retarget as retarget_svc
+        from app.services.path_validator import validate_directory
 
         payload = payload or {}
         # Expect payload like {"updates": [{"confirmId": "i1", "newTarget": "/new/path/..."}]}
@@ -848,6 +852,9 @@ def create_ui_app(
         group = get_history_group(history_id)
         if not group:
             raise HTTPException(status_code=404, detail="History group not found")
+        # Use resolver for smart path matching (same as main report retarget)
+        manager: ScanManager = request.app.state.scan_manager if request else None
+        resolver = manager._resolver if manager and hasattr(manager, "_resolver") else None
         moved = 0
         for upd in updates:
             confirm_id = upd.get("confirmId") or upd.get("confirm_id")
@@ -859,10 +866,51 @@ def create_ui_app(
             if not item:
                 continue
             old_target = Path(item.get("target_path") or "")
-            new_path = Path(new_target)
             if not old_target.is_file():
                 continue
-            if new_path.exists():
+            # Smart path matching: if new_target is a directory under a configured root, reuse report's retarget logic
+            # so series episodes get Season subfolders and SxxEyy filenames, movies get folder-name.mkv, etc.
+            new_path: Path | None = None
+            reclassify = bool(upd.get("reclassifyAsMovie") or upd.get("reclassify_as_movie"))
+            try:
+                # Try to treat new_target as a browsed directory (smart retarget)
+                if resolver and manager:
+                    try:
+                        # validate_directory will succeed only for directories under movie/series roots
+                        dir_obj = validate_directory(new_target, [Path(p).resolve(strict=False) for p in list(manager._config.paths.movie_roots.values()) + list(manager._config.paths.series_roots.values())])
+                        # Build a temporary ScannedItem to reuse retarget logic (source ground truth)
+                        tmp = ScannedItem(
+                            confirmId=confirm_id,
+                            sourcePath=item.get("source_path") or "",
+                            name=Path(item.get("source_path") or "").name,
+                            item_type=item.get("item_type") or "movie",
+                            confidence=1.0,
+                            reason="history retarget",
+                            target_path=str(old_target),
+                            action="move",
+                        )
+                        # Apply smart retarget (handles Season, SxxEyy, movie folder, existing SxxEyy file reuse)
+                        retarget_svc.apply_retarget(tmp, dir_obj, reclassify, resolver)
+                        new_path = Path(tmp.target_path)
+                    except Exception:
+                        # Not a valid directory for smart retarget — fall back to literal file path
+                        new_path = Path(new_target)
+                else:
+                    new_path = Path(new_target)
+            except Exception:
+                new_path = Path(new_target)
+            if not new_path:
+                continue
+            # If new_path is a directory (user picked a folder), shutil.move will place file inside it
+            # If it's a file path, ensure parent exists and use exact path (smart retarget already did this)
+            if new_path.exists() and new_path.is_dir():
+                # Directory pick without smart logic fallback — move into dir keeping filename
+                dest = new_path / old_target.name
+                if dest.exists():
+                    continue
+                new_path = dest
+            elif new_path.exists():
+                # File already exists at exact target — skip (report would mark replace, history retarget is new-only)
                 continue
             try:
                 new_path.parent.mkdir(parents=True, exist_ok=True)
