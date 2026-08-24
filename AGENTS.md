@@ -14,6 +14,7 @@ No jellysort skill is installed in this environment yet — do not try to load o
 - Rebuild after source changes: docker compose build && docker compose restart
 - Web UI: enabled via WEB_UI_ENABLED=true in .env, served on the MCP port (single port)
 - MCP API: port 18328 (external), 18327 (internal). The Web UI is mounted at `/` on the same server, so UI (``/``, `/settings`, `/apikeys`, `/api/*`) and MCP (`/mcp`) all share port 18328.
+- Domain is dynamic — do not hardcode `localhost` or `10.69.1.164`. Discover at runtime: `docker ps` shows `0.0.0.0:18328->18327/tcp`, `docker inspect jellysort` for IP, or `cat .env` for `JELLYFIN_BASE_URL` host. Prefer `docker exec jellysort curl http://127.0.0.1:18327/mcp` (container-internal) or `curl http://<discovered-host>:18328/mcp` for MCP; never assume a fixed host.
 
 ## Project Structure
 
@@ -21,16 +22,27 @@ No jellysort skill is installed in this environment yet — do not try to load o
 - app/core/logging.py: logging setup
 - app/core/auth.py: MCP auth dependency (require_mcp_auth, MCP_DEFAULT_TOKEN as admin key)
 - app/models/schemas.py: Pydantic models
-- app/services/api_key_manager.py: hashed MCP API-key store (state in config/mcp_keys.json)
-- app/services/classifier.py: guessit-based and regex media classification
-- app/services/download_client.py: qBittorrent MCP client
-- app/services/env_manager.py: ENV_SPEC manifest + .env read/write/reload (settings page backend)
-- app/services/jellyfin.py: Jellyfin API client
-- app/services/presenters.py: shared report/confirm progress formatters (MCP + UI)
-- app/services/release_tracker.py: ongoing-release tracking (state in config/ongoing_releases.json)
-- app/services/resolver.py: PathResolver path-matching logic
-- app/services/scan_manager.py: scan-plan workflow, scan then confirm
-- app/services/scanner.py: filesystem scanner
+- app/core/constants.py: single source for VIDEO_EXTENSIONS + BROWSE_* caps
+- app/core/db.py: SQLite `config/app.db` (WAL, `get_db`/`init_db`, migration from JSON)
+- app/services/api_key_manager.py: hashed MCP API-key store (now `config/app.db` `api_keys`, `get_db`/`init_db`)
+- app/services/classifier.py: guessit-based and regex media classification (extra `kind=extra`, `extra_type`)
+- app/services/download_client.py: download client (qbittorrent/transmission/deluge via WebUI/native API, `DOWNLOAD_CLIENT` + `QBT_WEBUI_*` etc.)
+- app/services/env_manager.py: ENV_SPEC manifest + .env read/write/reload (settings page backend, live vs restart)
+- app/services/history_store.py: per-group confirm history (`config/app.db` `history_groups`/`history_items`, `path_history_json`, `suspect`/`corrected`/`cross_drive`, `MAX_HISTORY=200` not applicable — confirm history kept, scan snapshots `200`)
+- app/services/jellyfin.py: Jellyfin API client (`scan_library` via `Items/{id}/Refresh`, `Library/Media/Updated` for moves)
+- app/services/move_executor.py: confirm executor (cross-drive copy via `.partial`, `confirm_progress`, queue drain)
+- app/services/presenters.py: shared report/confirm progress formatters (MCP + UI, `format_report_grouped` by `sourceFolder`, `format_report_items` with `extra`/`suspect`)
+- app/services/release_tracker.py: ongoing-release tracking (now `config/app.db` `ongoing_releases`, was `ongoing_releases.json`)
+- app/services/resolver.py: PathResolver path-matching logic (`series_aliases` targeted globs, token overlap, apostrophe strip, `SxxEyy` file-exists)
+- app/services/retarget.py: retarget logic (`_effective_type` source `SxxEyy` ground truth, `_source_episode_tag`, `reclassify_as_movie`)
+- app/services/scan_history.py: scan snapshots + singleton (source of truth `config/app.db` `scans` table via `get_db`/`load_report`/`list_history`; `reports/history/*.json` and `reports/current.json` are legacy compat mirrors only)
+- app/services/scan_manager.py: scan-plan workflow (thin delegate, `create_scan` incremental vs `fullRescan`, singleton persist, queue)
+- app/services/scan_orchestrator.py: scan loop (candidates, `classify_candidate`, `_resolve_sync`, `group_retarget_pass`, planned coverage, `single_report` merge)
+- app/services/scan_store.py: in-memory `ScanStore` (`current` singleton + `history` map)
+- app/services/scanner.py: filesystem scanner (`scan_candidates`, `container_path`/`sourceFolder` for torrent folder)
+- app/services/confirm_queue.py: confirm queue (`_confirm_queue`, `_start_confirm`, `_start_queued_confirms`)
+- app/services/path_validator.py: path validation (`_is_path_within` root check)
+- app/services/undo.py: undo (`undo_items`/`undo_from_report`, only `move` restorable)
 - app/main.py: FastAPI entry point and MCP handlers
 - app/ui/server.py: Web UI FastAPI server (serves React bundle, native `/api` routes, panel auth, `/api/admin/*` env+key endpoints); mounted at `/` on the MCP app in `main.py` so UI and MCP share one port
 - app/ui/react/: React.js web UI (Vite build, source)
@@ -41,9 +53,9 @@ No jellysort skill is installed in this environment yet — do not try to load o
 - app/ui/react/src/utils/report.js: pure helpers (item mapping, grouping, filters, smart path sync)
 - plans/: project plans and roadmap documents (markdown)
 - tests/: pytest test suite
-- config/: config files plus runtime state (`ongoing_releases.json`, `mcp_keys.json`; scan plans live in memory only)
+- config/: config files plus runtime state (`config/app.db` WAL — source of truth for scan reports + history; `reports/history/*.json` and `reports/current.json` are read-only compat mirrors, never read directly for agent work)
 - logs/: runtime logs
-- reports/: generated reports
+- reports/: generated reports (legacy compat mirrors only — `reports/history/*.json` + `reports/current.json` singleton, `MAX_HISTORY=200`; DB `scans` table is canonical)
 - .env: active configuration
 - docker-compose.yml: container orchestration
 - Dockerfile: image build definition
@@ -62,6 +74,23 @@ Current state: **the React app is the main UI at `/`**. Old `/react` bookmarks 3
 - After any React source change: `npm run build` in `app/ui/react`, then `docker restart jellysort` (the compose file bind-mounts `.` into `/app`, so the built `react-dist/` and edited `server.py` are picked up on restart).
 
 ## Project Rules
+
+### Report retrieval is via SQLite/MCP — never via `reports/current.json`
+
+**Source of truth:** `config/app.db` `scans` table (`app/core/db.py:get_db`, `app/services/scan_history.py:load_report`/`list_history`). `reports/current.json` and `reports/history/*.json` are legacy compat mirrors written by `save_report`/`save_singleton` — do not `cat` them for agent work.
+
+**Correct approach for agents:**
+- Preferred: `POST /mcp` `tools/call` `get move new downloads scan report` (or `docker exec jellysort curl http://127.0.0.1:18327/mcp` with same body) — this reads `ScanStore`/`scans` DB.
+- Fallback (inside container): `python3 -c "from app.services.scan_history import load_report; print(load_report(scan_id))"` or `sqlite3 config/app.db "SELECT report_json FROM scans ORDER BY saved_at DESC LIMIT 1"` — never `cat reports/current.json` directly.
+- History: `GET /api/scans/history` or `load_report`/`list_history`, not `ls reports/history`.
+
+This avoids the multi-call fallback loop (localhost → file cat → python summarize) that leaked history paths. Previous mistake was `docker exec cat /app/reports/current.json` + manual python `Counter` summaries — replaced by single MCP/DB call.
+
+### Domain/port is dynamic — never hardcode
+
+**Problem:** `curl localhost:18328` fails when the service is only reachable via host IP (`10.69.1.164:18328`) or container-internal `127.0.0.1:18327`. Hardcoding `localhost` or a fixed IP breaks on every host move.
+
+**Correct approach:** Discover at runtime every time: `docker ps` → `0.0.0.0:18328->18327/tcp`, `docker inspect jellysort`, or `cat .env` `JELLYFIN_BASE_URL` host. Use `docker exec jellysort curl http://127.0.0.1:18327/mcp` (always works) or `curl http://<discovered-host>:18328/mcp`. Apply same to Web UI (`/` and `/history` share the same port).
 
 ### Docker rebuild after code changes
 
@@ -471,7 +500,7 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 ### Test suite counts
 
-Backend `python3 -m pytest tests/` runs **390 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **73 tests**. Keep both green after changes.
+Backend `python3 -m pytest tests/` runs **415 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **112 tests**. Keep both green after changes.
 
 ### Browse + retarget (smart correction UI)
 
@@ -522,6 +551,12 @@ background moving, smart correction) are all fully implemented and their
 durable knowledge now lives in `docs/` (backend/auth.md, services/,
 web-ui/). Do not recreate them; the `docs/` sections (plus the pattern blocks
 above) are the single source of truth for those features.
+
+## Execution Rules
+
+### No shortcuts — implement exactly as specified
+
+Do not shortcut, stub, or partially implement a requested feature to save time. If the spec says “show history as groups exactly like the Scan report, with full Source → Target, filters, and Move again,” implement the full grouping, filtering, and confirm flow — not a flat table. If unsure, ask and wait for a `go` before proceeding.
 
 ## Project Learnings
 

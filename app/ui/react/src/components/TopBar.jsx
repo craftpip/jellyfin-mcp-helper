@@ -103,14 +103,6 @@ export default function TopBar() {
           >
             Settings
           </button>
-          <button
-            type="button"
-            className={`small ${state.page === 'apikeys' ? 'active' : ''}`}
-            onClick={() => actions.setPage('apikeys')}
-            title="Manage API keys"
-          >
-            API Keys
-          </button>
           {state.authRequired && state.authed && (
             <button type="button" className="small logout-btn" onClick={actions.logout} title="Log out of this panel">
               Log out

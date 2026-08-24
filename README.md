@@ -8,9 +8,9 @@ The docs in this repo (`README.md`, `docs/`, `AGENTS.md`) describe the code
 at a specific commit, kept in sync by the recursive plan
 `plans/07-code-doc-sync.md` (never deleted, run repeatedly).
 
-- **Last synced commit:** `02befd2` (2026-08-18)
+- **Last synced commit:** `0db6114` (2026-08-24)
 
-To sync: review `git log --oneline 02befd2..HEAD`, update the docs for every
+To sync: review `git log --oneline 0db6114..HEAD`, update the docs for every
 commit in that range, then set this line to the new HEAD.
 
 ## Features

@@ -234,14 +234,15 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, query }) {
       </div>
       <div className={'group-body' + (expanded ? '' : ' collapsed')}>
         <div className="group-toolbar">
-          <label className="chk-label" onClick={(e) => e.stopPropagation()}>
+          <label className="chk-label" onClick={(e) => e.stopPropagation()} style={{ userSelect: 'none', WebkitUserSelect: 'none', cursor: 'pointer' }}>
             <input
               type="checkbox"
               className="group-select-all"
               checked={allChecked}
               onChange={(e) => actions.toggleGroupSelect(gi, e.target.checked)}
+              style={{ cursor: 'pointer' }}
             />
-            <span className="chk-text">{group.title}</span>
+            <span className="chk-text" style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>{group.title}</span>
           </label>
           {!skipOnly && (
             <a
@@ -285,7 +286,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, query }) {
           </thead>
           <tbody>
             {visibleItems.map((item) => (
-              <ReportRow key={item.confirmId} item={item} isSeries={isSeries} query={query} />
+              <ReportRow key={item.confirmId} item={item} isSeries={isSeries} query={query} group={group} />
             ))}
           </tbody>
         </table>
@@ -294,24 +295,29 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, query }) {
   )
 }
 
-function ReportRow({ item, isSeries, query }) {
+function ReportRow({ item, isSeries, query, group }) {
   const { state, actions } = useAppStore()
   const selected = state.selectedIds.includes(item.confirmId)
   const liveTarget = item._liveTarget || item.targetPath
+  const groupSize = group ? group.items.length : 0
+  const showLink = groupSize > 1
+  const isLinked = item._linked !== false
 
   if (item.action === 'skip') {
     return (
       <tr className="row-skipped">
-        <td>
+        <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={(e) => { if (e.target.tagName.toLowerCase() === 'input') return; actions.selectItem(item.confirmId, !selected) }}>
           <input
             type="checkbox"
             className="item-check skip-check"
             checked={selected}
             onChange={(e) => actions.selectItem(item.confirmId, e.target.checked)}
+            onClick={(e) => e.stopPropagation()}
+            style={{ cursor: 'pointer' }}
           />
         </td>
-        <td>
-          <div className="action-cell">
+        <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={() => actions.selectItem(item.confirmId, !selected)}>
+          <div className="action-cell" style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>
             <span className="badge action-skip">Skipped</span>
           </div>
         </td>
@@ -332,6 +338,7 @@ function ReportRow({ item, isSeries, query }) {
             className="danger small"
             onClick={() => actions.deleteSourceItem(item._idx)}
             title="Delete the source file"
+            style={{ marginRight: 8 }}
           >
             Delete
           </button>
@@ -343,16 +350,18 @@ function ReportRow({ item, isSeries, query }) {
   const actionLabel = item.action === 'replace' ? 'Existing' : 'New'
   return (
     <tr data-title={item.title.toLowerCase()} data-action={item.action} data-fileexists={item.fileExists ? 'true' : 'false'}>
-      <td>
+      <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={(e) => { if (e.target.tagName.toLowerCase() === 'input') return; actions.selectItem(item.confirmId, !selected) }}>
         <input
           type="checkbox"
           className="item-check"
           checked={selected}
           onChange={(e) => actions.selectItem(item.confirmId, e.target.checked)}
+          onClick={(e) => e.stopPropagation()}
+          style={{ cursor: 'pointer' }}
         />
       </td>
-      <td>
-        <div className="action-cell">
+      <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={() => actions.selectItem(item.confirmId, !selected)}>
+        <div className="action-cell" style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>
           <span className={'badge action-' + item.action}>{actionLabel}</span>
           {isCrossDriveItem(item) && (
             <span className="crossdrive-badge" title="Moved between hard drives — will take some time">
@@ -380,19 +389,56 @@ function ReportRow({ item, isSeries, query }) {
           <div className="source-name" title={item.sourcePath || item.sourceName || ''}>
             {highlight(item.sourcePath || item.sourceName || '', query)}
           </div>
-          <input
-            type="text"
-            className="target-input"
-            value={liveTarget}
-            onChange={(e) =>
-              actions.onTargetInputChange(item._idx, e.target.value, e.nativeEvent.inputType === 'insertFromPaste')
-            }
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.currentTarget.closest('.group-body')?.querySelector('.primary.small')?.focus()
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input
+              type="text"
+              className="target-input"
+              value={liveTarget}
+              onChange={(e) =>
+                actions.onTargetInputChange(item._idx, e.target.value, e.nativeEvent.inputType === 'insertFromPaste')
               }
-            }}
-          />
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.currentTarget.closest('.group-body')?.querySelector('.primary.small')?.focus()
+                }
+              }}
+              style={{ flex: 1, minWidth: 0 }}
+            />
+            {showLink && (
+              <button
+                className={'small link-toggle' + (isLinked ? ' active' : '')}
+                onClick={() => actions.toggleLink(item._idx)}
+                title={isLinked ? 'Link enabled — edits sync within group (click to unlink)' : 'Link disabled — editing freely (click to link)'}
+                aria-label={isLinked ? 'Unlink this file' : 'Link this file'}
+                aria-pressed={isLinked}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 0,
+                  width: 28,
+                  height: 29,
+                  minWidth: 28,
+                  lineHeight: 1,
+                  borderColor: isLinked ? 'var(--jf-accent, #00a4dc)' : undefined,
+                  background: isLinked ? 'rgba(0,164,220,0.15)' : undefined,
+                }}
+              >
+                {isLinked ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block' }}>
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block' }}>
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                    <line x1="2" y1="2" x2="22" y2="22" />
+                  </svg>
+                )}
+              </button>
+            )}
+          </div>
           <div className="target-tools">
             <button className="small browse-btn" onClick={() => actions.openBrowse(item.confirmId)}>
               Browse…
@@ -408,6 +454,7 @@ function ReportRow({ item, isSeries, query }) {
           className="danger small"
           onClick={() => actions.deleteSourceItem(item._idx)}
           title="Delete the source file (not the target)"
+          style={{ marginRight: 8 }}
         >
           Delete
         </button>

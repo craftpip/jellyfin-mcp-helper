@@ -12,6 +12,8 @@ The processing engine and integrations in `app/services/`.
 | [download-client](download-client.md) | qBittorrent MCP client |
 | [release-tracker](release-tracker.md) | Local next-release store |
 | `presenters.py` | Shared report/progress formatters (MCP + UI) |
+| `history_store.py` | Confirm history (`history_groups`/`history_items` in `app.db`, `path_history_json`, `suspect`/`corrected`/`cross_drive`, live `pathExists`) |
+| `scan_history.py` | Scan snapshots (`scans` table + `reports/history/*.json`, `MAX_HISTORY=200`, `ON CONFLICT DO UPDATE` upsert, singleton `reports/current.json`) |
 | `api_key_manager.py` | Hashed MCP API-key store — see [backend/auth](../backend/auth.md) |
 | `env_manager.py` | `ENV_SPEC` + live/restart env reload — see [backend/auth](../backend/auth.md) |
 

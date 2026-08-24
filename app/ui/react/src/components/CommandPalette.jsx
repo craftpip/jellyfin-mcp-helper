@@ -10,7 +10,6 @@ export default function CommandPalette({ open, onClose }) {
       { id: 'scan', label: 'Start Scan', hint: 'Scan downloads for new files', action: () => { onClose(); actions.startScan() }, show: state.page === 'scan' && !state.scanRunning },
       { id: 'report', label: 'Go to Scan & Move', hint: 'Back to scan report', action: () => { onClose(); actions.setPage('scan') } },
       { id: 'settings', label: 'Open Settings', hint: 'Configure JellySort', action: () => { onClose(); actions.setPage('settings') } },
-      { id: 'apikeys', label: 'Manage API Keys', hint: 'MCP keys', action: () => { onClose(); actions.setPage('apikeys') } },
       { id: 'logs', label: state.logsVisible ? 'Hide Logs' : 'Show Logs', hint: 'Toggle log panel', action: () => { onClose(); actions.toggleLogs() } },
       { id: 'copy-scan-id', label: 'Copy scan ID', hint: state.scanId || 'No scan', action: () => { if (state.scanId) { onClose(); actions.copyText(state.scanId) } }, show: !!state.scanId },
     ]

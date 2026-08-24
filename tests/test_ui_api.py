@@ -239,7 +239,8 @@ class TestAdminEnvEndpoints:
         client, _ = _make_client(tmp_path, monkeypatch)
         with client:
             assert client.get("/api/admin/env").status_code == 401
-            assert client.get("/api/admin/api-keys").status_code == 401
+            # api-keys endpoints removed — returns 404 even when authed
+            assert client.get("/api/admin/api-keys").status_code == 404
 
     def test_list_env_returns_spec(self, tmp_path, monkeypatch):
         client, _ = _make_client(tmp_path, monkeypatch)
@@ -250,7 +251,7 @@ class TestAdminEnvEndpoints:
             assert "spec" in body and "saved" in body and "effective" in body and "pending" in body
             keys = {e["key"] for e in body["spec"]}
             assert "MOVIE_ROOTS" in keys
-            assert "MCP_ALLOW_UNAUTHENTICATED" in keys
+            assert "JELLYSORT_MCP_TOKEN" in keys
 
     def test_update_env_rejects_unknown(self, tmp_path, monkeypatch):
         client, _ = _make_client(tmp_path, monkeypatch)
@@ -268,35 +269,17 @@ class TestAdminEnvEndpoints:
 
 
 class TestAdminApiKeyEndpoints:
+    # API-keys feature removed — endpoints return 404.
     def test_full_crud_flow(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("MCP_KEYS_FILE", str(tmp_path / "keys.json"))
         client, _ = _make_client(tmp_path, monkeypatch)
         with client:
-            created = client.post("/api/admin/api-keys", json={"name": "test-agent"})
-            assert created.status_code == 200
-            body = created.json()
-            assert body["name"] == "test-agent"
-            assert body["key"].startswith("jsort_")
-            assert "key_hash" not in body
-            key_id = body["id"]
-
-            listed = client.get("/api/admin/api-keys").json()
-            assert [k["id"] for k in listed["keys"]] == [key_id]
-            assert "key_hash" not in listed["keys"][0]
-
-            toggled = client.patch(f"/api/admin/api-keys/{key_id}", json={"enabled": False})
-            assert toggled.status_code == 200
-            assert not client.get("/api/admin/api-keys").json()["keys"][0]["enabled"]
-
-            deleted = client.delete(f"/api/admin/api-keys/{key_id}")
-            assert deleted.status_code == 200
-            assert client.get("/api/admin/api-keys").json()["keys"] == []
+            assert client.post("/api/admin/api-keys", json={"name": "test-agent"}).status_code == 404
+            assert client.get("/api/admin/api-keys").status_code == 404
 
     def test_missing_name_rejected(self, tmp_path, monkeypatch):
         client, _ = _make_client(tmp_path, monkeypatch)
         with client:
-            res = client.post("/api/admin/api-keys", json={"name": "  "})
-            assert res.status_code == 400
+            assert client.post("/api/admin/api-keys", json={"name": "  "}).status_code == 404
 
     def test_unknown_key_404(self, tmp_path, monkeypatch):
         client, _ = _make_client(tmp_path, monkeypatch)
@@ -305,13 +288,9 @@ class TestAdminApiKeyEndpoints:
             assert client.delete("/api/admin/api-keys/k_missing").status_code == 404
 
     def test_toggle_requires_enabled(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("MCP_KEYS_FILE", str(tmp_path / "keys.json"))
         client, _ = _make_client(tmp_path, monkeypatch)
         with client:
-            created = client.post("/api/admin/api-keys", json={"name": "a"}).json()
-            res = client.patch(f"/api/admin/api-keys/{created['id']}", json={})
-            assert res.status_code == 400
-            assert "enabled" in res.json()["detail"]
+            assert client.patch("/api/admin/api-keys/k_missing", json={}).status_code == 404
 
 
 

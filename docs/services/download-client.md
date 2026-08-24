@@ -1,21 +1,17 @@
 # Download Client — `app/services/download_client.py`
 
-qBittorrent integration over **MCP**. Used for two things:
+Multi-client native integration (qbittorrent / transmission / deluge) over **WebUI/RPC**, no MCP proxy. Used for two things:
 
 1. Detecting **in-progress downloads** so the scan can skip them.
 2. **Stopping seeding** before a move (so the torrent doesn't recreate files).
 
-## `QbittorrentClient`
+## `DownloadClient` (qbittorrent / transmission / deluge)
 
-### Construction
-
-`QbittorrentClient(base_url, api_key, user, password, paths_config)`
-
-`QbittorrentClient.from_env(paths_config)` returns `None` unless:
+`DownloadClient.from_env(paths_config)` / `QbittorrentClient` (backward-compat alias) returns `None` unless:
 
 - `ENABLE_DOWNLOAD_CLIENT_CHECK` is truthy (default true),
-- `DOWNLOAD_CLIENT == "qbittorrent"`,
-- `QBT_MCP_URL` is set.
+- `DOWNLOAD_CLIENT` in `qbittorrent`/`transmission`/`deluge`,
+- the matching `*_URL` is set (`QBT_WEBUI_URL` for qbittorrent, `TRANSMISSION_URL`, `DELUGE_URL`).
 
 ### Methods
 

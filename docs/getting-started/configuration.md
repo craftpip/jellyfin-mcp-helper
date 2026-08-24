@@ -53,15 +53,21 @@ into the container, so disk edits are visible instantly.
 `MODEL_REQUEST_TIMEOUT_SECONDS`, `MODEL_RETRY_ATTEMPTS` — were removed with the
 LLM clients and are no longer read by the code.)
 
-### Download client (qBittorrent via MCP)
+### Download client (native WebUI)
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `ENABLE_DOWNLOAD_CLIENT_CHECK` | `true` | Enable qBittorrent download-state checks. |
-| `DOWNLOAD_CLIENT` | *(unset)* | Client type. Must be set to `qbittorrent` to enable the client (only `qbittorrent` is implemented). |
-| `QBT_MCP_URL` | — | qBittorrent MCP endpoint. |
-| `QBT_MCP_API_KEY` | — | API key for the qBittorrent MCP server. |
-| `QBT_WEBUI_USER` / `QBT_WEBUI_PASS` | — | Optional qBittorrent WebUI credentials. |
+| `ENABLE_DOWNLOAD_CLIENT_CHECK` | `true` | Enable download-client in-progress checks. |
+| `DOWNLOAD_CLIENT` | *(unset)* | Client type: `qbittorrent` / `transmission` / `deluge` (empty = disabled). |
+| `QBT_WEBUI_URL` | — | qBittorrent WebUI URL (e.g. `http://10.69.1.164:8080`). `DOWNLOAD_CLIENT=qbittorrent` only. |
+| `QBT_WEBUI_USER` | — | qBittorrent username. |
+| `QBT_WEBUI_PASS` | — | qBittorrent password (secret). |
+| `TRANSMISSION_URL` | — | Transmission RPC URL (e.g. `http://10.69.1.164:9091/transmission/rpc`). |
+| `TRANSMISSION_USER` / `TRANSMISSION_PASS` | — | Transmission credentials (pass is secret). |
+| `DELUGE_URL` | — | Deluge WebUI URL (e.g. `http://10.69.1.164:8112`). |
+| `DELUGE_PASSWORD` | — | Deluge password (secret). |
+
+Legacy `QBT_MCP_URL` / `QBT_MCP_API_KEY` (MCP proxy) were removed in `746c7e5` — the client now talks directly to the native WebUI/RPC.
 
 ### Jellyfin integration (optional)
 

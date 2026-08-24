@@ -11,10 +11,11 @@ tasks. Constructed with an `AppConfig` and a shared `PathResolver`.
 
 ### `create_scan(request) -> ScanPlan`
 
-- Records the running loop and builds a new `ScanPlan` (status `running`).
+- `ScanRequest` is `replaceExisting` + `fullRescan` (`false` = incremental). Incremental seeds the new run with a deep copy of the live singleton’s `items`/`counts`/`service_errors`; `fullRescan=true` archives the live report via `save_report` before replacing.
+- Singleton persistence: `reports/current.json` via `save_singleton`/`load_singleton` (`app/services/scan_history.py`) + `app.db scans` table (`ON CONFLICT DO UPDATE`). Restored on `ScanManager` init for restart recovery. History pruned to `MAX_HISTORY=200`.
 - **Cancels any currently running scan first** (sets its cancel event and marks
   it `cancelled`) so only one scan runs at a time.
-- Spawns `_run_scan_task` as a background task and returns immediately.
+- Spawns `_run_scan_task` as a background task and returns immediately. On completion the singleton is re-saved so the live report survives restarts.
 
 ### `_run_scan_sync` — the scan loop
 

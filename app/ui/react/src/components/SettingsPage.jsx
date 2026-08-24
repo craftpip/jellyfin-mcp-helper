@@ -11,7 +11,37 @@ const SECTION_LABELS = {
   mcp: 'MCP Access Control',
 }
 
-const SECTION_ORDER = ['ai', 'download', 'web', 'jellyfin', 'paths', 'mcp']
+const SECTION_ORDER = ['web', 'mcp', 'jellyfin', 'paths', 'download', 'ai']
+
+function EyeIcon({ open }) {
+  return open ? (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z" />
+      <circle cx="12" cy="12" r="3.5" />
+    </svg>
+  ) : (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M17.94 17.94A10.94 10.94 0 0112 20C5 20 1 12 1 12a21.3 21.3 0 015.06-6.94" />
+      <path d="M9.53 9.53A3.5 3.5 0 0012 15.5a3.5 3.5 0 002.47-5.97" />
+      <path d="M14.12 14.12L9.88 9.88" />
+      <path d="M1 1l22 22" />
+      <path d="M10.58 10.58A3.5 3.5 0 0112 8.5a3.5 3.5 0 013.5 3.5c0 .62-.16 1.2-.44 1.71" opacity="0" />
+    </svg>
+  )
+}
+
+// Simpler closed-eye — eye with slash
+function EyeOffIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9.88 9.88A3 3 0 0012 15a3 3 0 002.12-5.12" />
+      <path d="M10.73 5.08A11 11 0 0112 4c7 0 11 8 11 8a18.2 18.2 0 01-2.16 3.19" />
+      <path d="M14.12 14.12A3 3 0 019.88 9.88" />
+      <path d="M2.9 6.1A11 11 0 001 12s4 8 11 8a9.6 9.6 0 005.39-1.61" />
+      <path d="M1 1l22 22" />
+    </svg>
+  )
+}
 
 export default function SettingsPage() {
   const { state, actions } = useAppStore()
@@ -19,19 +49,29 @@ export default function SettingsPage() {
   const pending = state.adminEnvPending || []
   const [draft, setDraft] = useState({})
   const [revealed, setRevealed] = useState({})
+  const [oldPasswords, setOldPasswords] = useState({})
+  const [oldRevealed, setOldRevealed] = useState({})
   const [recreateVars, setRecreateVars] = useState([])
   const [saving, setSaving] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
   const [clearPanelPassword, setClearPanelPassword] = useState(false)
+  const [clearMcpToken, setClearMcpToken] = useState(false)
   const originalRef = useRef(null)
+
+  function parseBoolForDraft(e) {
+    if (e.type !== 'bool') return e.effective
+    const v = String(e.effective ?? '').toLowerCase()
+    return v === 'true' || v === '1'
+  }
 
   useEffect(() => {
     if (entries.length && originalRef.current === null) {
       const originals = {}
       const initial = {}
       entries.forEach((e) => {
-        originals[e.key] = e.secret ? '' : e.effective
-        initial[e.key] = e.secret ? '' : e.effective
+        const val = e.type === 'bool' ? parseBoolForDraft(e) : (e.secret ? '' : e.effective)
+        originals[e.key] = val
+        initial[e.key] = val
       })
       originalRef.current = originals
       setDraft(initial)
@@ -53,7 +93,7 @@ export default function SettingsPage() {
   function validateValue(entry, value) {
     if (entry.secret || entry.type === 'bool' || entry.type === 'str') return null
     const text = String(value ?? '').trim()
-    if (!text) return null
+    if (!text) return 'Required — enter a number'
     if (entry.type === 'int' && !/^-?\d+$/.test(text)) return 'Must be an integer'
     if (entry.type === 'float' && (Number.isNaN(Number(text)) || !Number.isFinite(Number(text)))) {
       return 'Must be a number'
@@ -74,18 +114,41 @@ export default function SettingsPage() {
     setRevealed((r) => ({ ...r, [key]: !r[key] }))
   }
 
+  function toggleOldReveal(key) {
+    setOldRevealed((r) => ({ ...r, [key]: !r[key] }))
+  }
+
+  function hasExistingPassword(entry) {
+    if (!entry?.secret) return false
+    const eff = entry.effective
+    return eff === '********' || (eff && String(eff).trim() !== '')
+  }
+
+  function needsOldPassword(entry) {
+    if (!hasExistingPassword(entry)) return false
+    if (entry.key === 'JELLYSORT_MCP_TOKEN') return false
+    if (entry.key === 'UI_PANEL_PASSWORD' && clearPanelPassword) return true
+    const val = draft[entry.key]
+    return !!(val && String(val).trim())
+  }
+
   function countChanges() {
     const originals = originalRef.current || {}
     let changed = 0
     entries.forEach((e) => {
       const value = draft[e.key]
       if (e.key === 'UI_PANEL_PASSWORD' && clearPanelPassword) {
-        // Check if there's actually a password to clear (effective is non-empty)
         const effective = entries.find((x) => x.key === 'UI_PANEL_PASSWORD')?.effective
         if (effective && String(effective).trim() && effective !== '********' ? true : effective === '********') {
           changed += 1
         } else if (effective === '********') {
-          // If effective is masked, assume there is a password set (since we can't see it)
+          changed += 1
+        }
+      } else if (e.key === 'JELLYSORT_MCP_TOKEN' && clearMcpToken) {
+        const effective = entries.find((x) => x.key === 'JELLYSORT_MCP_TOKEN')?.effective
+        if (effective && String(effective).trim() && effective !== '********' ? true : effective === '********') {
+          changed += 1
+        } else if (effective === '********') {
           changed += 1
         }
       } else if (e.secret) {
@@ -94,7 +157,6 @@ export default function SettingsPage() {
         changed += 1
       }
     })
-    // Also count clearPanelPassword if not already counted via above logic for empty effective
     return changed
   }
 
@@ -102,17 +164,37 @@ export default function SettingsPage() {
     if (saving) return
     const originals = originalRef.current || {}
     const updates = {}
+    const oldForSave = {}
+    let missingOld = null
     entries.forEach((e) => {
       const value = draft[e.key]
       if (e.key === 'UI_PANEL_PASSWORD' && clearPanelPassword) {
         updates[e.key] = ''
+        if (hasExistingPassword(e)) {
+          const old = oldPasswords[e.key] ?? ''
+          if (!String(old).trim()) missingOld = e.key
+          else oldForSave[e.key] = old
+        }
+      } else if (e.key === 'JELLYSORT_MCP_TOKEN' && clearMcpToken) {
+        updates[e.key] = ''
       } else if (e.secret) {
         const text = String(value ?? '').trim()
-        if (text) updates[e.key] = text
+        if (text) {
+          if (e.key !== 'JELLYSORT_MCP_TOKEN' && hasExistingPassword(e)) {
+            const old = oldPasswords[e.key] ?? ''
+            if (!String(old).trim()) missingOld = e.key
+            else oldForSave[e.key] = old
+          }
+          updates[e.key] = text
+        }
       } else if (String(value ?? '') !== String(originals[e.key] ?? '')) {
         updates[e.key] = value ?? ''
       }
     })
+    if (missingOld) {
+      actions.toast(`Current password required to change ${missingOld}`, 'err')
+      return
+    }
     const keys = Object.keys(updates)
     if (!keys.length) {
       actions.toast('No changes to save', 'info')
@@ -124,7 +206,7 @@ export default function SettingsPage() {
     }
     setSaving(true)
     try {
-      const result = await actions.saveEnv(updates)
+      const result = await actions.saveEnv(updates, oldForSave)
       actions.log('Settings saved: ' + keys.join(', '), 'good')
       const appliedLive = (result && result.appliedLive) || []
       const needs = (result && result.needsRecreate) || []
@@ -141,7 +223,23 @@ export default function SettingsPage() {
         next[e.key] = e.secret ? '' : draft[e.key]
       })
       originalRef.current = next
+      // Clear secret fields in draft after save so Save count drops to 0 — otherwise typed password stays and counts as changed
+      const cleared = {}
+      let needsClear = false
+      keys.forEach((k) => {
+        const entry = entries.find((e) => e.key === k)
+        if (entry?.secret) {
+          cleared[k] = ''
+          needsClear = true
+        }
+      })
+      if (needsClear) {
+        setDraft((d) => ({ ...d, ...cleared }))
+      }
+      setOldPasswords({})
+      setOldRevealed({})
       setClearPanelPassword(false)
+      setClearMcpToken(false)
     } catch (e) {
       /* error toast already shown by the store */
     } finally {
@@ -170,24 +268,11 @@ export default function SettingsPage() {
       )
     }
     if (e.type === 'bool') {
-      // Make MCP toggle a switch in its row for better visibility
-      if (e.key === 'MCP_ALLOW_UNAUTHENTICATED') {
-        return (
-          <label className="switch" title={draft[e.key] ? 'Enabled — unauthenticated MCP allowed' : 'Disabled — MCP requires API key'}>
-            <input
-              type="checkbox"
-              checked={!!draft[e.key]}
-              onChange={(ev) => setField(e.key, ev.target.checked)}
-              aria-label={e.key}
-            />
-            <span className="switch-slider" />
-          </label>
-        )
-      }
+      const checked = draft[e.key] === true || String(draft[e.key]).toLowerCase() === 'true'
       return (
         <input
           type="checkbox"
-          checked={!!draft[e.key]}
+          checked={checked}
           onChange={(ev) => setField(e.key, ev.target.checked)}
           aria-label={e.key}
         />
@@ -195,56 +280,122 @@ export default function SettingsPage() {
     }
     if (e.secret) {
       const isPanelPassword = e.key === 'UI_PANEL_PASSWORD'
-      const hasPassword = (() => {
-        const entry = entries.find((x) => x.key === 'UI_PANEL_PASSWORD')
-        return entry && entry.effective && entry.effective !== '' && entry.effective !== '********' ? true : entry?.effective === '********'
-      })()
+      const isMcpToken = e.key === 'JELLYSORT_MCP_TOKEN'
+      const hasPassword = hasExistingPassword(e)
+      const isClearing = (isPanelPassword && clearPanelPassword) || (isMcpToken && clearMcpToken)
+      const isChanging = !isClearing && !!(draft[e.key] && String(draft[e.key]).trim())
+      const needsOld = hasPassword && (isChanging || isClearing)
       if (isPanelPassword && clearPanelPassword) {
         return (
-          <div className="secret-field">
-            <input
-              type="text"
-              value=""
-              placeholder="Will be cleared on save — direct login"
-              disabled
-              aria-label={e.key}
-              style={{ opacity: 0.6 }}
-            />
-            <button type="button" className="small" onClick={() => setClearPanelPassword(false)} title="Undo clear">
-              Undo Clear
-            </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+            <div className="secret-field">
+              <input
+                type="text"
+                value=""
+                placeholder="Will be cleared on save — direct login"
+                disabled
+                aria-label={e.key}
+                style={{ opacity: 0.6 }}
+              />
+              <button type="button" className="small" onClick={() => setClearPanelPassword(false)} title="Undo clear">
+                Undo Clear
+              </button>
+            </div>
+            <div className="secret-field">
+              <input
+                type={oldRevealed[e.key] ? 'text' : 'password'}
+                value={oldPasswords[e.key] ?? ''}
+                placeholder="Enter current password to confirm clearing"
+                onChange={(ev) => setOldPasswords((o) => ({ ...o, [e.key]: ev.target.value }))}
+                aria-label={`${e.key}_old`}
+              />
+              <button type="button" className="small" onClick={() => toggleOldReveal(e.key)} title={oldRevealed[e.key] ? 'Hide password' : 'Reveal password'} aria-label={oldRevealed[e.key] ? 'Hide password' : 'Reveal password'} style={{ padding: '6px 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                {oldRevealed[e.key] ? <EyeOffIcon /> : <EyeIcon open />}
+              </button>
+            </div>
+          </div>
+        )
+      }
+      if (isMcpToken && clearMcpToken) {
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+            <div className="secret-field">
+              <input
+                type="text"
+                value=""
+                placeholder="Will be cleared on save — MCP will be open (no auth)"
+                disabled
+                aria-label={e.key}
+                style={{ opacity: 0.6 }}
+              />
+              <button type="button" className="small" onClick={() => setClearMcpToken(false)} title="Undo clear">
+                Undo Clear
+              </button>
+            </div>
           </div>
         )
       }
       return (
-        <div className="secret-field">
-          <input
-            type={revealed[e.key] ? 'text' : 'password'}
-            value={draft[e.key] ?? ''}
-            placeholder={isPanelPassword ? (hasPassword ? '•••••••• (change or clear below)' : 'No password — direct login') : 'Leave blank to keep unchanged'}
-            onChange={(ev) => {
-              setField(e.key, ev.target.value)
-              if (isPanelPassword && ev.target.value) setClearPanelPassword(false)
-            }}
-            aria-label={e.key}
-          />
-          <button type="button" className="small" onClick={() => toggleReveal(e.key)} title={revealed[e.key] ? 'Hide' : 'Reveal'}>
-            {revealed[e.key] ? 'Hide' : 'Reveal'}
-          </button>
-          {isPanelPassword && hasPassword && (
-            <button
-              type="button"
-              className="small"
-              onClick={() => {
-                const next = !clearPanelPassword
-                setClearPanelPassword(next)
-                if (next) setField(e.key, '')
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%' }}>
+          <div className="secret-field">
+            <input
+              type={revealed[e.key] ? 'text' : 'password'}
+              value={draft[e.key] ?? ''}
+              placeholder={isPanelPassword ? (hasPassword ? '•••••••• (change or clear below)' : 'No password — direct login') : isMcpToken ? (hasPassword ? '•••••••• (change or clear below)' : 'Empty = MCP open (no auth)') : 'Leave blank to keep unchanged'}
+              onChange={(ev) => {
+                setField(e.key, ev.target.value)
+                if (isPanelPassword && ev.target.value) setClearPanelPassword(false)
+                if (isMcpToken && ev.target.value) setClearMcpToken(false)
               }}
-              title={clearPanelPassword ? 'Undo clear — keep existing password' : 'Remove password and allow direct login'}
-              style={clearPanelPassword ? { background: 'var(--jf-warn-bg)', borderColor: 'var(--jf-warn)', color: 'var(--jf-warn)' } : undefined}
-            >
-              {clearPanelPassword ? 'Undo Clear' : 'Clear'}
+              aria-label={e.key}
+            />
+            <button type="button" className="small" onClick={() => toggleReveal(e.key)} title={revealed[e.key] ? 'Hide password' : 'Reveal password'} aria-label={revealed[e.key] ? 'Hide password' : 'Reveal password'} style={{ padding: '6px 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              {revealed[e.key] ? <EyeOffIcon /> : <EyeIcon open />}
             </button>
+            {isPanelPassword && hasPassword && (
+              <button
+                type="button"
+                className="small"
+                onClick={() => {
+                  const next = !clearPanelPassword
+                  setClearPanelPassword(next)
+                  if (next) setField(e.key, '')
+                }}
+                title={clearPanelPassword ? 'Undo clear — keep existing password' : 'Remove password and allow direct login'}
+                style={clearPanelPassword ? { background: 'var(--jf-warn-bg)', borderColor: 'var(--jf-warn)', color: 'var(--jf-warn)' } : undefined}
+              >
+                {clearPanelPassword ? 'Undo Clear' : 'Clear'}
+              </button>
+            )}
+            {isMcpToken && hasPassword && (
+              <button
+                type="button"
+                className="small"
+                onClick={() => {
+                  const next = !clearMcpToken
+                  setClearMcpToken(next)
+                  if (next) setField(e.key, '')
+                }}
+                title={clearMcpToken ? 'Undo clear — keep existing token' : 'Clear token and make MCP open (no auth)'}
+                style={clearMcpToken ? { background: 'var(--jf-warn-bg)', borderColor: 'var(--jf-warn)', color: 'var(--jf-warn)' } : undefined}
+              >
+                {clearMcpToken ? 'Undo Clear' : 'Clear'}
+              </button>
+            )}
+          </div>
+          {needsOld && (
+            <div className="secret-field">
+              <input
+                type={oldRevealed[e.key] ? 'text' : 'password'}
+                value={oldPasswords[e.key] ?? ''}
+                placeholder="Current password required to change"
+                onChange={(ev) => setOldPasswords((o) => ({ ...o, [e.key]: ev.target.value }))}
+                aria-label={`${e.key}_old`}
+              />
+              <button type="button" className="small" onClick={() => toggleOldReveal(e.key)} title={oldRevealed[e.key] ? 'Hide password' : 'Reveal password'} aria-label={oldRevealed[e.key] ? 'Hide password' : 'Reveal password'} style={{ padding: '6px 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                {oldRevealed[e.key] ? <EyeOffIcon /> : <EyeIcon open />}
+              </button>
+            </div>
           )}
         </div>
       )
@@ -294,6 +445,33 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {(() => {
+        const mcpEntry = entries.find((e) => e.key === 'JELLYSORT_MCP_TOKEN')
+        const panelEntry = entries.find((e) => e.key === 'UI_PANEL_PASSWORD')
+        const isMcpInsecure = !mcpEntry || !mcpEntry.effective || String(mcpEntry.effective).trim() === ''
+        const isPanelInsecure = !panelEntry || !panelEntry.effective || String(panelEntry.effective).trim() === ''
+        if (!isMcpInsecure && !isPanelInsecure) return null
+        const reasons = []
+        if (isPanelInsecure) reasons.push('UI Panel password is not set — anyone with network access can open the web panel')
+        if (isMcpInsecure) reasons.push('JellySort MCP token is not set — anyone with network access can call the MCP API')
+        return (
+          <div className="warn-box" role="alert" style={{ borderColor: 'var(--jf-warn)', background: 'var(--jf-warn-bg)', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+            <span style={{ fontSize: '1.1rem', lineHeight: 1 }}>⚠️</span>
+            <div>
+              <strong>Unsecure — authentication disabled</strong>
+              <ul style={{ margin: '6px 0 0 18px', padding: 0, fontSize: '0.85rem', lineHeight: 1.4 }}>
+                {reasons.map((r) => (
+                  <li key={r}>{r}</li>
+                ))}
+              </ul>
+              <div className="hint" style={{ marginTop: '6px', fontSize: '0.8rem' }}>
+                Set a value for {isPanelInsecure && isMcpInsecure ? 'both' : isPanelInsecure ? 'UI_PANEL_PASSWORD' : 'JELLYSORT_MCP_TOKEN'} and save to secure this instance.
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {recreateVars.length > 0 && (
         <div className="warn-box" role="alert">
           <strong>Recreate required</strong> — these changes need a container recreate to take effect:{' '}
@@ -326,7 +504,7 @@ export default function SettingsPage() {
           const isJellyfin = section.id === 'jellyfin'
           const enableKey = isDownload ? 'ENABLE_DOWNLOAD_CLIENT_CHECK' : isJellyfin ? 'ENABLE_JELLYFIN_INTEGRATION' : null
           const enableEntry = enableKey ? section.items.find((e) => e.key === enableKey) : null
-          const isEnabled = enableEntry ? !!draft[enableKey] : true
+          const isEnabled = enableEntry ? (draft[enableKey] === true || String(draft[enableKey]).toLowerCase() === 'true') : true
           const sectionItems = section.items.filter((e) => {
             if (e.key === enableKey) return false
             if (!e.showWhen) return true
@@ -340,7 +518,7 @@ export default function SettingsPage() {
                   <label className="switch" title={isEnabled ? 'Enabled — click to disable' : 'Disabled — click to enable'} style={{ cursor: 'pointer' }}>
                     <input
                       type="checkbox"
-                      checked={!!draft[enableKey]}
+                      checked={isEnabled}
                       onChange={(ev) => setField(enableKey, ev.target.checked)}
                       aria-label={enableKey}
                     />
@@ -363,6 +541,7 @@ export default function SettingsPage() {
                 const isPending = pending.includes(e.key)
                 const isPathOrAlias = PATH_KEYS.has(e.key) || e.key === 'SERIES_TITLE_ALIASES'
                 const isClearedPassword = e.key === 'UI_PANEL_PASSWORD' && clearPanelPassword
+                const isClearedMcpToken = e.key === 'JELLYSORT_MCP_TOKEN' && clearMcpToken
                 return (
                   <>
                     <div className="env-row" style={isPathOrAlias ? { flexDirection: 'column', alignItems: 'stretch', padding: '6px 10px', gap: '6px' } : undefined}>
@@ -412,12 +591,30 @@ export default function SettingsPage() {
                         Password will be removed on save — panel will allow direct login.
                       </div>
                     )}
+                    {isClearedMcpToken && (
+                      <div
+                        style={{
+                          gridColumn: '1 / -1',
+                          margin: '-4px 0 8px 0',
+                          padding: '8px 12px',
+                          background: 'var(--jf-warn-bg)',
+                          border: '1px solid var(--jf-warn)',
+                          borderRadius: '6px',
+                          color: 'var(--jf-warn)',
+                          fontSize: '0.85rem',
+                          textAlign: 'center',
+                        }}
+                      >
+                        Token will be removed on save — MCP will be open (no authentication).
+                      </div>
+                    )}
                   </>
                 )
               })}
             </div>
             {section.id === 'download' && <DownloadClientTest draft={draft} />}
             {section.id === 'jellyfin' && <JellyfinTest draft={draft} />}
+            {section.id === 'mcp' && <McpClientSetup />}
           </section>
         )
       })
@@ -791,6 +988,43 @@ function StoragePathBrowser({ label, existingPaths, onAdd, onClose }) {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function McpClientSetup() {
+  const [open, setOpen] = useState(false)
+  const mcpUrl = typeof window !== 'undefined' ? window.location.origin + '/mcp' : 'http://<host>:18328/mcp'
+  return (
+    <div style={{ marginTop: '12px' }}>
+      <button
+        type="button"
+        className="small"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        title={open ? 'Hide client setup' : 'Show how to configure an MCP client'}
+        style={{ fontSize: '0.82rem' }}
+      >
+        <span style={{ display: 'inline-block', transition: 'transform 0.15s', transform: open ? 'rotate(90deg)' : 'rotate(0deg)', marginRight: '6px' }}>▸</span>
+        {open ? 'Hide client setup' : 'Show client setup'}
+      </button>
+      {open && (
+        <div style={{ marginTop: '8px', padding: '10px 12px', background: 'var(--jf-bg-raised)', border: '1px solid var(--jf-border-soft)', borderRadius: '6px' }}>
+          <div className="hint" style={{ fontSize: '0.82rem' }}>
+            When a token is set, send it with every MCP request as <code>Authorization: Bearer &lt;token&gt;</code> or <code>X-API-Key: &lt;token&gt;</code>. When empty, MCP is open (no header required).
+          </div>
+          <pre className="code-block" style={{ marginTop: '8px', fontSize: '0.78rem' }}>{`{
+  "mcpServers": {
+    "jellysort": {
+      "type": "remote",
+      "url": "${mcpUrl}",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}`}</pre>
+          <div className="hint" style={{ fontSize: '0.78rem', marginTop: '6px' }}>Example opencode remote MCP config. Replace &lt;token&gt; with the value of JELLYSORT_MCP_TOKEN.</div>
+        </div>
+      )}
     </div>
   )
 }

@@ -16,6 +16,7 @@
 | `SettingsPage` | env-var editor: grouped by `ENV_SPEC` section, secret masking + reveal, live vs recreate badges, "Recreate required" banner with the exact command. |
 | `ApiKeysPage` | MCP API-key table (name/user/prefix/enabled/created/last used/scopes) + create form (required name) with the once-only full-key modal and MCP client header hint. |
 | `BrowseModal` | Smart-correction folder browser for re-targeting: search box, combined "All libraries" root view, breadcrumb/`..`, season badges, "Select this folder". |
+| `HistoryPage` | Confirm history: per-`history_id` `▼/▶` cards (`group_title`, `N files`, `confirmed_at`), expanded table `Action` (Cross-drive/Suspect/Corrected + `PathPills`) / `Source → Target Path` (editable + `Browse…` via `FolderPicker`) / `Size` / `Trail` (compact `N hops • M paths` → 920px table popup with per-hop `move`/`replaced`) / `Status` / `Delete` (when `source_exists`), `Undo` + `Save & Move Again`. Shows **only** `history_items` for that confirm (not whole scan report), no summary pills/search/filter chips. |
 
 ## ReportPanel
 
@@ -70,3 +71,30 @@ behind the active move, the header appends `· N batch(es) queued` and a
 
 Renders a path with the drive root styled separately (`splitDrive`); `StatusPill`
 renders exists/type/action hints with tooltips.
+
+## HistoryPage
+
+`HistoryPage.jsx:5` fetches `GET /api/history?limit=50` → `history_groups` + `history_items`
+(`app.db` `history_groups`/`history_items`, written by `ScanManager.confirm_scan` →
+`history_store.append_history_group`). One Confirm = one card; two Confirms on same
+`sourceFolder` = two cards (`history_id` per Confirm, not per folder).
+
+* **Data:** `history_items` carry `suspect`/`corrected`/`correction_note`/`cross_drive`
+  (migrated via `ALTER TABLE` in `app/core/db.py`), `path_history_json` (`[source, target, …]`)
+  for the full movement trail, plus live `source_exists`/`target_exists`/`pathExists`
+  computed by `history_store.list_history_groups`/`get_history_group` for `PathPills`.
+* **Expanded row parity with `ReportPanel`:** `Action` badge + `Cross-drive`/`Suspect`/`Corrected`
+  badges + `PathPills`, editable target input with `Browse…` (`BrowseModal.jsx:FolderPicker`
+  extracted presentational picker), `Size` (`formatBytes`), `Trail` (compact summary button →
+  modal table `#/Path/Action` with per-hop badge: first hop reflects stored `action` (`move` vs
+  `replaced`), later hops are retargets), `Status`, `Delete` when `source_exists` (`POST
+  /api/history/{id}/delete-source`, 404 unknown item, `deleted: false` if file already gone).
+* **Actions:** `Undo` (`POST /api/history/{id}/undo`) and `Save & Move Again`
+  (`POST /api/history/{id}/retarget` with `updates`).
+* **Scan history is not History:** `GET /api/scans/history` (`reports/history/*.json` + `app.db`
+  `scans`, `MAX_HISTORY=200` in `app/services/scan_history.py:12`, merged DB+files via
+  `list_history`) stays on Dashboard `Recent:` and `GET /api/scans/history`, **not** in
+  `/history`. When `0` confirms, History shows `No confirms yet`.
+* **DB note:** `scans` upsert uses `ON CONFLICT DO UPDATE` (`app/services/scan_history.py:89`)
+  not `INSERT OR REPLACE`, so the `history_groups.scan_id` FK cascade is not triggered on
+  scan progress updates.

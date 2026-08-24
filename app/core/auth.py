@@ -6,7 +6,6 @@ from typing import Annotated
 from fastapi import Header, Request
 
 from app.core.config import get_settings
-from app.services.api_key_manager import ApiKeyManager
 
 
 class MCPUnauthorizedError(Exception):
@@ -31,12 +30,13 @@ def require_mcp_auth(
 ) -> None:
     """Gate /mcp requests.
 
-    - MCP_ALLOW_UNAUTHENTICATED=true (default) -> pass, user is "anonymous".
-    - Otherwise a valid API key from the key store or MCP_DEFAULT_TOKEN is required.
-      Valid keys set request.state.mcp_user so the activity log can show "as <user>".
+    - JELLYSORT_MCP_TOKEN empty -> pass, user is "anonymous".
+    - Otherwise the presented Bearer/X-API-Key must equal the token.
+      Valid token sets request.state.mcp_user to "admin" for logging.
     """
     settings = get_settings()
-    if settings.mcp_allow_unauthenticated:
+    token = settings.mcp_token
+    if not token:
         request.state.mcp_user = "anonymous"
         return
 
@@ -45,14 +45,9 @@ def require_mcp_auth(
         request.state.mcp_user = None
         raise MCPUnauthorizedError()
 
-    admin_token = settings.mcp_default_token or settings.admin_ui_token
-    if admin_token and hmac.compare_digest(raw_key, admin_token):
+    if hmac.compare_digest(raw_key, token):
         request.state.mcp_user = "admin"
         return
 
-    record = ApiKeyManager().authenticate(raw_key)
-    if record is None:
-        request.state.mcp_user = None
-        raise MCPUnauthorizedError()
-
-    request.state.mcp_user = record.get("user") or "default"
+    request.state.mcp_user = None
+    raise MCPUnauthorizedError()

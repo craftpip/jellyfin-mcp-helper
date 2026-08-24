@@ -14,7 +14,6 @@ import CommandPalette from './components/CommandPalette.jsx'
 import LoginScreen from './components/LoginScreen.jsx'
 import SetupWizard from './components/SetupWizard.jsx'
 import SettingsPage from './components/SettingsPage.jsx'
-import ApiKeysPage from './components/ApiKeysPage.jsx'
 import HistoryPage from './components/HistoryPage.jsx'
 
 export default function App() {
@@ -62,7 +61,6 @@ export default function App() {
         </>
       )}
       {state.page === 'settings' && <SettingsPage />}
-      {state.page === 'apikeys' && <ApiKeysPage />}
       {state.page === 'history' && <HistoryPage />}
 
       {state.logsVisible && <LogPanel />}

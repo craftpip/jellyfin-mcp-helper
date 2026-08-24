@@ -27,7 +27,6 @@ from app.core.constants import (  # single source of truth — re-exported for t
 from app.core.logging import set_request_id
 from app.core.version import VERSION
 from app.models.schemas import ScanPlan, ScanRequest
-from app.services.api_key_manager import ApiKeyManager
 from app.services.env_manager import list_env, update_env
 from app.services.jellyfin import JellyfinClient
 from app.services.presenters import (
@@ -565,54 +564,13 @@ def create_ui_app(
         updates = payload.get("updates")
         if not isinstance(updates, dict):
             raise HTTPException(status_code=400, detail="updates is required and must be an object")
+        old_passwords = payload.get("oldPasswords") or payload.get("old_passwords")
+        if old_passwords is not None and not isinstance(old_passwords, dict):
+            raise HTTPException(status_code=400, detail="oldPasswords must be an object")
         try:
-            return update_env(updates)
+            return update_env(updates, old_passwords or None)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-
-    # ── admin: API keys (Part F) ────────────────────────────────────
-    @ui_app.get("/api/admin/api-keys", dependencies=[Depends(require_panel_auth)])
-    async def admin_api_keys():
-        return {"keys": ApiKeyManager().list_keys()}
-
-    @ui_app.post("/api/admin/api-keys", dependencies=[Depends(require_panel_auth)])
-    async def admin_api_key_create(payload: dict | None = None):
-        payload = payload or {}
-        name = payload.get("name")
-        if not name or not str(name).strip():
-            raise HTTPException(status_code=400, detail="name is required")
-        try:
-            return ApiKeyManager().create_key(
-                name=str(name),
-                user=payload.get("user") or "default",
-                scopes=payload.get("scopes"),
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-    @ui_app.patch("/api/admin/api-keys/{key_id}", dependencies=[Depends(require_panel_auth)])
-    async def admin_api_key_toggle(key_id: str, payload: dict | None = None):
-        payload = payload or {}
-        if "enabled" not in payload:
-            raise HTTPException(status_code=400, detail="enabled is required")
-        manager = ApiKeyManager()
-        if not manager.set_enabled(key_id, bool(payload["enabled"])):
-            raise HTTPException(status_code=404, detail="key not found")
-        return {"ok": True}
-
-    @ui_app.get("/api/admin/api-keys/{key_id}/reveal", dependencies=[Depends(require_panel_auth)])
-    async def admin_api_key_reveal(key_id: str):
-        key = ApiKeyManager().reveal_key(key_id)
-        if key is None:
-            raise HTTPException(status_code=404, detail="key not found or not revealable — recreate the key")
-        return {"key": key}
-
-    @ui_app.delete("/api/admin/api-keys/{key_id}", dependencies=[Depends(require_panel_auth)])
-    async def admin_api_key_delete(key_id: str):
-        manager = ApiKeyManager()
-        if not manager.delete_key(key_id):
-            raise HTTPException(status_code=404, detail="key not found")
-        return {"ok": True}
 
     # ── Jellyfin libraries ─────────────────────────────────────────
     @ui_app.get("/api/libraries", dependencies=[Depends(require_panel_auth)])

@@ -60,9 +60,7 @@ ENV_SPEC: list[dict[str, Any]] = [
     {"key": "SERIES_TITLE_ALIASES", "section": "paths", "type": "str", "secret": False, "apply": "restart", "description": "Series title aliases: 'alias::canonical' entries separated by commas."},
 
     # ── MCP Access Control ──
-    {"key": "MCP_ALLOW_UNAUTHENTICATED", "section": "mcp", "type": "bool", "secret": False, "apply": "live", "description": "Allow unauthenticated MCP requests. Set false to require an API key or MCP_DEFAULT_TOKEN."},
-    {"key": "MCP_KEYS_FILE", "section": "mcp", "type": "str", "secret": False, "apply": "live", "description": "JSON file holding hashed MCP API keys."},
-    {"key": "MCP_DEFAULT_TOKEN", "section": "mcp", "type": "str", "secret": True, "apply": "live", "description": "MCP master key — bypasses per-client keys for API use."},
+    {"key": "JELLYSORT_MCP_TOKEN", "section": "mcp", "type": "str", "secret": True, "apply": "live", "description": "JellySort MCP token — when set, every /mcp request must present it as 'Authorization: Bearer <token>' (or X-API-Key); when empty, MCP is open."},
 ]
 
 ENV_SPEC_KEYS = {item["key"] for item in ENV_SPEC}
@@ -116,6 +114,11 @@ def _field_for_key(key: str) -> str | None:
 
 
 def _effective_value(key: str) -> Any:
+    # JELLYSORT_MCP_TOKEN is an alias that falls back to deprecated MCP_DEFAULT_TOKEN/ADMIN_UI_TOKEN
+    if key == "JELLYSORT_MCP_TOKEN":
+        s = get_settings()
+        # Prefer new, then old, via mcp_token property
+        return s.mcp_token
     field = _field_for_key(key)
     if field is not None:
         return getattr(get_settings(), field)
@@ -130,6 +133,9 @@ def list_env() -> dict[str, Any]:
     recreate, or was edited on disk but not yet applied).
     """
     saved = _parse_env_file()
+    # Alias: if JELLYSORT_MCP_TOKEN not in file but old MCP_DEFAULT_TOKEN is, treat old as saved for new
+    if "JELLYSORT_MCP_TOKEN" not in saved and "MCP_DEFAULT_TOKEN" in saved:
+        saved["JELLYSORT_MCP_TOKEN"] = saved["MCP_DEFAULT_TOKEN"]
     entries = []
     pending = []
     for item in ENV_SPEC:
@@ -149,7 +155,10 @@ def list_env() -> dict[str, Any]:
         # Only flag pending when the key is actually present in .env; missing
         # keys using defaults (e.g. deprecated WEB_UI_PORT) should not show as
         # pending after a restart/recreate.
-        if key in saved and saved_value != effective_value:
+        # Bool values are case-insensitive ("False" vs "false" should not be pending).
+        saved_cmp = saved_value.lower() if item["type"] == "bool" else saved_value
+        effective_cmp = effective_value.lower() if item["type"] == "bool" else effective_value
+        if key in saved and saved_cmp != effective_cmp:
             pending.append(key)
     return {
         "spec": entries,
@@ -166,11 +175,16 @@ def _rewrite_env(updates: dict[str, str]) -> None:
     output: list[str] = []
     for line in lines:
         match = _LINE_RE.match(line)
-        if match and match.group(1) in remaining:
-            key, value = match.group(1), remaining.pop(match.group(1))
-            output.append(f"{key}={_format_value(value)}")
-        else:
-            output.append(line)
+        if match:
+            key = match.group(1)
+            # Alias migration: if updating JELLYSORT_MCP_TOKEN, drop old MCP_DEFAULT_TOKEN line
+            if key == "MCP_DEFAULT_TOKEN" and "JELLYSORT_MCP_TOKEN" in remaining:
+                continue
+            if key in remaining:
+                _, value = match.group(1), remaining.pop(key)
+                output.append(f"{key}={_format_value(value)}")
+                continue
+        output.append(line)
     for key, value in remaining.items():
         output.append(f"{key}={_format_value(value)}")
     ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -190,20 +204,32 @@ def reload_settings() -> None:
     reset_settings()
 
 
-def update_env(changes: dict[str, str]) -> dict[str, list[str]]:
+def update_env(changes: dict[str, str], old_passwords: dict[str, str] | None = None) -> dict[str, list[str]]:
     """Validate and persist env changes.
 
-    Secret fields left blank are treated as "keep unchanged". Returns the list
-    of changed vars that are `apply: "restart"` so the UI can show the recreate
-    banner.
+    Secret fields left blank are treated as "keep unchanged". When a secret
+    already has a saved value, changing or clearing it requires the old
+    password in `old_passwords` — otherwise a ValueError is raised.
+    Returns the list of changed vars that are `apply: "restart"` so the UI
+    can show the recreate banner.
     """
     if not isinstance(changes, dict):
         raise ValueError("changes must be an object of KEY -> value")
+    if old_passwords is not None and not isinstance(old_passwords, dict):
+        raise ValueError("old_passwords must be an object")
     spec_by_key = {item["key"]: item for item in ENV_SPEC}
     unknown = [key for key in changes if key not in spec_by_key]
     if unknown:
         raise ValueError(f"unknown setting(s): {', '.join(unknown)}")
+    if old_passwords:
+        unknown_old = [k for k in old_passwords if k not in spec_by_key]
+        if unknown_old:
+            raise ValueError(f"unknown old password key(s): {', '.join(unknown_old)}")
 
+    saved_current = _parse_env_file()
+    # Alias: JELLYSORT_MCP_TOKEN inherits old MCP_DEFAULT_TOKEN if new not present
+    if "JELLYSORT_MCP_TOKEN" not in saved_current and "MCP_DEFAULT_TOKEN" in saved_current:
+        saved_current["JELLYSORT_MCP_TOKEN"] = saved_current["MCP_DEFAULT_TOKEN"]
     updates: dict[str, str] = {}
     for key, value in changes.items():
         if value is None:
@@ -212,9 +238,35 @@ def update_env(changes: dict[str, str]) -> dict[str, list[str]]:
         text = str(value).strip()
         if item["secret"] and text == "":
             if key == "UI_PANEL_PASSWORD":
+                # Clearing panel password — require old password if one is set
+                current = saved_current.get(key, "")
+                if current:
+                    provided = (old_passwords or {}).get(key, "")
+                    if not provided or str(provided) != current:
+                        raise ValueError(f"Old password required and must match for {key}")
+                updates[key] = ""
+            elif key == "JELLYSORT_MCP_TOKEN":
+                # Clearing MCP token — no old token required (user wants MCP open)
                 updates[key] = ""
             # else: blank secret = keep unchanged for other secrets
             continue
+        # For secrets being changed, verify old password if a value is already saved
+        # JELLYSORT_MCP_TOKEN is excluded — user can change/clear without old token
+        if item["secret"] and key in changes and key != "JELLYSORT_MCP_TOKEN":
+            current = saved_current.get(key, "")
+            if current:
+                provided = (old_passwords or {}).get(key, "")
+                if not provided:
+                    raise ValueError(f"Old password required for {key} — it is already set")
+                if str(provided) != current:
+                    raise ValueError(f"Old password incorrect for {key}")
+        # Normalize bool to lowercase "true"/"false" so file matches _stringify (avoids "False" vs "false" pending)
+        # Normalize bool to lowercase "true"/"false" so file matches _stringify (avoids "False" vs "false" pending)
+        if item["type"] == "bool":
+            low = text.lower()
+            if low in ("true", "false", "1", "0", "yes", "no", "on", "off"):
+                # Canonicalize via bool parsing: true-ish -> "true", false-ish -> "false"
+                text = "true" if low in ("true", "1", "yes", "on") else "false"
         updates[key] = text
 
     if not updates:

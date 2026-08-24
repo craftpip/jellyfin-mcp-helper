@@ -48,16 +48,18 @@ class Settings(BaseSettings):
     # Web UI panel auth. Empty (default) = direct login, no password prompt.
     ui_panel_password: str = Field(default="", alias="UI_PANEL_PASSWORD")
 
-    # MCP access control. When true (default), all unauthenticated MCP requests
-    # pass through. When false, /mcp requests must present a valid API key from
-    # MCP_KEYS_FILE (or MCP_DEFAULT_TOKEN).
-    mcp_allow_unauthenticated: bool = Field(default=True, alias="MCP_ALLOW_UNAUTHENTICATED")
-    # Path to the JSON file holding hashed API keys for MCP access.
-    mcp_keys_file: str = Field(default="config/mcp_keys.json", alias="MCP_KEYS_FILE")
-    # MCP master key for API use (bypasses per-client keys). Replaces ADMIN_UI_TOKEN.
+    # MCP access control. Single token: when JELLYSORT_MCP_TOKEN is set, every
+    # /mcp request must present it as Bearer/X-API-Key; when empty, MCP is open.
+    # MCP_DEFAULT_TOKEN is kept as deprecated alias for existing .env files.
+    jellysort_mcp_token: str | None = Field(default=None, alias="JELLYSORT_MCP_TOKEN")
     mcp_default_token: str | None = Field(default=None, alias="MCP_DEFAULT_TOKEN")
     # Deprecated alias for backward compat
     admin_ui_token: str | None = Field(default=None, alias="ADMIN_UI_TOKEN")
+
+    @property
+    def mcp_token(self) -> str | None:
+        """Effective MCP token — prefers JELLYSORT_MCP_TOKEN, falls back to deprecated MCP_DEFAULT_TOKEN/ADMIN_UI_TOKEN."""
+        return self.jellysort_mcp_token or self.mcp_default_token or self.admin_ui_token
 
     # Paths settings
     download_roots: str = Field(default="", alias="DOWNLOAD_ROOTS")

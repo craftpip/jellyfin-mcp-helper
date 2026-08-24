@@ -255,6 +255,55 @@ describe('computePathSync', () => {
     const items = seriesRows()
     expect(computePathSync(0, items[0]._liveTarget, items[0]._liveTarget, items)).toBe(null)
   })
+
+  it('does not sync when the changed row is unlinked', () => {
+    const items = seriesRows()
+    items[0]._linked = false
+    const synced = computePathSync(
+      0,
+      items[0]._liveTarget,
+      '/media1/series/Show Name (2021)/Season 01/Show Name S01E01.mkv',
+      items
+    )
+    expect(synced).toBeNull()
+  })
+
+  it('does not sync to an unlinked sibling', () => {
+    const items = seriesRows()
+    items[1]._linked = false
+    const synced = computePathSync(
+      0,
+      items[0]._liveTarget,
+      '/media1/series/Show Name (2021)/Season 01/Show Name S01E01.mkv',
+      items
+    )
+    expect(synced).toBeNull()
+  })
+
+  it('syncs only to linked siblings, skipping unlinked ones', () => {
+    const items = seriesRows().slice(0, 2)
+    // third sibling in same group
+    const third = { ...items[0], _liveTarget: '/media1/series/Show Name (2020)/Season 01/Show Name S01E03.mkv', targetPath: '/media1/series/Show Name (2020)/Season 01/Show Name S01E03.mkv', sourceFolder: 'Show.S01', containerPath: '/media1/torrents/Show.S01', title: 'Show Name (2020)', _linked: true }
+    items.push(third)
+    items[1]._linked = false
+    const synced = computePathSync(
+      0,
+      items[0]._liveTarget,
+      '/media1/series/Show Name (2021)/Season 01/Show Name S01E01.mkv',
+      items
+    )
+    expect(synced).not.toBeNull()
+    expect(synced.updates.length).toBe(1)
+    expect(synced.updates[0].idx).toBe(2)
+  })
+
+  it('keeps edit when all linked siblings are gone (only unlinked remain) — no revert', () => {
+    const items = seriesRows()
+    items[1]._linked = false
+    const synced = computePathSync(0, items[0]._liveTarget, '/totally/different/path/Show.mkv', items)
+    // No linked sibling exists, so revert should not trigger — return null (keep edit)
+    expect(synced).toBeNull()
+  })
 })
 
 describe('itemSearchText', () => {

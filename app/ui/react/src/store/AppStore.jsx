@@ -14,7 +14,7 @@ const LOG_LIMIT = 1000
 
 function pageFromPath() {
   if (typeof window === 'undefined') return 'scan'
-  const match = window.location.pathname.match(/^\/(scan|settings|apikeys|history)(?:\/|$)/)
+  const match = window.location.pathname.match(/^\/(scan|settings|history)(?:\/|$)/)
   return match ? match[1] : 'scan'
 }
 
@@ -93,7 +93,7 @@ const initialState = {
 
 const REPORT_TYPES = new Set(['SET_REPORT', 'SET_SELECTION', 'SET_ITEMS', 'TOGGLE_GROUP', 'SET_GROUPS_EXPANDED', 'SET_FILTER', 'SET_SEARCH_QUERY'])
 const SCAN_TYPES = new Set(['SET_SCAN_ID', 'SET_SCAN_RUNNING', 'SET_SCAN_PROGRESS'])
-const ADMIN_TYPES = new Set(['SET_ADMIN_ENV', 'SET_ADMIN_KEYS', 'SET_ADMIN_LOADING'])
+const ADMIN_TYPES = new Set(['SET_ADMIN_ENV', 'SET_ADMIN_LOADING'])
 
 function reducer(state, action) {
   if (REPORT_TYPES.has(action.type)) return reportReducer(state, action)
@@ -218,7 +218,7 @@ export function AppStoreProvider({ children }) {
   function renderReport(report) {
     const all = mapReportItems(report)
     const s = report.summary || {}
-    const withLive = all.map((i) => ({ ...i, _liveTarget: i.targetPath }))
+    const withLive = all.map((i) => ({ ...i, _liveTarget: i.targetPath, _linked: true }))
     const groups = groupItems(withLive)
     dispatch({
       type: 'SET_REPORT',
@@ -603,6 +603,15 @@ export function AppStoreProvider({ children }) {
     }
   }
 
+  function toggleLink(idx) {
+    const items = stateRef.current.currentItems
+    const item = items[idx]
+    if (!item) return
+    const updated = [...items]
+    updated[idx] = { ...item, _linked: item._linked === false ? true : false }
+    dispatch({ type: 'SET_ITEMS', currentItems: updated, reportGroups: groupItems(updated) })
+  }
+
   async function applyGroupTargetEdits(gi) {
     const group = stateRef.current.reportGroups?.[gi]
     if (!group) return
@@ -945,12 +954,11 @@ export function AppStoreProvider({ children }) {
 
   // ---- admin: page navigation ----
   function setPage(page) {
-    if (page !== 'scan' && page !== 'settings' && page !== 'apikeys' && page !== 'history') page = 'scan'
+    if (page !== 'scan' && page !== 'settings' && page !== 'history') page = 'scan'
     const target = pathForPage(page)
     if (window.location.pathname !== target) window.history.pushState({}, '', target)
     dispatch({ type: 'SET_PAGE', page })
     if (page === 'settings' && !stateRef.current.adminEnv) loadEnv()
-    if (page === 'apikeys' && !stateRef.current.adminKeys.length && !stateRef.current.adminLoading) loadApiKeys()
   }
 
   function setFilter(filter) {
@@ -994,10 +1002,11 @@ export function AppStoreProvider({ children }) {
     }
   }
 
-  async function saveEnv(updates) {
+  async function saveEnv(updates, oldPasswords) {
     dispatch({ type: 'SET_ADMIN_LOADING', loading: true })
     try {
-      const result = await apiPost('/admin/env', { updates })
+      const payload = oldPasswords && Object.keys(oldPasswords).length ? { updates, oldPasswords } : { updates }
+      const result = await apiPost('/admin/env', payload)
       await loadEnv()
       return result
     } catch (e) {
@@ -1007,60 +1016,6 @@ export function AppStoreProvider({ children }) {
       throw e
     } finally {
       dispatch({ type: 'SET_ADMIN_LOADING', loading: false })
-    }
-  }
-
-  // ---- admin: API keys ----
-  async function loadApiKeys() {
-    dispatch({ type: 'SET_ADMIN_LOADING', loading: true })
-    try {
-      const res = await apiGet('/admin/api-keys')
-      dispatch({ type: 'SET_ADMIN_KEYS', keys: res.keys || [] })
-    } catch (e) {
-      if (handleApiError(e)) return
-      log('Failed to load API keys: ' + e.message, 'err')
-      toast('Failed to load API keys: ' + e.message, 'err')
-    } finally {
-      dispatch({ type: 'SET_ADMIN_LOADING', loading: false })
-    }
-  }
-
-  async function createApiKey(payload) {
-    dispatch({ type: 'SET_ADMIN_LOADING', loading: true })
-    try {
-      const result = await apiPost('/admin/api-keys', payload)
-      await loadApiKeys()
-      return result
-    } catch (e) {
-      if (handleApiError(e)) return
-      log('Failed to create API key: ' + e.message, 'err')
-      toast('Failed to create API key: ' + e.message, 'err')
-      throw e
-    } finally {
-      dispatch({ type: 'SET_ADMIN_LOADING', loading: false })
-    }
-  }
-
-  async function toggleApiKey(id, enabled) {
-    try {
-      await apiPatch('/admin/api-keys/' + id, { enabled })
-      await loadApiKeys()
-    } catch (e) {
-      if (handleApiError(e)) return
-      log('Failed to update API key: ' + e.message, 'err')
-      toast('Failed to update API key: ' + e.message, 'err')
-    }
-  }
-
-  async function deleteApiKey(id) {
-    try {
-      await apiDelete('/admin/api-keys/' + id)
-      dispatch({ type: 'SET_ADMIN_KEYS', keys: stateRef.current.adminKeys.filter((k) => k.id !== id) })
-      toast('API key deleted', 'good')
-    } catch (e) {
-      if (handleApiError(e)) return
-      log('Failed to delete API key: ' + e.message, 'err')
-      toast('Failed to delete API key: ' + e.message, 'err')
     }
   }
 
@@ -1091,7 +1046,6 @@ export function AppStoreProvider({ children }) {
   useEffect(() => {
     if (!state.authed) return
     if (state.page === 'settings' && !stateRef.current.adminEnv) loadEnv()
-    if (state.page === 'apikeys' && !stateRef.current.adminKeys.length && !stateRef.current.adminLoading) loadApiKeys()
   }, [state.authed, state.page])
 
   useEffect(() => {
@@ -1134,6 +1088,7 @@ export function AppStoreProvider({ children }) {
     toggleGroupSelect,
     setCheckedItems,
     onTargetInputChange,
+    toggleLink,
     applyGroupTargetEdits,
     confirmSelected,
     confirmGroup,
@@ -1151,10 +1106,6 @@ export function AppStoreProvider({ children }) {
     setSearchQuery,
     loadEnv,
     saveEnv,
-    loadApiKeys,
-    createApiKey,
-    toggleApiKey,
-    deleteApiKey,
   }
 
   return <AppStoreContext.Provider value={{ state, actions }}>{children}</AppStoreContext.Provider>

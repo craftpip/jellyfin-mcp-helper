@@ -36,9 +36,9 @@ class TestExtractApiKey:
 
 class TestMcpAuthEnabled:
     def test_unauthenticated_requires_key(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("MCP_ALLOW_UNAUTHENTICATED", "false")
-        monkeypatch.setenv("MCP_KEYS_FILE", str(tmp_path / "keys.json"))
+        monkeypatch.setenv("JELLYSORT_MCP_TOKEN", "secret123")
         monkeypatch.delenv("MCP_DEFAULT_TOKEN", raising=False)
+        monkeypatch.delenv("ADMIN_UI_TOKEN", raising=False)
 
         from app.core.config import reset_settings
 
@@ -53,14 +53,8 @@ class TestMcpAuthEnabled:
         finally:
             reset_settings()
 
-    def test_valid_api_key_passes(self, monkeypatch, tmp_path):
-        from app.services.api_key_manager import ApiKeyManager
-
-        manager = ApiKeyManager(keys_file=str(tmp_path / "keys.json"))
-        created = manager.create_key("test-agent", user="alice")
-
-        monkeypatch.setenv("MCP_ALLOW_UNAUTHENTICATED", "false")
-        monkeypatch.setenv("MCP_KEYS_FILE", str(tmp_path / "keys.json"))
+    def test_valid_token_passes_bearer(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("JELLYSORT_MCP_TOKEN", "secret123")
         monkeypatch.delenv("MCP_DEFAULT_TOKEN", raising=False)
 
         from app.core.config import reset_settings
@@ -68,33 +62,27 @@ class TestMcpAuthEnabled:
         reset_settings()
         try:
             with TestClient(app) as client:
-                resp = _post_mcp(client, {"Authorization": f"Bearer {created['key']}"})
+                resp = _post_mcp(client, {"Authorization": "Bearer secret123"})
                 assert resp.status_code == 200
                 assert "result" in resp.json()
         finally:
             reset_settings()
 
     def test_x_api_key_header_passes(self, monkeypatch, tmp_path):
-        from app.services.api_key_manager import ApiKeyManager
-
-        manager = ApiKeyManager(keys_file=str(tmp_path / "keys.json"))
-        created = manager.create_key("test-agent")
-
-        monkeypatch.setenv("MCP_ALLOW_UNAUTHENTICATED", "false")
-        monkeypatch.setenv("MCP_KEYS_FILE", str(tmp_path / "keys.json"))
+        monkeypatch.setenv("JELLYSORT_MCP_TOKEN", "secret123")
 
         from app.core.config import reset_settings
 
         reset_settings()
         try:
             with TestClient(app) as client:
-                resp = _post_mcp(client, {"X-API-Key": created["key"]})
+                resp = _post_mcp(client, {"X-API-Key": "secret123"})
                 assert resp.status_code == 200
         finally:
             reset_settings()
 
-    def test_admin_token_accepted(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("MCP_ALLOW_UNAUTHENTICATED", "false")
+    def test_deprecated_mcp_default_token_accepted(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JELLYSORT_MCP_TOKEN", raising=False)
         monkeypatch.setenv("MCP_DEFAULT_TOKEN", "super-secret-token")
 
         from app.core.config import reset_settings
@@ -108,22 +96,15 @@ class TestMcpAuthEnabled:
         finally:
             reset_settings()
 
-    def test_disabled_key_rejected(self, monkeypatch, tmp_path):
-        from app.services.api_key_manager import ApiKeyManager
-
-        manager = ApiKeyManager(keys_file=str(tmp_path / "keys.json"))
-        created = manager.create_key("test-agent")
-        manager.set_enabled(created["id"], False)
-
-        monkeypatch.setenv("MCP_ALLOW_UNAUTHENTICATED", "false")
-        monkeypatch.setenv("MCP_KEYS_FILE", str(tmp_path / "keys.json"))
+    def test_wrong_token_rejected(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("JELLYSORT_MCP_TOKEN", "secret123")
 
         from app.core.config import reset_settings
 
         reset_settings()
         try:
             with TestClient(app) as client:
-                resp = _post_mcp(client, {"Authorization": f"Bearer {created['key']}"})
+                resp = _post_mcp(client, {"Authorization": "Bearer wrong"})
                 assert resp.status_code == 401
         finally:
             reset_settings()
@@ -131,8 +112,9 @@ class TestMcpAuthEnabled:
 
 class TestMcpAuthDisabledByDefault:
     def test_anonymous_passes_by_default(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("MCP_ALLOW_UNAUTHENTICATED", raising=False)
-        monkeypatch.setenv("MCP_KEYS_FILE", str(tmp_path / "keys.json"))
+        monkeypatch.delenv("JELLYSORT_MCP_TOKEN", raising=False)
+        monkeypatch.delenv("MCP_DEFAULT_TOKEN", raising=False)
+        monkeypatch.delenv("ADMIN_UI_TOKEN", raising=False)
 
         from app.core.config import reset_settings
 
@@ -150,7 +132,9 @@ class TestRequireMcpAuthUser:
         class FakeRequest:
             state = type("State", (), {})()
 
-        monkeypatch.delenv("MCP_ALLOW_UNAUTHENTICATED", raising=False)
+        monkeypatch.delenv("JELLYSORT_MCP_TOKEN", raising=False)
+        monkeypatch.delenv("MCP_DEFAULT_TOKEN", raising=False)
+        monkeypatch.delenv("ADMIN_UI_TOKEN", raising=False)
 
         from app.core.config import reset_settings
 
@@ -167,8 +151,8 @@ class TestRequireMcpAuthUser:
         class FakeRequest:
             state = type("State", (), {})()
 
-        monkeypatch.setenv("MCP_ALLOW_UNAUTHENTICATED", "false")
-        monkeypatch.setenv("MCP_DEFAULT_TOKEN", "tok")
+        monkeypatch.setenv("JELLYSORT_MCP_TOKEN", "tok")
+        monkeypatch.delenv("MCP_DEFAULT_TOKEN", raising=False)
 
         from app.core.config import reset_settings
 

@@ -125,10 +125,14 @@ export function matchesFilter(item, query, filterVal) {
 // computes { updates: [{idx, value}...] } for sibling rows whose live path shares
 // the same prefix/chunk, or { revert: true } if siblings existed but none matched.
 // Solo groups (no other rows with the same source folder) keep the edit — no revert, no sync.
+// Per-row link toggle: items with `_linked === false` are excluded from sync
+// both as source (editing an unlinked row never syncs) and as target (unlinked rows never receive sync).
 export function computePathSync(changedIdx, oldPath, newPath, items) {
   if (oldPath === newPath) return null
   const changedItem = items[changedIdx]
   if (!changedItem) return null
+  // Unlinked source → free edit, no sync, no revert
+  if (changedItem._linked === false) return null
   const groupKey = changedItem.sourceFolder || changedItem.containerPath || changedItem.title
 
   let i1 = 0
@@ -146,13 +150,15 @@ export function computePathSync(changedIdx, oldPath, newPath, items) {
   const newChunk = newPath.slice(i1, newPath.length - i2)
   if (oldChunk === newChunk) return null
 
-  let hasSameGroupSibling = false
+  let hasLinkedSibling = false
   const updates = []
   items.forEach((item, idx) => {
     if (idx === changedIdx) return
     const itemKey = item.sourceFolder || item.containerPath || item.title
     if (itemKey !== groupKey) return
-    hasSameGroupSibling = true
+    // Unlinked targets are skipped entirely — they neither count as sibling nor receive updates
+    if (item._linked === false) return
+    hasLinkedSibling = true
     const livePath = item._liveTarget || item.targetPath
     if (!livePath.startsWith(prefix)) return
     const after = livePath.slice(i1)
@@ -161,7 +167,7 @@ export function computePathSync(changedIdx, oldPath, newPath, items) {
     updates.push({ idx, value: prefix + replaced })
   })
 
-  if (!hasSameGroupSibling) return null
+  if (!hasLinkedSibling) return null
   if (updates.length === 0) return { revert: true }
   return { updates }
 }

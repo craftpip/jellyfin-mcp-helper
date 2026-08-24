@@ -63,6 +63,13 @@ the admin gate for the `/api/admin/*` routes).
 | `POST` | `/admin/api-keys` | Create a key → full key once (requires `name`). |
 | `PATCH` | `/admin/api-keys/{id}` | Enable/disable a key. |
 | `DELETE` | `/admin/api-keys/{id}` | Delete a key. |
+| `GET` | `/history?limit=50` | Confirm history groups (`history_groups` + `history_items`, live `source_exists`/`target_exists`/`pathExists`). |
+| `GET` | `/history/{history_id}` | Single confirm group with items. |
+| `POST` | `/history/{history_id}/undo` | Undo a confirm group (restore moved files). |
+| `POST` | `/history/{history_id}/retarget` | Save & Move Again for a history group (`{updates: [{confirmId, directory}]}`). |
+| `POST` | `/history/{history_id}/delete-source` | Delete leftover source file (`{confirmId}`, 404/400 guards, window.confirm in UI). |
+| `GET` | `/scans/history?limit=20` | Scan snapshots (`app.db scans` + `reports/history/*.json`, merged, `MAX_HISTORY=200`). |
+| `GET` | `/scans/history/{scan_id}` | Single scan report snapshot. |
 
 **No-scan semantics:** `GET /api/scans/current/...` with no current scan →
 HTTP 200 with `{hint: "No scan found. ..."}` (the React app checks `result.hint`
