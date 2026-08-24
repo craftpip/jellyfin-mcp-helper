@@ -86,9 +86,21 @@ def save_report(scan_id: str, report: dict, report_dir: Path | None = None) -> P
             tmp.replace(path)
         except:
             pass
-        # Save to DB
+        # Save to DB — use UPSERT not REPLACE so FK history_groups aren't cascade-deleted
         conn.execute(
-            "INSERT OR REPLACE INTO scans (scan_id, status, operation, created_at, finished_at, counts_json, service_errors_json, report_json, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            """
+            INSERT INTO scans (scan_id, status, operation, created_at, finished_at, counts_json, service_errors_json, report_json, saved_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(scan_id) DO UPDATE SET
+                status=excluded.status,
+                operation=excluded.operation,
+                created_at=excluded.created_at,
+                finished_at=excluded.finished_at,
+                counts_json=excluded.counts_json,
+                service_errors_json=excluded.service_errors_json,
+                report_json=excluded.report_json,
+                saved_at=excluded.saved_at
+            """,
             (
                 scan_id,
                 report.get("status", "completed"),
