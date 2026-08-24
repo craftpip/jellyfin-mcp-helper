@@ -117,7 +117,7 @@ export default function HistoryPage() {
     <div className="admin-page" style={{ maxWidth: 'none' }}>
       <div className="admin-header">
         <h2>History</h2>
-        <div className="hint">Every confirmed group is saved here. You can review, undo, or rename folders and move again. The full path trail is kept for display.</div>
+        <div className="hint">Every confirmed group is saved here. You can review, undo, or rename folders and move again. Full movement trail is kept for every file.</div>
       </div>
 
       {groups.map((group) => {
@@ -305,7 +305,7 @@ export default function HistoryPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '12px' }}>
-              <strong style={{ fontSize: '0.9rem' }}>Full trail</strong>
+              <strong style={{ fontSize: '0.9rem' }}>Full movement trail</strong>
               <button type="button" className="small" onClick={() => setTrailPopup(null)}>
                 Close
               </button>
