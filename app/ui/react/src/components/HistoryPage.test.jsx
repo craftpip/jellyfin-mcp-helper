@@ -153,15 +153,15 @@ describe('HistoryPage', () => {
     expect(pills.length).toBeGreaterThanOrEqual(4)
     // size formatted for c1 only (c2 has null size)
     expect(screen.getByText('2.0 KB')).toBeInTheDocument()
-    // trail joins pathHistory
-    expect(
-      screen.getByText(
-        (content, el) =>
-          el?.tagName === 'TD' &&
-          el.textContent ===
-            '/media1/downloads/New.Show.S01E01.mkv → /media1/library/New Show/Season 01/New Show S01E01.mkv'
-      )
-    ).toBeTruthy()
+    // trail now shows compact summary button, popup has full movement trail table
+    const trailButtons = screen.getAllByRole('button', { name: /hop/ })
+    expect(trailButtons.length).toBeGreaterThanOrEqual(1)
+    expect(trailButtons[0]).toHaveTextContent(/1 hop/)
+    await userEvent.click(trailButtons[0])
+    expect(await screen.findByText('Full movement trail')).toBeInTheDocument()
+    expect(screen.getAllByText('/media1/downloads/New.Show.S01E01.mkv').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('/media1/library/New Show/Season 01/New Show S01E01.mkv').length).toBeGreaterThanOrEqual(1)
+    await userEvent.click(screen.getByText('Close'))
     // status badges
     expect(screen.getByText('moved')).toBeInTheDocument()
     expect(screen.getByText('replaced')).toBeInTheDocument()

@@ -294,41 +294,54 @@ export default function HistoryPage() {
             style={{
               background: 'var(--jf-bg-raised, #242629)',
               border: '1px solid var(--jf-border, #2E3229)',
-              borderRadius: '10px',
-              maxWidth: '720px',
-              width: '100%',
-              maxHeight: '80vh',
+              borderRadius: '12px',
+              maxWidth: '920px',
+              width: '92%',
+              maxHeight: '82vh',
               overflow: 'auto',
-              padding: '16px',
-              boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
+              padding: '18px',
+              boxShadow: '0 12px 28px rgba(0,0,0,0.28)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '12px' }}>
-              <strong style={{ fontSize: '0.9rem' }}>Full movement trail</strong>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '14px' }}>
+              <strong style={{ fontSize: '0.95rem', letterSpacing: '0.01em' }}>Full movement trail</strong>
               <button type="button" className="small" onClick={() => setTrailPopup(null)}>
                 Close
               </button>
             </div>
             {trailPopup.title && (
-              <div style={{ fontSize: '0.75rem', color: 'var(--jf-text-muted)', marginBottom: '10px', wordBreak: 'break-all' }}>{trailPopup.title}</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--jf-text-muted)', marginBottom: '12px', wordBreak: 'break-all' }}>{trailPopup.title}</div>
             )}
-            <ol style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {trailPopup.pathHistory.map((p, idx) => {
-                const isFirst = idx === 0
-                const isLast = idx === trailPopup.pathHistory.length - 1
-                // Determine per-hop action: first hop uses stored item.action (move=new, replace=replaced), later hops are retargets (always new file)
-                const hopAction = isFirst ? null : idx === 1 ? (trailPopup.item?.action === 'replace' ? 'replaced' : trailPopup.item?.action === 'move' ? 'new' : null) : 'new (retarget)'
-                return (
-                  <li key={idx} style={{ fontSize: '0.8rem', wordBreak: 'break-all', color: isLast ? 'var(--jf-text-primary, #F5F0E6)' : 'var(--jf-text-muted)', textAlign: 'left' }}>
-                    <span style={{ color: 'var(--jf-text-muted)', marginRight: '6px' }}>{idx + 1}.</span>
-                    {p}
-                    {hopAction && <span style={{ marginLeft: '8px', fontSize: '0.65rem', padding: '1px 5px', borderRadius: '999px', background: hopAction.includes('replaced') ? 'rgba(224,90,51,0.18)' : 'rgba(62,207,142,0.18)', color: hopAction.includes('replaced') ? '#E05A33' : '#3ecf8e', verticalAlign: 'middle' }}>{hopAction}</span>}
-                    {!isLast && <span style={{ color: 'var(--jf-primary, #00A4DC)', marginLeft: '6px' }}>→</span>}
-                  </li>
-                )
-              })}
-            </ol>
+            <div style={{ overflowX: 'auto', border: '1px solid var(--jf-border, #2E3229)', borderRadius: '8px' }}>
+              <table className="admin-table" style={{ width: '100%', margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: '44px', textAlign: 'left', fontSize: '0.7rem', color: 'var(--jf-text-muted)', fontWeight: 500, padding: '8px 10px', borderBottom: '1px solid var(--jf-border, #2E3229)' }}>#</th>
+                    <th style={{ textAlign: 'left', fontSize: '0.7rem', color: 'var(--jf-text-muted)', fontWeight: 500, padding: '8px 10px', borderBottom: '1px solid var(--jf-border, #2E3229)' }}>Path</th>
+                    <th style={{ width: '130px', textAlign: 'left', fontSize: '0.7rem', color: 'var(--jf-text-muted)', fontWeight: 500, padding: '8px 10px', borderBottom: '1px solid var(--jf-border, #2E3229)' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trailPopup.pathHistory.map((p, idx) => {
+                    const isFirst = idx === 0
+                    const isLast = idx === trailPopup.pathHistory.length - 1
+                    const hopAction = isFirst ? 'source' : idx === 1 ? (trailPopup.item?.action === 'replace' ? 'replaced' : 'new') : 'new (retarget)'
+                    const badgeBg = hopAction === 'source' ? 'rgba(154,164,171,0.14)' : hopAction.includes('replaced') ? 'rgba(224,90,51,0.14)' : 'rgba(62,207,142,0.14)'
+                    const badgeColor = hopAction === 'source' ? 'var(--jf-text-muted)' : hopAction.includes('replaced') ? '#E05A33' : '#3ecf8e'
+                    return (
+                      <tr key={idx} style={{ background: isLast ? 'rgba(0,164,220,0.04)' : 'transparent' }}>
+                        <td style={{ padding: '9px 10px', fontSize: '0.75rem', color: 'var(--jf-text-muted)', textAlign: 'left', borderTop: idx ? '1px solid rgba(46,50,41,0.6)' : 'none' }}>{idx + 1}</td>
+                        <td style={{ padding: '9px 10px', fontSize: '0.8rem', wordBreak: 'break-all', color: isLast ? 'var(--jf-text-primary, #F5F0E6)' : 'var(--jf-text-muted)', textAlign: 'left', borderTop: idx ? '1px solid rgba(46,50,41,0.6)' : 'none' }}>{p}</td>
+                        <td style={{ padding: '9px 10px', textAlign: 'left', borderTop: idx ? '1px solid rgba(46,50,41,0.6)' : 'none' }}>
+                          <span style={{ fontSize: '0.65rem', padding: '2px 7px', borderRadius: '999px', background: badgeBg, color: badgeColor, whiteSpace: 'nowrap' }}>{hopAction}</span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
             <div style={{ fontSize: '0.7rem', color: 'var(--jf-text-muted)', marginTop: '12px', textAlign: 'left' }}>{trailPopup.pathHistory.length} paths • {Math.max(0, trailPopup.pathHistory.length - 1)} moves chained {trailPopup.item?.action ? `• first was ${trailPopup.item.action === 'replace' ? 'replaced' : 'new file'}` : ''}</div>
           </div>
         </div>

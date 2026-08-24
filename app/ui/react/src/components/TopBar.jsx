@@ -18,7 +18,20 @@ export default function TopBar() {
   return (
     <>
       <div className="top-bar">
-        <div className="brand">
+        <div
+          className="brand"
+          onClick={() => actions.setPage('scan')}
+          role="button"
+          tabIndex={0}
+          title="Go to homepage"
+          style={{ cursor: 'pointer' }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              actions.setPage('scan')
+            }
+          }}
+        >
           <img className="brand-logo" src={logoUrl} alt="JellySort logo" />
           <div>
             <h1>JellySort</h1>
@@ -26,16 +39,6 @@ export default function TopBar() {
           </div>
         </div>
         <div className="top-actions">
-          {state.page !== 'scan' && (
-            <button
-              type="button"
-              className="small"
-              onClick={() => actions.setPage('scan')}
-              title="Back to scan and move"
-            >
-              ← Scan &amp; Move
-            </button>
-          )}
           {state.page === 'scan' && !state.scanRunning && (
             <div ref={scanMenuRef} style={{ position: 'relative', display: 'inline-flex' }}>
               <button

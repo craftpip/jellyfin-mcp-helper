@@ -99,7 +99,7 @@ describe('page navigation', () => {
     expect(screen.queryByText('Start Scan')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Settings' })).toHaveClass('active')
 
-    await userEvent.click(screen.getByRole('button', { name: /Scan & Move/ }))
+    await userEvent.click(screen.getByTitle('Go to homepage'))
 
     expect(await screen.findByText('Start Scan')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Settings' })).not.toHaveClass('active')
@@ -139,7 +139,7 @@ describe('page navigation', () => {
     await screen.findByText('laptop agent')
     expect(window.location.pathname).toBe('/apikeys')
 
-    await userEvent.click(screen.getByRole('button', { name: /Scan & Move/ }))
+    await userEvent.click(screen.getByTitle('Go to homepage'))
     await screen.findByText('Start Scan')
     expect(window.location.pathname).toBe('/')
   })
