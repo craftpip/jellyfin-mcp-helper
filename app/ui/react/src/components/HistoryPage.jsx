@@ -213,13 +213,13 @@ export default function HistoryPage() {
                             <td style={{ whiteSpace: 'nowrap', textAlign: 'right', color: '#9aa4ab', fontSize: '0.8rem' }}>
                               {item.file_size ? formatBytes(item.file_size) : ''}
                             </td>
-                            <td style={{ textAlign: 'center' }}>
+                            <td style={{ textAlign: 'left' }}>
                               <button
                                 type="button"
                                 className="small"
-                                style={{ fontSize: '0.7rem', padding: '2px 6px', whiteSpace: 'nowrap' }}
+                                style={{ fontSize: '0.7rem', padding: '2px 6px', whiteSpace: 'nowrap', textAlign: 'left' }}
                                 title={trail}
-                                onClick={() => setTrailPopup({ pathHistory: history, title: item.source_path })}
+                                onClick={() => setTrailPopup({ pathHistory: history, title: item.source_path, item })}
                               >
                                 {trailSummary} <span style={{ color: 'var(--jf-text-muted)', fontWeight: 400 }}>• {history.length} paths</span>
                               </button>
@@ -314,15 +314,22 @@ export default function HistoryPage() {
               <div style={{ fontSize: '0.75rem', color: 'var(--jf-text-muted)', marginBottom: '10px', wordBreak: 'break-all' }}>{trailPopup.title}</div>
             )}
             <ol style={{ margin: 0, paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {trailPopup.pathHistory.map((p, idx) => (
-                <li key={idx} style={{ fontSize: '0.8rem', wordBreak: 'break-all', color: idx === trailPopup.pathHistory.length - 1 ? 'var(--jf-text-primary, #F5F0E6)' : 'var(--jf-text-muted)' }}>
-                  <span style={{ color: 'var(--jf-text-muted)', marginRight: '6px' }}>{idx + 1}.</span>
-                  {p}
-                  {idx < trailPopup.pathHistory.length - 1 && <span style={{ color: 'var(--jf-primary, #00A4DC)', marginLeft: '6px' }}>→</span>}
-                </li>
-              ))}
+              {trailPopup.pathHistory.map((p, idx) => {
+                const isFirst = idx === 0
+                const isLast = idx === trailPopup.pathHistory.length - 1
+                // Determine per-hop action: first hop uses stored item.action (move=new, replace=replaced), later hops are retargets (always new file)
+                const hopAction = isFirst ? null : idx === 1 ? (trailPopup.item?.action === 'replace' ? 'replaced' : trailPopup.item?.action === 'move' ? 'new' : null) : 'new (retarget)'
+                return (
+                  <li key={idx} style={{ fontSize: '0.8rem', wordBreak: 'break-all', color: isLast ? 'var(--jf-text-primary, #F5F0E6)' : 'var(--jf-text-muted)', textAlign: 'left' }}>
+                    <span style={{ color: 'var(--jf-text-muted)', marginRight: '6px' }}>{idx + 1}.</span>
+                    {p}
+                    {hopAction && <span style={{ marginLeft: '8px', fontSize: '0.65rem', padding: '1px 5px', borderRadius: '999px', background: hopAction.includes('replaced') ? 'rgba(224,90,51,0.18)' : 'rgba(62,207,142,0.18)', color: hopAction.includes('replaced') ? '#E05A33' : '#3ecf8e', verticalAlign: 'middle' }}>{hopAction}</span>}
+                    {!isLast && <span style={{ color: 'var(--jf-primary, #00A4DC)', marginLeft: '6px' }}>→</span>}
+                  </li>
+                )
+              })}
             </ol>
-            <div style={{ fontSize: '0.7rem', color: 'var(--jf-text-muted)', marginTop: '12px' }}>{trailPopup.pathHistory.length} paths • {Math.max(0, trailPopup.pathHistory.length - 1)} moves chained</div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--jf-text-muted)', marginTop: '12px', textAlign: 'left' }}>{trailPopup.pathHistory.length} paths • {Math.max(0, trailPopup.pathHistory.length - 1)} moves chained {trailPopup.item?.action ? `• first was ${trailPopup.item.action === 'replace' ? 'replaced' : 'new file'}` : ''}</div>
           </div>
         </div>
       )}
