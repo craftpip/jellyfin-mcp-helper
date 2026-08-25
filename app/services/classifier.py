@@ -11,6 +11,12 @@ from app.models.schemas import CandidateItem, ClassificationResult
 
 EXTRA_MARKERS = re.compile(r"\b(ncop\d*|nced\d*|op\d*|ed\d*|sp\d*|ova|ona|special|extras?|featurettes?|bonus|recap|trailer)\b", re.IGNORECASE)
 SAMPLE_MARKERS = re.compile(r"\bsample\b", re.IGNORECASE)
+_GENERIC_EXTRA_SET = {
+    "ed", "op", "nc", "nced", "ncop", "ova", "ona", "sp", "special", "extras", "extra",
+    "featurette", "featurettes", "bonus", "recap", "trailer", "short", "interview", "deleted",
+    "behindthescenes",
+}
+_COLLECTION_HINT_RE = re.compile(r"\b(collection|anthology|complete|boxset)\b", re.IGNORECASE)
 SEASON_EPISODE_RE = re.compile(r"s\d{1,2}e\d{1,3}", re.IGNORECASE)
 SPECIAL_TAG_RE = re.compile(r"(?:^|[\s\[\]()_.-])sp(?:[\s\[\]()_.-]|$)", re.IGNORECASE)
 DECIMAL_EPISODE_RE = re.compile(r"(?:^|[^a-z0-9])s\d{1,2}e\d{1,3}\.\d+(?:[^a-z0-9]|$)", re.IGNORECASE)
@@ -128,11 +134,45 @@ def classify_candidate(candidate: CandidateItem, series_title_aliases: dict[str,
             kind = "movie"
             confidence = max(confidence, 0.85)
             reason = "Detected franchise movie marker"
+    # Precompute folder title for hierarchy and false-positive guard (Level 1 vs Level 2)
+    folder_title = _get_folder_title(candidate)
     extra_type = _extra_type(label, parsed) if _looks_like_extra(label, parsed) else None
+    # Guard: show titles that contain ED/OP/SP (e.g., "ED, EDD n EDDY") must not be mis-flagged as extra when they are proper SxxEyy episodes
+    if extra_type and has_explicit_episode and folder_title and not _is_generic_folder_title(folder_title):
+        folder_words = set(_normalize_title_key(folder_title).split())
+        m = EXTRA_MARKERS.search(label)
+        if m and m.group(0).lower() in folder_words:
+            # marker is part of show name — only keep as extra if there's an independent extra context (NC folder, extras/ path, or standalone OP/ED suffix)
+            has_extra_folder = bool(re.search(r"(^|/)(NC|extras?|special|ova|ona)($|/|\\)", label, re.IGNORECASE))
+            # For Rosario NC/ED.mkv, has_extra_folder True (NC folder), so keep extra. For ED, EDD - S01E01, False, so clear.
+            if not has_extra_folder:
+                # also check if the file's trailing part after SxxEyy contains OP/ED as standalone suffix (e.g., "Show - S01E01 - OP")
+                # For genuine episode without such suffix, clear extra_type
+                if not re.search(r"S\d{1,2}E\d{1,3}.*\b(OP|ED|NCOP|NCED)\b", label, re.IGNORECASE):
+                    extra_type = None
     if extra_type and kind in ("series", "movie"):
         kind = "extra"
         confidence = max(confidence, 0.85)
         reason = f"Detected {extra_type} extra/specials marker"
+
+    # --- Level hierarchy: Level 1 (main folder = show identity) vs Level 2 (inner file/folder = season/episode/extra) ---
+    # For series/extra the folder is authoritative. The file stem (ED/OP/NC) must not be used to look up the show.
+    # For movie collections the folder is the collection name, so each inner file's title+year is authoritative.
+    # folder_title already computed above
+    if folder_title and kind in ("series", "extra"):
+        if not _is_generic_folder_title(folder_title) and _should_use_folder_title(folder_title, title):
+            if _is_generic_extra_title(title) or _is_fuller_title(folder_title, title):
+                title = folder_title
+                # keep year from folder if file had no year and folder does (e.g. "Show (2020)")
+                if year is None:
+                    m = re.search(r"\((19\d{2}|20\d{2})\)", folder_title)
+                    if m:
+                        try:
+                            year = int(m.group(1))
+                        except ValueError:
+                            pass
+    # movie collections: keep file title, do not override with collection folder
+    # (no action for kind=="movie" — file-derived title stays)
 
     if kind == "movie" and _looks_like_sample(label, parsed, candidate.file_size):
         kind = "skip"
@@ -448,6 +488,97 @@ def _is_fuller_title(candidate_title: str | None, parsed_title: str | None) -> b
         return False
     for word in candidate_words - parsed_words:
         if word.isdigit() and not _is_year_word(word):
+            return False
+    return True
+
+
+def _is_generic_extra_title(value: str | None) -> bool:
+    if not value:
+        return False
+    norm = _normalize_title_key(value)
+    if not norm:
+        return False
+    if norm in _GENERIC_EXTRA_SET:
+        return True
+    if re.fullmatch(r"(ncop|nced|op|ed|sp)\d*", norm, re.IGNORECASE):
+        return True
+    if EXTRA_MARKERS.search(value) and len(norm.split()) == 1 and len(norm) <= 4:
+        return True
+    return False
+
+
+def _is_generic_folder_title(value: str | None) -> bool:
+    if not value:
+        return True
+    norm = _normalize_title_key(value)
+    if not norm:
+        return True
+    if norm in _GENERIC_EXTRA_SET:
+        return True
+    # season folders like "Season 01", "S02", "Extras"
+    if SEASON_FOLDER_RE.search(value):
+        # allow "Show Name Season 02" -> not generic, but pure "Season 02" is generic
+        # if the folder after stripping season marker is empty/minimal, treat as generic
+        stripped = SEASON_FOLDER_RE.sub("", value).strip(" -._")
+        if not stripped or len(_normalize_title_key(stripped).split()) <= 1:
+            return True
+    if EXTRA_MARKERS.search(value) and len(norm.split()) == 1:
+        return True
+    if len(norm) <= 2 and not re.search(r"[a-z]{3,}", norm):
+        return True
+    return False
+
+
+def _get_folder_title(candidate: CandidateItem) -> str | None:
+    if candidate.container_path:
+        ft = _extract_series_from_source(candidate)
+        if ft and not _is_generic_folder_title(ft):
+            return ft
+        # fallback: cleaned raw folder name
+        raw = Path(candidate.container_path).name
+        cleaned = _clean_source_folder_name(raw)
+        if cleaned:
+            # also try to strip tech brackets like [1080p] that _extract_series_from_source handled
+            # use the same cleaning pipeline for fallback
+            tmp = _LEADING_BRACKET_RE.sub("", raw)
+            while _TRAILING_BRACKET_RE.search(tmp):
+                tmp = _TRAILING_BRACKET_RE.sub("", tmp)
+            tmp = _TRAILING_PAREN_TECH_RE.sub("", tmp)
+            tmp = _TRAILING_GROUP_RE.sub("", tmp)
+            tmp = tmp.strip()
+            if tmp and not _is_generic_folder_title(tmp):
+                return tmp
+            if cleaned and not _is_generic_folder_title(cleaned):
+                return cleaned
+            # container is generic (extras/season) — try relative_path first component before returning generic
+            if candidate.relative_path and "/" in candidate.relative_path:
+                first = candidate.relative_path.split("/")[0]
+                f2 = _LEADING_BRACKET_RE.sub("", first)
+                while _TRAILING_BRACKET_RE.search(f2):
+                    f2 = _TRAILING_BRACKET_RE.sub("", f2)
+                f2 = _TRAILING_PAREN_TECH_RE.sub("", f2)
+                f2 = _TRAILING_GROUP_RE.sub("", f2)
+                f2 = f2.strip(" -._")
+                if f2 and not _is_generic_folder_title(f2) and not SEASON_FOLDER_RE.search(f2):
+                    return f2
+            return cleaned
+    if candidate.relative_path and "/" in candidate.relative_path:
+        first = candidate.relative_path.split("/")[0]
+        # first component may be "[Anime Time] Rosario to Vampire"
+        cleaned = _LEADING_BRACKET_RE.sub("", first)
+        while _TRAILING_BRACKET_RE.search(cleaned):
+            cleaned = _TRAILING_BRACKET_RE.sub("", cleaned)
+        cleaned = _TRAILING_PAREN_TECH_RE.sub("", cleaned)
+        cleaned = _TRAILING_GROUP_RE.sub("", cleaned)
+        cleaned = cleaned.strip(" -._")
+        if cleaned and not _is_generic_folder_title(cleaned) and not SEASON_FOLDER_RE.search(cleaned):
+            return cleaned
+    return None
+
+
+def _should_use_folder_title(folder_title: str, file_title: str | None) -> bool:
+    if re.search(r"\b\d+_\d+\b", folder_title):
+        if not file_title or not re.search(r"\b\d+_\d+\b", file_title):
             return False
     return True
 

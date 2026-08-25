@@ -11,7 +11,12 @@ from pathlib import Path
 from app.core.config import AppConfig
 from app.core.constants import VIDEO_EXTENSIONS
 from app.models.schemas import CandidateItem, CandidateTarget, ClassificationResult, ResolvedTarget
-from app.services.classifier import _candidate_has_movie_marker
+from app.services.classifier import (
+    _candidate_has_movie_marker,
+    _get_folder_title,
+    _is_generic_extra_title,
+    _is_generic_folder_title,
+)
 from app.services.scanner import list_target_paths
 
 logger = logging.getLogger(__name__)
@@ -203,8 +208,14 @@ class PathResolver:
         # Try to resolve as series first if it looks like a series extra (has season/episode)
         if is_series_extra or classification.extra_type in ("special", "extra"):
             # Try series resolution but force extras subfolder
-            # Use the show name from classification or folder
-            show_name = sanitize_name(classification.title or Path(candidate.container_path or candidate.source_path).name)
+            # Level 1: main folder = show identity — never use file stem like ED/OP for lookup
+            raw_title = classification.title or Path(candidate.container_path or candidate.source_path).name
+            show_name = sanitize_name(raw_title)
+            # Folder-first hierarchy: if title is generic extra (ED/OP/NC/SP), use folder-derived title
+            if _is_generic_extra_title(show_name) or _is_generic_extra_title(raw_title) or _is_generic_folder_title(show_name):
+                folder_title = _get_folder_title(candidate)
+                if folder_title and not _is_generic_folder_title(folder_title) and not _is_generic_extra_title(folder_title):
+                    show_name = sanitize_name(folder_title)
             # Find the best matching series folder
             all_series_paths = list(self._series_existing_paths)
             if not self._scan_prepared:
@@ -357,7 +368,13 @@ class PathResolver:
         if not self._scan_prepared:
             for root in series_roots_list:
                 all_existing_paths.extend(list_target_paths(root))
-        show_name = sanitize_name(classification.title or candidate.name)
+        raw_title = classification.title or candidate.name
+        show_name = sanitize_name(raw_title)
+        # Folder-first for series as well: generic file stem must not win over folder
+        if _is_generic_extra_title(show_name) or _is_generic_extra_title(raw_title) or _is_generic_folder_title(show_name):
+            folder_title = _get_folder_title(candidate)
+            if folder_title and not _is_generic_folder_title(folder_title) and not _is_generic_extra_title(folder_title):
+                show_name = sanitize_name(folder_title)
         show_name = re.sub(r"([^a-zA-Z0-9])\1+$", r"\1", show_name)
         series_key = series_lookup_key(show_name, classification.year)
         logger.info(
