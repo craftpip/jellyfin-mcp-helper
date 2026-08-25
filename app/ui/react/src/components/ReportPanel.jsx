@@ -199,6 +199,7 @@ export default function ReportPanel() {
           const groupMatches = group.items.some((item) => matchesFilter(item, query, currentFilter))
           if (!groupMatches) return null
           const visibleItems = group.items
+          const matchedIds = new Set(group.items.filter((item) => matchesFilter(item, query, currentFilter)).map((i) => i.confirmId))
           return (
             <ReportGroup
               key={gid}
@@ -207,6 +208,7 @@ export default function ReportPanel() {
               group={group}
               expanded={expanded}
               visibleItems={visibleItems}
+              matchedIds={matchedIds}
               query={query}
               filter={currentFilter}
             />
@@ -217,7 +219,7 @@ export default function ReportPanel() {
   )
 }
 
-function ReportGroup({ gid, gi, group, expanded, visibleItems, query }) {
+function ReportGroup({ gid, gi, group, expanded, visibleItems, matchedIds, query, filter }) {
   const { state, actions } = useAppStore()
   const isSeries = group.items[0].itemType === 'series'
   const skipOnly = group.items.every((i) => i.action === 'skip')
@@ -289,9 +291,11 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, query }) {
             </tr>
           </thead>
           <tbody>
-            {visibleItems.map((item) => (
-              <ReportRow key={item.confirmId} item={item} isSeries={isSeries} query={query} group={group} />
-            ))}
+            {visibleItems.map((item) => {
+              const isMatched = matchedIds ? matchedIds.has(item.confirmId) : true
+              const shouldHighlight = isMatched && (filter !== 'all' || (query && query.trim() !== ''))
+              return <ReportRow key={item.confirmId} item={item} isSeries={isSeries} query={query} group={group} isHighlighted={shouldHighlight} />
+            })}
           </tbody>
         </table>
       </div>
@@ -299,7 +303,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, query }) {
   )
 }
 
-function ReportRow({ item, isSeries, query, group }) {
+function ReportRow({ item, isSeries, query, group, isHighlighted }) {
   const { state, actions } = useAppStore()
   const selected = state.selectedIds.includes(item.confirmId)
   const liveTarget = item._liveTarget || item.targetPath
@@ -309,7 +313,7 @@ function ReportRow({ item, isSeries, query, group }) {
 
   if (item.action === 'skip') {
     return (
-      <tr className="row-skipped">
+      <tr className={"row-skipped" + (isHighlighted ? " row-highlight" : "")} style={isHighlighted ? { background: 'rgba(232,179,75,0.14)', outline: '1px solid rgba(232,179,75,0.35)', outlineOffset: '-1px' } : undefined}>
         <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={(e) => { if (e.target.tagName.toLowerCase() === 'input') return; actions.selectItem(item.confirmId, !selected) }}>
           <input
             type="checkbox"
@@ -353,7 +357,7 @@ function ReportRow({ item, isSeries, query, group }) {
 
   const actionLabel = item.action === 'replace' ? 'Existing' : 'New'
   return (
-    <tr data-title={item.title.toLowerCase()} data-action={item.action} data-fileexists={item.fileExists ? 'true' : 'false'}>
+    <tr data-title={item.title.toLowerCase()} data-action={item.action} data-fileexists={item.fileExists ? 'true' : 'false'} className={isHighlighted ? "row-highlight" : undefined} style={isHighlighted ? { background: 'rgba(232,179,75,0.14)', outline: '1px solid rgba(232,179,75,0.35)', outlineOffset: '-1px' } : undefined}>
       <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={(e) => { if (e.target.tagName.toLowerCase() === 'input') return; actions.selectItem(item.confirmId, !selected) }}>
         <input
           type="checkbox"
