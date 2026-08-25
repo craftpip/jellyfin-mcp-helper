@@ -195,8 +195,10 @@ export default function ReportPanel() {
         {reportGroups.map((group, gi) => {
           const gid = 'group-' + gi
           const expanded = expandedGroups.includes(gid)
-          const visibleItems = group.items.filter((item) => matchesFilter(item, query, currentFilter))
-          if (visibleItems.length === 0) return null
+          // Group-level filtering: show the whole group if any item matches the query+filter
+          const groupMatches = group.items.some((item) => matchesFilter(item, query, currentFilter))
+          if (!groupMatches) return null
+          const visibleItems = group.items
           return (
             <ReportGroup
               key={gid}
