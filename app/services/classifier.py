@@ -137,14 +137,14 @@ def classify_candidate(candidate: CandidateItem, series_title_aliases: dict[str,
     # Precompute folder title for hierarchy and false-positive guard (Level 1 vs Level 2)
     folder_title = _get_folder_title(candidate)
     extra_type = _extra_type(label, parsed) if _looks_like_extra(label, parsed) else None
-    # Guard: show titles that contain ED/OP/SP (e.g., "ED, EDD n EDDY") must not be mis-flagged as extra when they are proper SxxEyy episodes
+    # Guard: show titles that contain a short extra marker as part of the title must not be mis-flagged when they are proper SxxEyy episodes
     if extra_type and has_explicit_episode and folder_title and not _is_generic_folder_title(folder_title):
         folder_words = set(_normalize_title_key(folder_title).split())
         m = EXTRA_MARKERS.search(label)
         if m and m.group(0).lower() in folder_words:
             # marker is part of show name — only keep as extra if there's an independent extra context (NC folder, extras/ path, or standalone OP/ED suffix)
             has_extra_folder = bool(re.search(r"(^|/)(NC|extras?|special|ova|ona)($|/|\\)", label, re.IGNORECASE))
-            # For Rosario NC/ED.mkv, has_extra_folder True (NC folder), so keep extra. For ED, EDD - S01E01, False, so clear.
+            # Extra in a dedicated extra subfolder keeps the extra flag; otherwise clear for proper episodes.
             if not has_extra_folder:
                 # also check if the file's trailing part after SxxEyy contains OP/ED as standalone suffix (e.g., "Show - S01E01 - OP")
                 # For genuine episode without such suffix, clear extra_type
@@ -564,7 +564,7 @@ def _get_folder_title(candidate: CandidateItem) -> str | None:
             return cleaned
     if candidate.relative_path and "/" in candidate.relative_path:
         first = candidate.relative_path.split("/")[0]
-        # first component may be "[Anime Time] Rosario to Vampire"
+        # first component may be "[Group] Show Name"
         cleaned = _LEADING_BRACKET_RE.sub("", first)
         while _TRAILING_BRACKET_RE.search(cleaned):
             cleaned = _TRAILING_BRACKET_RE.sub("", cleaned)

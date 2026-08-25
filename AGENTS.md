@@ -100,6 +100,10 @@ After changing any app/ source file, run: docker compose build && docker compose
 
 Verify by rerunning the affected scan or API behavior after restart.
 
+### Never mention real file/media names in code
+
+Real file names, series/movie titles, and release groups must never appear in code, comments, commit messages, or logs. Use neutral placeholders (`[Group] Show Name`, `Show S01E01.mkv`, `Movie (2020)`) — the same obfuscation rule as the corpus. If a bug report contains a real name, replace it with a generic example before commenting or committing.
+
 ### Corpus fixtures must be obfuscated before commit
 
 The classifier is the central point of this project. Every time a classifier issue appears, the affected real paths are added to the regression corpus so the same bug cannot come back.
