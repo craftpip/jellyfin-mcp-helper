@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 import unicodedata
 from difflib import SequenceMatcher
 from functools import cache
@@ -505,22 +506,36 @@ class PathResolver:
         year_text = str(year) if year else ""
         target_arc = season_arc_text(title)
         ep_title_norm = normalize_series_text(episode_title) if episode_title else ""
+        ep_title_tokens = tokenize(episode_title) if episode_title else set()
+        start = time.monotonic()
         logger.info(
             "[resolver] continuation search: title=%r year=%s season=%d ep_title=%r across %d folders",
             title, year, season, episode_title, len(paths),
         )
 
         scored: list[tuple[float, bool, str]] = []
+        # Cache seasons per path for this call to avoid repeated iterdir
+        seasons_cache: dict[str, set[int]] = {}
         for path in paths:
             try:
                 folder = Path(path)
                 folder_name = folder.name
                 folder_norm = normalize_series_text(folder_name)
                 folder_tokens = tokenize(folder_name)
-                seasons = self._existing_seasons(folder)
+                # Early gate: skip most folders before any disk I/O (rglob/iterdir)
+                # Keep folders that share a token, have the year, could match via arc (defer arc check), or share ep-title token
+                if not (title_tokens & folder_tokens or (year_text and year_text in folder_name) or target_arc or (ep_title_tokens & folder_tokens)):
+                    continue
+                seasons = seasons_cache.get(path)
+                if seasons is None:
+                    seasons = self._existing_seasons(folder)
+                    seasons_cache[path] = seasons
                 prev_season_in = (season - 1) in seasons
                 season_in_target = season in seasons
                 year_match = bool(year_text and year_text in folder_name)
+                # Re-check gate with continuity now that we have it
+                if not (title_tokens & folder_tokens or year_match or prev_season_in or season_in_target or target_arc):
+                    continue
                 if prev_season_in:
                     continuity_bonus = 2.0
                 elif seasons and max(seasons) < season:
@@ -587,6 +602,7 @@ class PathResolver:
             has_continuity = bool(continuity_bonus > 0.0)
             scored.append((score, bool(strong and has_continuity), path))
 
+        logger.info("[resolver] continuation search done for %r in %.2fs, %d scored", title, time.monotonic() - start, len(scored))
         if not scored:
             return None
         scored.sort(key=lambda item: (-item[0], item[1], item[2]))
@@ -676,10 +692,31 @@ class PathResolver:
         for alias in alias_values:
             alias_norm = normalize_series_text(alias)
             alias_tokens = tokenize(alias)
+            alias_core = normalize_series_text(alias.split('(')[0].strip()) if '(' in alias else alias_norm
             if alias_norm in wanted_norms:
+                return True
+            if any(wn and wn in alias_norm for wn in wanted_norms):
+                return True
+            if alias_core and any(alias_core in wn for wn in wanted_norms):
                 return True
             if any(tokens and tokens <= alias_tokens for tokens in wanted_tokens):
                 return True
+            if any(alias_tokens and len(alias_tokens) >= 3 and alias_tokens <= tokens for tokens in wanted_tokens):
+                return True
+            alias_core_tokens_check = tokenize(alias_core) if alias_core else set()
+            if any(alias_core_tokens_check and len(alias_core_tokens_check) >= 3 and alias_core_tokens_check <= tokens for tokens in wanted_tokens):
+                return True
+            for tokens in wanted_tokens:
+                if not tokens or not alias_tokens:
+                    continue
+                inter = len(tokens & alias_tokens)
+                min_len = min(len(tokens), len(alias_tokens))
+                alias_core_tokens = tokenize(alias_core) if alias_core else set()
+                inter_core = len(tokens & alias_core_tokens) if alias_core_tokens else 0
+                if inter >= 3 and inter >= min_len * 0.6:
+                    return True
+                if alias_core_tokens and inter_core >= 3 and inter_core >= min(len(alias_core_tokens), len(tokens)) * 0.6:
+                    return True
         return False
 
     def _pick_exact_path_match(
@@ -750,13 +787,21 @@ class PathResolver:
                 alias_norm = normalize_text(alias)
                 alias_tokens = tokenize(alias)
                 alias_similarity = SequenceMatcher(None, desired_norm or title_norm, alias_norm).ratio()
+                alias_core_norm = normalize_text(alias.split('(')[0].strip()) if '(' in alias else alias_norm
+                alias_core_tokens = tokenize(alias_core_norm) if alias_core_norm else set()
                 alias_starts_bonus = 1.0 if alias_norm.startswith(title_norm) and title_norm else 0.0
                 alias_contains_bonus = 1.0 if title_norm and title_norm in alias_norm else 0.0
+                alias_in_title_bonus = 1.0 if alias_norm and len(alias_tokens) >= 3 and alias_norm in title_norm else 0.0
+                alias_core_in_title_bonus = 1.0 if alias_core_norm and len(alias_core_tokens) >= 3 and alias_core_norm in title_norm else 0.0
+                alias_suffix_bonus = 1.0 if title_norm and len(alias_tokens) >= 3 and title_norm.endswith(alias_norm) else 0.0
+                alias_core_suffix_bonus = 1.0 if title_norm and alias_core_norm and len(alias_core_tokens) >= 3 and title_norm.endswith(alias_core_norm) else 0.0
                 if alias_similarity > best_alias_similarity:
                     best_alias_similarity = alias_similarity
                     best_alias_starts_bonus = alias_starts_bonus
-                    best_alias_contains_bonus = alias_contains_bonus
+                    best_alias_contains_bonus = max(alias_contains_bonus, alias_in_title_bonus, alias_core_in_title_bonus, alias_suffix_bonus, alias_core_suffix_bonus)
                     folder_tokens = alias_tokens
+                    if alias_core_tokens and len(title_tokens & alias_core_tokens) > len(title_tokens & alias_tokens):
+                        folder_tokens = alias_core_tokens
 
             shared_title = len(title_tokens & folder_tokens)
             shared_desired = len(desired_tokens & folder_tokens)
@@ -812,10 +857,21 @@ class PathResolver:
             for alias in alias_values:
                 alias_norm = normalize_text(alias)
                 alias_tokens = tokenize(alias)
+                alias_core_norm = normalize_text(alias.split('(')[0].strip()) if '(' in alias else alias_norm
+                alias_core_tokens = tokenize(alias_core_norm) if alias_core_norm else set()
                 alias_similarity = SequenceMatcher(None, desired_norm or title_norm, alias_norm).ratio()
                 alias_shared_title = len(title_tokens & alias_tokens)
                 alias_shared_desired = len(desired_tokens & alias_tokens)
+                # also consider core tokens for long titles with arc prefix
+                if alias_core_tokens:
+                    alias_shared_title = max(alias_shared_title, len(title_tokens & alias_core_tokens))
+                    alias_shared_desired = max(alias_shared_desired, len(desired_tokens & alias_core_tokens))
                 alias_subset_bonus = 1 if title_tokens and title_tokens <= alias_tokens else 0
+                # reverse: alias is subset of title (show suffix in long title) — require 3+ tokens to avoid short prefix false positives
+                if alias_tokens and len(alias_tokens) >= 3 and alias_tokens <= title_tokens:
+                    alias_subset_bonus = 1
+                if alias_core_tokens and len(alias_core_tokens) >= 3 and alias_core_tokens <= title_tokens:
+                    alias_subset_bonus = 1
                 alias_exact_bonus = 1 if title_norm and title_norm == alias_norm else 0
                 if (
                     alias_exact_bonus,
@@ -834,16 +890,32 @@ class PathResolver:
                     shared_title = alias_shared_title
                     shared_desired = alias_shared_desired
                     starts_bonus = 1.0 if title_norm and alias_norm.startswith(title_norm) else 0.0
-                    contains_bonus = 1.0 if title_norm and title_norm in alias_norm else 0.0
-                    best_token_total = max(len(alias_tokens), 1)
+                    # also handle alias contained in title (arc+show) — require 3+ tokens to avoid short prefix false positives
+                    alias_in_title = 1.0 if alias_norm and len(alias_tokens) >= 3 and alias_norm in title_norm else 0.0
+                    alias_core_in_title = 1.0 if alias_core_norm and len(alias_core_tokens) >= 3 and alias_core_norm in title_norm else 0.0
+                    alias_suffix = 1.0 if title_norm and len(alias_tokens) >= 3 and title_norm.endswith(alias_norm) else 0.0
+                    alias_core_suffix = 1.0 if title_norm and alias_core_norm and len(alias_core_tokens) >= 3 and title_norm.endswith(alias_core_norm) else 0.0
+                    contains_bonus = max(
+                        1.0 if title_norm and title_norm in alias_norm else 0.0,
+                        alias_in_title,
+                        alias_core_in_title,
+                        alias_suffix,
+                        alias_core_suffix,
+                    )
+                    best_token_total = max(len(alias_tokens), len(alias_core_tokens), 1)
 
             token_overlap = (shared_title + shared_desired) / (best_token_total * 2)
             year_bonus = 1.0 if year_text and year_text in folder_name else 0.0
             subset_bonus = 0.3 if title_tokens and shared_title == len(title_tokens) else 0.0
+            # also handle alias is subset of title (show suffix in long title with arc prefix)
+            if best_alias_subset_bonus == 1:
+                subset_bonus = 0.3
             exact_bonus = 0.15 if title_norm and similarity == 1.0 else 0.0
             depth_bonus = min(series_video_count(path), 20) * 0.01 if Path(path).is_dir() else 0.0
+            # strong alias bonus for alias contained in title (arc+show) — more weight than generic contains
+            strong_alias_bonus = 1.0 if contains_bonus > 0 and (shared_title >= 3 and shared_title >= min(len(title_tokens), best_token_total) * 0.6) else 0.0
 
-            score = (similarity * 0.45) + (token_overlap * 0.2) + (year_bonus * 0.15) + (starts_bonus * 0.03) + (contains_bonus * 0.02) + subset_bonus + exact_bonus + depth_bonus
+            score = (similarity * 0.45) + (token_overlap * 0.2) + (year_bonus * 0.15) + (starts_bonus * 0.03) + (contains_bonus * 0.02) + subset_bonus + exact_bonus + depth_bonus + (strong_alias_bonus * 0.25)
             if score > best_score:
                 best_score = score
                 best_path = path
