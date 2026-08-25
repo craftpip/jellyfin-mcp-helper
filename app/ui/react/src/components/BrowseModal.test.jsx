@@ -109,7 +109,7 @@ describe('BrowseModal', () => {
     renderApp()
 
     expect(await screen.findAllByText('New Show (2025)')).toBeTruthy()
-    expect(screen.getByText('Suspect')).toBeInTheDocument()
+    expect(document.querySelector('.suspect-badge')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: /Browse/ }))
 

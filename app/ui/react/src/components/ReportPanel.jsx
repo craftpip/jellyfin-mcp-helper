@@ -27,6 +27,7 @@ const FILTER_DEFS = [
   ['move', 'New'],
   ['replace', 'Replace'],
   ['extra', 'Extras'],
+  ['suspect', 'Suspect'],
 ]
 
 export default function ReportPanel() {
@@ -51,6 +52,7 @@ export default function ReportPanel() {
     move: actionable.filter((i) => i.action === 'move').length,
     replace: actionable.filter((i) => i.action === 'replace').length,
     extra: actionable.filter((i) => i.itemType === 'extra').length,
+    suspect: actionable.filter((i) => i.suspect).length,
   }
   const hasItems = actionable.length > 0
   const hasSkippedOnly = !hasItems && skipped.length > 0
