@@ -768,9 +768,9 @@ a.search-btn svg { flex: none; }
 
 .suspect-badge {
   display: inline-block; padding: 0 8px; border-radius: 10px;
-  font-size: 0.72rem; font-weight: 500;
+  font-size: 0.72rem; font-weight: 600;
   background: var(--jf-danger-bg); color: var(--jf-danger);
-  border: 1px solid rgba(232, 179, 75, .5); white-space: nowrap;
+  border: 1px solid var(--jf-danger); white-space: nowrap;
 }
 .corrected-badge {
   display: inline-block; padding: 0 8px; border-radius: 10px;
