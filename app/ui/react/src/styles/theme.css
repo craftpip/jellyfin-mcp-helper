@@ -768,9 +768,16 @@ a.search-btn svg { flex: none; }
 
 .suspect-badge {
   display: inline-block; padding: 0 8px; border-radius: 10px;
-  font-size: 0.72rem; font-weight: 600;
-  background: var(--jf-danger-bg); color: var(--jf-danger);
-  border: 1px solid var(--jf-danger); white-space: nowrap;
+  font-size: 0.72rem; font-weight: 500;
+  background: #2a1e22; color: #c98a94; border: 1px solid #5a2e35; white-space: nowrap;
+}
+.filter-chips button.filter-suspect.active {
+  background: #2f1e22; border-color: #6b3440; color: #c98a94;
+}
+.row-highlight {
+  background: rgba(201, 138, 148, 0.09) !important;
+  outline: 1px solid rgba(201, 138, 148, 0.22) !important;
+  outline-offset: -1px;
 }
 .corrected-badge {
   display: inline-block; padding: 0 8px; border-radius: 10px;

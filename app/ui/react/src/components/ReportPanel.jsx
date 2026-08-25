@@ -169,7 +169,7 @@ export default function ReportPanel() {
               {FILTER_DEFS.map(([k, label]) => (
                 <button
                   key={k}
-                  className={'filter-chip' + (currentFilter === k ? ' active' : '')}
+                  className={'filter-chip' + (k === 'suspect' ? ' filter-suspect' : '') + (currentFilter === k ? ' active' : '')}
                   onClick={() => actions.setFilter(k)}
                 >
                   {currentFilter === k ? '✓ ' : ''}{label} <span className="chip-count">{counts[k]}</span>
@@ -313,7 +313,7 @@ function ReportRow({ item, isSeries, query, group, isHighlighted }) {
 
   if (item.action === 'skip') {
     return (
-      <tr className={"row-skipped" + (isHighlighted ? " row-highlight" : "")} style={isHighlighted ? { background: 'rgba(232,179,75,0.14)', outline: '1px solid rgba(232,179,75,0.35)', outlineOffset: '-1px' } : undefined}>
+      <tr className={"row-skipped" + (isHighlighted ? " row-highlight" : "")} style={isHighlighted ? { background: 'rgba(201,138,148,0.09)', outline: '1px solid rgba(201,138,148,0.22)', outlineOffset: '-1px' } : undefined}>
         <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={(e) => { if (e.target.tagName.toLowerCase() === 'input') return; actions.selectItem(item.confirmId, !selected) }}>
           <input
             type="checkbox"
@@ -357,7 +357,7 @@ function ReportRow({ item, isSeries, query, group, isHighlighted }) {
 
   const actionLabel = item.action === 'replace' ? 'Existing' : 'New'
   return (
-    <tr data-title={item.title.toLowerCase()} data-action={item.action} data-fileexists={item.fileExists ? 'true' : 'false'} className={isHighlighted ? "row-highlight" : undefined} style={isHighlighted ? { background: 'rgba(232,179,75,0.14)', outline: '1px solid rgba(232,179,75,0.35)', outlineOffset: '-1px' } : undefined}>
+    <tr data-title={item.title.toLowerCase()} data-action={item.action} data-fileexists={item.fileExists ? 'true' : 'false'} className={isHighlighted ? "row-highlight" : undefined} style={isHighlighted ? { background: 'rgba(201,138,148,0.09)', outline: '1px solid rgba(201,138,148,0.22)', outlineOffset: '-1px' } : undefined}>
       <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={(e) => { if (e.target.tagName.toLowerCase() === 'input') return; actions.selectItem(item.confirmId, !selected) }}>
         <input
           type="checkbox"
