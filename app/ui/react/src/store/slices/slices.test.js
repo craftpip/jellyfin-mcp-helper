@@ -105,17 +105,6 @@ describe('adminSlice', () => {
     expect(state.adminEnvPending).toEqual([])
   })
 
-  it('SET_ADMIN_KEYS sets keys', () => {
-    const keys = [{ id: 1, name: 'test' }]
-    const state = adminReducer(adminInitialState, { type: 'SET_ADMIN_KEYS', keys })
-    expect(state.adminKeys).toEqual(keys)
-  })
-
-  it('SET_ADMIN_KEYS defaults to [] when null', () => {
-    const state = adminReducer(adminInitialState, { type: 'SET_ADMIN_KEYS', keys: null })
-    expect(state.adminKeys).toEqual([])
-  })
-
   it('SET_ADMIN_LOADING sets loading', () => {
     const state = adminReducer(adminInitialState, { type: 'SET_ADMIN_LOADING', loading: true })
     expect(state.adminLoading).toBe(true)

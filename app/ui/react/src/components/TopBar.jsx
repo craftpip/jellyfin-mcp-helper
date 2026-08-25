@@ -86,6 +86,21 @@ export default function TopBar() {
               )}
             </div>
           )}
+          {state.page !== 'scan' && (
+            <button
+              type="button"
+              className="small"
+              onClick={() => actions.setPage('scan')}
+              title="Back to Scan & Move report"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block' }}>
+                <path d="M19 12H5" />
+                <path d="M12 19l-7-7 7-7" />
+              </svg>
+              Report
+            </button>
+          )}
           {state.jellyfinLibraries.length > 0 && <LibraryScanDropdown />}
           <button
             type="button"

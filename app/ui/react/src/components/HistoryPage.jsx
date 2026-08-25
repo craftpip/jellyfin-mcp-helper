@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost } from '../api/apiClient.js'
 import { useAppStore } from '../store/AppStore.jsx'
-import { formatBytes } from '../utils/format.js'
+import { formatBytes, isCrossDrive } from '../utils/format.js'
+import { computePathSync } from '../utils/report.js'
 import PathPills from './PathPills.jsx'
 import { FolderPicker } from './BrowseModal.jsx'
 
@@ -11,6 +12,7 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState({})
   const [editing, setEditing] = useState({}) // history_id -> {confirmId -> newTarget}
+  const [linked, setLinked] = useState({}) // history_id -> {confirmId -> bool}
   const [busy, setBusy] = useState(null)
   const [browseRow, setBrowseRow] = useState(null) // {historyId, confirmId, title}
   const [trailPopup, setTrailPopup] = useState(null) // {pathHistory, title}
@@ -49,11 +51,65 @@ export default function HistoryPage() {
     }
   }
 
+  function isLinked(historyId, confirmId) {
+    return linked[historyId]?.[confirmId] !== false
+  }
+
+  function toggleLinked(historyId, confirmId) {
+    setLinked((prev) => {
+      const cur = prev[historyId]?.[confirmId] !== false
+      return { ...prev, [historyId]: { ...(prev[historyId] || {}), [confirmId]: !cur } }
+    })
+  }
+
   function handleEditChange(historyId, confirmId, newTarget) {
-    setEditing((prev) => ({
-      ...prev,
-      [historyId]: { ...(prev[historyId] || {}), [confirmId]: newTarget },
-    }))
+    const group = groups.find((g) => g.history_id === historyId)
+    if (!group) {
+      setEditing((prev) => ({ ...prev, [historyId]: { ...(prev[historyId] || {}), [confirmId]: newTarget } }))
+      return
+    }
+    const groupEdits = editing[historyId] || {}
+    const targetItem = group.items.find((it) => it.confirm_id === confirmId)
+    const oldTarget = groupEdits[confirmId] ?? targetItem?.target_path ?? ''
+    if (oldTarget === newTarget) {
+      setEditing((prev) => ({ ...prev, [historyId]: { ...(prev[historyId] || {}), [confirmId]: newTarget } }))
+      return
+    }
+    const sourceLinked = isLinked(historyId, confirmId)
+    if (!sourceLinked) {
+      setEditing((prev) => ({ ...prev, [historyId]: { ...(prev[historyId] || {}), [confirmId]: newTarget } }))
+      return
+    }
+    // Build virtual items for path sync (group-scoped, same item_type only)
+    const changedType = targetItem?.item_type
+    const virtual = group.items.map((it) => {
+      const live = groupEdits[it.confirm_id] ?? it.target_path
+      // Only same-type items participate in sync (e.g. don't sync series Season 1→2 into movie year)
+      const sameType = !changedType || it.item_type === changedType
+      return {
+        sourceFolder: group.group_title,
+        containerPath: '',
+        title: group.group_title,
+        _liveTarget: live,
+        targetPath: it.target_path,
+        originalTarget: it.target_path,
+        _linked: sameType && isLinked(historyId, it.confirm_id),
+      }
+    })
+    const changedIdx = group.items.findIndex((it) => it.confirm_id === confirmId)
+    if (changedIdx >= 0) virtual[changedIdx]._liveTarget = newTarget
+    const sync = computePathSync(changedIdx, oldTarget, newTarget, virtual)
+    setEditing((prev) => {
+      const nextEdits = { ...(prev[historyId] || {}) }
+      nextEdits[confirmId] = newTarget
+      if (sync && !sync.revert) {
+        sync.updates.forEach((u) => {
+          const it = group.items[u.idx]
+          if (it) nextEdits[it.confirm_id] = u.value
+        })
+      }
+      return { ...prev, [historyId]: nextEdits }
+    })
   }
 
   async function handleDeleteSource(group, item) {
@@ -139,7 +195,7 @@ export default function HistoryPage() {
               <span className="badge" style={{ background: 'var(--jf-primary-dim)', color: 'var(--jf-primary)' }}>{group.history_id.slice(0, 6)}</span>
             </div>
 
-            {(() => {
+            {isExpanded && (() => {
               const isGroupSeries = group.items.some((it) => (it.item_type || it.itemType) === 'series')
               return (
               <div style={{ marginTop: '12px' }}>
@@ -166,11 +222,15 @@ export default function HistoryPage() {
                         const trail = history.join(' → ')
                         const epMatch = (item.target_path || '').match(/S\d{2}E\d{2,3}/i)
                         const episode = epMatch ? epMatch[0].toUpperCase() : ''
+                        const showLink = group.items.length > 1
+                        const linked = isLinked(group.history_id, item.confirm_id)
+                        const isEdited = edited !== currentTarget
+                        const liveCross = isEdited ? isCrossDrive(item.source_path, edited) : !!(item.cross_drive || isCrossDrive(item.source_path, edited))
                         return (
                           <tr key={item.confirm_id}>
                             <td>
                               <div className="action-cell">
-                                {item.cross_drive ? (
+                                {liveCross ? (
                                   <span className="crossdrive-badge" title="Moved between hard drives">
                                     Cross-drive
                                   </span>
@@ -196,13 +256,50 @@ export default function HistoryPage() {
                                 <div className="source-name" title={item.source_path}>
                                   {item.source_path}
                                 </div>
-                                <input
-                                  type="text"
-                                  className="target-input"
-                                  value={edited}
-                                  onChange={(e) => handleEditChange(group.history_id, item.confirm_id, e.target.value)}
-                                  placeholder="New target path"
-                                />
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <input
+                                    type="text"
+                                    className="target-input"
+                                    value={edited}
+                                    onChange={(e) => handleEditChange(group.history_id, item.confirm_id, e.target.value)}
+                                    placeholder="New target path"
+                                    style={{ flex: 1, minWidth: 0 }}
+                                  />
+                                  {showLink && (
+                                    <button
+                                      className={'small link-toggle' + (linked ? ' active' : '')}
+                                      onClick={() => toggleLinked(group.history_id, item.confirm_id)}
+                                      title={linked ? 'Link enabled — edits sync within group (click to unlink)' : 'Link disabled — editing freely (click to link)'}
+                                      aria-label={linked ? 'Unlink this file' : 'Link this file'}
+                                      aria-pressed={linked}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        padding: 0,
+                                        width: 28,
+                                        height: 29,
+                                        minWidth: 28,
+                                        lineHeight: 1,
+                                        borderColor: linked ? 'var(--jf-accent, #00a4dc)' : undefined,
+                                        background: linked ? 'rgba(0,164,220,0.15)' : undefined,
+                                      }}
+                                    >
+                                      {linked ? (
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block' }}>
+                                          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                                          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                                        </svg>
+                                      ) : (
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block' }}>
+                                          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                                          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                                          <line x1="2" y1="2" x2="22" y2="22" />
+                                        </svg>
+                                      )}
+                                    </button>
+                                  )}
+                                </div>
                                 <div className="target-tools">
                                   <button
                                     type="button"

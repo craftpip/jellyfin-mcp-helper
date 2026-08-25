@@ -41,6 +41,7 @@ export function mapReportItems(report) {
       fileExists: item.fileExists || false,
       fileSize: item.fileSize,
       crossDrive: item.crossDrive || false,
+      originalCrossDrive: item.crossDrive || false,
       season,
       episode,
       candidateTargets: item.candidateTargets || [],
@@ -180,10 +181,13 @@ export function defaultSelection(items) {
 // Cross-drive check using the live (edited) target path. The backend-computed
 // flag reflects the target at scan time and goes stale once the target is edited
 // in the UI (e.g. /media3 -> /media2). So: when the target was changed, judge by
-// drive roots only; otherwise trust the backend flag (real device check) first.
+// drive roots only; otherwise trust the original backend flag (real device check).
+// Uses originalCrossDrive (preserved from scan) instead of mutated crossDrive to
+// avoid stale true after a revert (media3→media2→media3).
 export function isCrossDriveItem(item) {
   const live = item._liveTarget || item.targetPath || ''
   const changed = !!(item._liveTarget && item._liveTarget !== item.originalTarget)
   if (changed) return isCrossDrive(item.sourcePath, live)
-  return !!(item.crossDrive || isCrossDrive(item.sourcePath, live))
+  const orig = item.originalCrossDrive ?? item.crossDrive
+  return !!(orig || isCrossDrive(item.sourcePath, live))
 }

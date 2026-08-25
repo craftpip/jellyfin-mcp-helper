@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useReducer, useRef, useCallback } from 'react'
 import { apiDelete, apiGet, apiPatch, apiPost, getAuthToken, setAuthToken } from '../api/apiClient.js'
 import { computePathSync, defaultSelection, groupItems, isCrossDriveItem, mapReportItems } from '../utils/report.js'
+import { isCrossDrive } from '../utils/format.js'
 import { buildTransferQueue, deriveTransferQueue, TRANSFER_DONE_REMOVE_MS } from '../utils/transfer.js'
 import { usePoll } from '../hooks/usePoll.js'
 import { reportInitialState, reportReducer, toggleInList } from './slices/reportSlice.js'
@@ -636,8 +637,9 @@ export function AppStoreProvider({ children }) {
       const items = stateRef.current.currentItems.map((item) => {
         const u = updates.find((x) => x.confirmId === item.confirmId)
         if (u) {
-          const applied = { ...item, targetPath: u.targetPath, originalTarget: u.targetPath, _liveTarget: u.targetPath }
-          return { ...applied, crossDrive: isCrossDriveItem(applied) }
+          const cross = isCrossDrive(item.sourcePath, u.targetPath)
+          const applied = { ...item, targetPath: u.targetPath, originalTarget: u.targetPath, _liveTarget: u.targetPath, crossDrive: cross, originalCrossDrive: cross }
+          return applied
         }
         return item
       })
