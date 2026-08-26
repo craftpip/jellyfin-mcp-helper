@@ -360,6 +360,7 @@ async def run_confirm_task(
                 item.confirmed = True
                 if item.item_type in ("movie", "series"):
                     updated_paths.add(item.target_path)
+                    updated_paths.add(item.source_path)
 
                 if item.action == "move":
                     scan.counts.moved += 1
