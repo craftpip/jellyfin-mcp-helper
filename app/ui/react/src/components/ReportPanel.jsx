@@ -118,25 +118,14 @@ export default function ReportPanel() {
       </div>
 
       {state.reportServiceErrors && Object.keys(state.reportServiceErrors).length > 0 && (() => {
-        const keys = Object.keys(state.reportServiceErrors)
-        const onlyQbit = keys.length === 1 && keys[0] === 'qBittorrent'
         return (
           <div className="warn-box" style={{ marginTop: '12px' }}>
-            {onlyQbit ? (
-              <><strong>qBittorrent check skipped</strong> — could not reach download client (in-progress check disabled).</>
-            ) : (
-              <><strong>Some paths could not be scanned</strong> — check skipped items below.</>
-            )}
+            <strong>Some paths could not be scanned</strong> — check skipped items below.
             {Object.entries(state.reportServiceErrors).map(([k, v]) => (
               <div key={k} style={{ marginTop: '6px', fontSize: '0.82rem', wordBreak: 'break-word' }}>
                 <strong>{k}:</strong> {typeof v === 'string' ? v.slice(0, 300) : JSON.stringify(v).slice(0, 300)}
               </div>
             ))}
-            {onlyQbit && (
-              <div style={{ marginTop: '6px', fontSize: '0.78rem', color: 'var(--jf-text-muted)' }}>
-                Tip: set <code>ENABLE_DOWNLOAD_CLIENT_CHECK=false</code> in .env if you don&apos;t use qBittorrent, or check <code>QBT_MCP_URL</code> is reachable.
-              </div>
-            )}
           </div>
         )
       })()}

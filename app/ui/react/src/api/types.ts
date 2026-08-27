@@ -10,7 +10,6 @@ export type ConfirmStatus = "idle" | "running" | "completed" | "failed"
 export type ConfirmPhase =
   | "idle"
   | "preparing"
-  | "stopping_seeding"
   | "moving"
   | "deleting_source"
   | "triggering_jellyfin"

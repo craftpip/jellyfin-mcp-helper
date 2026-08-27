@@ -105,7 +105,6 @@ class ScanManager:
                 operation=request.operation,
                 items=seeded_items,
                 counts=seeded_counts,
-                skipped_in_progress=0,
                 created_at=now,
                 started_at=now,
                 service_errors=seeded_errors,
@@ -128,7 +127,6 @@ class ScanManager:
                 operation=request.operation,
                 items=[],
                 counts=ScanCounts(),
-                skipped_in_progress=0,
                 created_at=now,
                 started_at=now,
             )
@@ -373,23 +371,8 @@ class ScanManager:
         if item.action != "skip":
             self._cleanup_empty_parents(Path(item.source_path))
 
-    async def _stop_seeding_for_items(self, items: list[ScannedItem]) -> None:
-        await move_executor.stop_seeding_for_items(self, items)
-
     def _cleanup_empty_parents(self, original_path: Path) -> None:
         move_executor.cleanup_empty_parents(self, original_path)
-
-    async def _load_in_progress_paths(self) -> list[str]:
-        return await scan_orchestrator.load_in_progress_paths(self)
-
-    def _load_in_progress_paths_sync(self) -> list[str]:
-        return scan_orchestrator.load_in_progress_paths_sync(self)
-
-    def _candidate_release_labels(self, candidate_path: str) -> set[str]:
-        return scan_orchestrator.candidate_release_labels(self, candidate_path)
-
-    def _is_in_progress(self, candidate_path: str, in_progress_paths: list[str]) -> bool:
-        return scan_orchestrator.is_in_progress(self, candidate_path, in_progress_paths)
 
     async def _trigger_jellyfin_scans(self, updated_paths: set[str]) -> None:
         await move_executor.trigger_jellyfin_scans(self, updated_paths)

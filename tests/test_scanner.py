@@ -140,6 +140,47 @@ class TestScanCandidates:
         assert len(result.candidates) == 0
         assert len(result.errors) == 0
 
+    @pytest.mark.parametrize("marker", [".!qB", ".!qb", ".!UT", ".!ut", ".!bt", ".!BT", ".PART", ".part", ".PaRt", ".partial", ".PARTIAL", ".parts"])
+    def test_flags_in_progress_by_partial_marker(self, tmp_path: Path, marker: str) -> None:
+        root = tmp_path / "downloads"
+        root.mkdir()
+        video = root / "Show.S01E01.mkv"
+        video.write_bytes(b"video")
+        (root / f"Show.S01E01.mkv{marker}").write_bytes(b"partial")
+        result = scan_candidates(PathsConfig(downloadRoots=[str(root)]))
+        assert len(result.candidates) == 1
+        assert result.candidates[0].in_progress is True
+
+    @pytest.mark.parametrize("prefix", ["Incomplete.", "incomplete.", "INCOMPLETE$"])
+    def test_flags_in_progress_by_partial_prefix(self, tmp_path: Path, prefix: str) -> None:
+        root = tmp_path / "downloads"
+        root.mkdir()
+        video = root / "Show.S01E01.mkv"
+        video.write_bytes(b"video")
+        (root / f"{prefix}Show.S01E01.mkv").write_bytes(b"partial")
+        result = scan_candidates(PathsConfig(downloadRoots=[str(root)]))
+        assert len(result.candidates) == 1
+        assert result.candidates[0].in_progress is True
+
+    def test_not_in_progress_without_partial_marker(self, tmp_path: Path) -> None:
+        root = tmp_path / "downloads"
+        root.mkdir()
+        video = root / "Show.S01E01.mkv"
+        video.write_bytes(b"video")
+        result = scan_candidates(PathsConfig(downloadRoots=[str(root)]))
+        assert len(result.candidates) == 1
+        assert result.candidates[0].in_progress is False
+
+    def test_prefix_marker_does_not_mask_unrelated_sibling(self, tmp_path: Path) -> None:
+        root = tmp_path / "downloads"
+        root.mkdir()
+        video = root / "Show.S01E01.mkv"
+        video.write_bytes(b"video")
+        (root / "incomplete.Some.Other.Show.mkv").write_bytes(b"partial")
+        result = scan_candidates(PathsConfig(downloadRoots=[str(root)]))
+        assert len(result.candidates) == 1
+        assert result.candidates[0].in_progress is False
+
     def test_os_error_recorded(self, tmp_path: Path) -> None:
         root = tmp_path / "downloads"
         root.mkdir()

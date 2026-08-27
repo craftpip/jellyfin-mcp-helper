@@ -11,7 +11,10 @@ tasks. Constructed with an `AppConfig` and a shared `PathResolver`.
 
 ### `create_scan(request) -> ScanPlan`
 
-- `ScanRequest` is `replaceExisting` + `fullRescan` (`false` = incremental). Incremental seeds the new run with a deep copy of the live singleton’s `items`/`counts`/`service_errors`; `fullRescan=true` archives the live report via `save_report` before replacing.
+- `ScanRequest` is `replaceExisting` + `fullRescan` (`false` = incremental).
+  Incremental pre-fills the new run with a deep copy of the live singleton’s
+  `items`/`counts`/`service_errors`; `fullRescan=true` archives the live report
+  via `save_report` before replacing.
 - Singleton persistence: `reports/current.json` via `save_singleton`/`load_singleton` (`app/services/scan_history.py`) + `app.db scans` table (`ON CONFLICT DO UPDATE`). Restored on `ScanManager` init for restart recovery. History pruned to `MAX_HISTORY=200`.
 - **Cancels any currently running scan first** (sets its cancel event and marks
   it `cancelled`) so only one scan runs at a time.
@@ -20,11 +23,11 @@ tasks. Constructed with an `AppConfig` and a shared `PathResolver`.
 ### `_run_scan_sync` — the scan loop
 
 1. Clears resolver caches, resets resolver runtime state.
-2. Loads qBittorrent in-progress paths (when configured).
-3. `scan_candidates` over the download roots; unreadable paths are recorded as
+2. `scan_candidates` over the download roots; unreadable paths are recorded as
    items with reason `Filesystem read error…` and counted as skipped.
-4. For each candidate:
-   - Skipped if in-progress download or zero-byte file.
+3. For each candidate:
+   - Skipped if in-progress download (a sibling/own-name incomplete-file marker
+     — see [download-client.md](download-client.md)) or zero-byte file.
    - `classify_candidate`; skipped if `kind == "skip"` or confidence below
      `classify_confidence_threshold`.
    - Resolves the target (`_resolve_sync` runs the resolver in a thread).
@@ -36,18 +39,18 @@ tasks. Constructed with an `AppConfig` and a shared `PathResolver`.
    - Records `cross_drive`, folder-existence flags, and the counts
      (`movies`/`series`).
    - Per-candidate failures become `skip` items with the error in `reason`.
-5. **Planned-coverage tracking:** feeds `planned_episodes`
+4. **Planned-coverage tracking:** feeds `planned_episodes`
    (`(series_key, season) → set[episode]`) and `planned_seasons`
    (`series_key → set[season]`) as items are planned; these combine with
    on-disk coverage for suspect detection. In-progress (skipped) downloads are
    excluded from planned coverage.
-6. **Continuity detection + group re-target:** after planning, group series
+5. **Continuity detection + group re-target:** after planning, group series
    items by series_key; for groups whose base show dir is phantom or wrong
    (suspect signals), run the resolver's deep search (`find_continuation_show`)
    and re-target the whole group to the found show dir — `corrected=True`,
    `correction_note` set, `file_exists`/`action` recomputed (see
    [resolver.md](resolver.md)).
-7. Marks the scan `completed` (or `failed`), clears caches.
+6. Marks the scan `completed` (or `failed`), clears caches.
 
 ### `update_scan(scan_id, items)` — redirect targets
 
@@ -128,18 +131,15 @@ and mentions the queue in `next`. See [web-ui/store](../web-ui/store.md).
 
 ### `_run_confirm_task`
 
-1. `stopping_seeding` — `QbittorrentClient.stop_seeding_for_paths` for the
-   selected source files (when configured; failures are recorded in
-   `service_errors["qBittorrent"]`).
-2. Per item (`preparing` → `moving`):
+1. Per item (`preparing` → `moving`):
    - `_apply_item` performs the move (see below).
    - Success → `item.confirmed = True`, `counts.moved`/`counts.replaced`
      incremented, target added to `updated_paths`.
    - Failure → `counts.failed` incremented and the error stored on the item.
    - `confirm_processed` increments in a `finally` block.
-3. `triggering_jellyfin` — `_trigger_jellyfin_scans(updated_paths)` refreshes
+2. `triggering_jellyfin` — `_trigger_jellyfin_scans(updated_paths)` refreshes
    affected libraries.
-4. Marks the scan `confirmed` (when not selective or everything is confirmed)
+3. Marks the scan `confirmed` (when not selective or everything is confirmed)
    and the confirm `completed`; on exception, confirm `failed`.
 
 ### `_apply_item` — the move
@@ -179,7 +179,8 @@ Clears the current scan.
 
 ## Phase model
 
-Confirm phases: `preparing`, `stopping_seeding`, `moving`,
-`deleting_source`, `triggering_jellyfin`, `completed`, `failed` (plus `idle`).
+Confirm phases: `preparing`, `moving`, `deleting_source`, `triggering_jellyfin`,
+`completed`, `failed` (plus `idle`). The legacy `stopping_seeding` literal
+remains in the schema for backwards compatibility but is never emitted.
 See [backend/models.md](../backend/models.md) for the `ScanPlan` fields backing
 per-confirm progress.

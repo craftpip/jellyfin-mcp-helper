@@ -23,7 +23,7 @@ apply, description}`; per-var `apply` classification:
 
 | apply | Variables |
 | --- | --- |
-| `live` | Jellyfin (`ENABLE_JELLYFIN_INTEGRATION`, `JELLYFIN_*`), download client (`ENABLE_DOWNLOAD_CLIENT_CHECK`, `DOWNLOAD_CLIENT`, `QBT_*`), MCP access (`MCP_ALLOW_UNAUTHENTICATED`, `MCP_KEYS_FILE`, `MCP_DEFAULT_TOKEN`), `UI_PANEL_PASSWORD` — all read from `os.environ` per call/request. |
+| `live` | Jellyfin (`ENABLE_JELLYFIN_INTEGRATION`, `JELLYFIN_*`), incomplete-download detection (`ENABLE_INCOMPLETE_DOWNLOAD_DETECTION`), `UI_PANEL_PASSWORD`, `JELLYSORT_MCP_TOKEN` — all read from `os.environ` per call/request. |
 | `restart` | `DOWNLOAD_ROOTS`, `MOVIE_ROOTS`, `SERIES_ROOTS`, `SERIES_TITLE_ALIASES`, `MODEL_CLASSIFY_CONFIDENCE_THRESHOLD`, `MODEL_PATH_CONFIDENCE_THRESHOLD`, `WEB_UI_ENABLED`, `WEB_UI_PORT` — baked into the `ScanManager` snapshot or the startup lifespan. |
 
 `reload_settings()` re-parses `.env`, patches `os.environ`, resets the
@@ -33,9 +33,6 @@ without a restart. `update_env()` validates via `Settings(**merged)`, rewrites
 `{appliedLive, needsRecreate}`. The admin API surface is documented in
 [auth.md](auth.md).
 
-## MCP auth + API keys
+## MCP auth
 
-`app/core/auth.py` gates `/mcp` (`MCP_ALLOW_UNAUTHENTICATED`,
-`Authorization: Bearer` / `X-API-Key`, `MCP_DEFAULT_TOKEN` as master key);
-`app/services/api_key_manager.py` is the hashed key store
-(`config/mcp_keys.json`). See [auth.md](auth.md).
+`app/core/auth.py` gates `/mcp` — when `JELLYSORT_MCP_TOKEN` (or deprecated `MCP_DEFAULT_TOKEN`/`ADMIN_UI_TOKEN`) is set, every request must present it as `Authorization: Bearer <token>` or `X-API-Key`; when empty, MCP is open. See [auth.md](auth.md).

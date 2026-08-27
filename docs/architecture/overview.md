@@ -19,13 +19,13 @@ exposes both a JSON-RPC (MCP) API and a REST API, plus an optional web UI.
 
 The processing engine, split by responsibility:
 
-- `scanner.py` — walks download roots, emits candidate files.
+- `scanner.py` — walks download roots, emits candidate files, and flags
+  in-progress downloads via incomplete-file markers.
 - `classifier.py` — guessit + regex based media classification.
 - `resolver.py` — maps candidates to target paths in the library roots.
 - `scan_manager.py` — scan → report → confirm workflow and file moves.
 - `presenters.py` — shared report/progress formatting (MCP + UI).
 - `jellyfin.py` — Jellyfin API client (libraries, scans, ongoing series).
-- `download_client.py` — qBittorrent MCP client (in-progress, seed stop).
 - `release_tracker.py` — locally stored next-release dates.
 - `api_key_manager.py` / `env_manager.py` — MCP key store + env management
   (see [backend/auth](../backend/auth.md)).
@@ -44,7 +44,7 @@ The processing engine, split by responsibility:
 | Port | Purpose |
 | --- | --- |
 | `18327` | Backend (uvicorn `app.main:app`) — internal. |
-| `18328` | Single host-mapped port (compose maps `18328:18327`). Serves MCP (`/mcp`), the Web UI at `/`, `/settings`, `/apikeys`, and the UI's `/api/*` routes. |
+| `18328` | Single host-mapped port (compose maps `18328:18327`). Serves MCP (`/mcp`), the Web UI at `/`, `/settings`, and the UI's `/api/*` routes. |
 | `5173` | React dev server (Vite), proxies `/api` → `http://localhost:18328`. |
 
 ## Client interfaces

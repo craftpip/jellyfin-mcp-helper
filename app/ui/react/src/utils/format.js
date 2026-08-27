@@ -25,7 +25,6 @@ export function formatConfirmPhase(phase) {
   return {
     idle: 'Idle',
     preparing: 'Preparing',
-    stopping_seeding: 'Stopping seeding',
     moving: 'Copying or moving',
     deleting_source: 'Removing source',
     triggering_jellyfin: 'Triggering Jellyfin scan',

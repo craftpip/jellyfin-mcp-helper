@@ -239,9 +239,9 @@ class PathResolver:
                 show_dir = Path(series_root) / show_name
             # extras folder under the show
             extras_dir = show_dir / "extras"
-            # Preserve relative path under extras if the torrent had subfolders
+            # Preserve relative path under extras if the download had subfolders
             rel = Path(candidate.relative_path or candidate.name)
-            # If the torrent is a folder of extras, keep its structure under extras/
+            # If the download is a folder of extras, keep its structure under extras/
             target_path = str(extras_dir / rel.name)
             # Also preserve subfolders if any
             if candidate.relative_path and "/" in candidate.relative_path:

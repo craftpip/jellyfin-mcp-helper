@@ -10,7 +10,6 @@ import pytest
 from app.core.config import AppConfig, ModelConfig, PathsConfig
 from app.main import _format_confirm_progress, _format_scan_progress, _format_scan_report
 from app.models.schemas import ScanPlan, ScanRequest, ScannedItem
-from app.services.download_client import _extract_paths
 from app.services.scan_history import load_report
 from app.services.scan_manager import ScanManager
 from app.services.scanner import ScanCandidatesResult, ScanPathError, scan_candidates
@@ -57,10 +56,6 @@ def test_create_scan_returns_filesystem_errors_to_user(tmp_path, monkeypatch) ->
     )
     manager = ScanManager(config)
 
-    async def fake_load_in_progress_paths() -> list[str]:
-        return []
-
-    monkeypatch.setattr(manager, "_load_in_progress_paths", fake_load_in_progress_paths)
     monkeypatch.setattr(
         "app.services.scan_manager.scan_candidates",
         lambda _: ScanCandidatesResult(
@@ -106,11 +101,6 @@ def test_create_scan_skips_zero_byte_media_files(tmp_path, monkeypatch) -> None:
     )
     manager = ScanManager(config)
 
-    async def fake_load_in_progress_paths() -> list[str]:
-        return []
-
-    monkeypatch.setattr(manager, "_load_in_progress_paths", fake_load_in_progress_paths)
-
     async def run_scan():
         scan = await manager.create_scan(ScanRequest())
         while scan.status == "running":
@@ -123,6 +113,64 @@ def test_create_scan_skips_zero_byte_media_files(tmp_path, monkeypatch) -> None:
     assert scan.counts.total == 0
     assert scan.items[0].source_path == str(zero_file)
     assert scan.items[0].reason == "Zero-byte file; download is incomplete or invalid"
+
+
+def test_create_scan_skips_incomplete_download_by_marker(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "downloads"
+    root.mkdir()
+    partial_file = root / "Show.S01E01.mkv.!qB"
+    partial_file.write_bytes(b"partial")
+    real_file = root / "Show.S01E01.mkv"
+    real_file.write_bytes(b"video")
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)]),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+
+    async def run_scan():
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        return scan
+
+    scan = asyncio.run(run_scan())
+
+    assert scan.counts.skipped == 1
+    assert scan.counts.total == 0
+    assert scan.items[0].source_path == str(real_file)
+    assert scan.items[0].reason == "In-progress download"
+
+
+def test_create_scan_skips_none_incomplete_when_toggle_off(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "downloads"
+    root.mkdir()
+    partial_file = root / "Show.S01E01.mkv.!qB"
+    partial_file.write_bytes(b"partial")
+    real_file = root / "Show.S01E01.mkv"
+    real_file.write_bytes(b"video")
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)]),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+    from app.services import scan_orchestrator
+    monkeypatch.setattr(scan_orchestrator, "_incomplete_detection_enabled", lambda: False)
+
+    async def run_scan():
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        return scan
+
+    scan = asyncio.run(run_scan())
+
+    assert scan.counts.skipped == 0
+    assert len(scan.items) == 1
 
 
 def test_create_scan_returns_running_immediately(tmp_path, monkeypatch) -> None:
@@ -338,9 +386,6 @@ def test_confirm_uses_tracked_copy_for_cross_drive_file(tmp_path, monkeypatch) -
         ]
         scan.counts.movies = 1
 
-        async def fake_stop_seeding(items) -> None:
-            return None
-
         async def fake_trigger_jellyfin(updated_paths) -> None:
             return None
 
@@ -377,7 +422,6 @@ def test_confirm_uses_tracked_copy_for_cross_drive_file(tmp_path, monkeypatch) -
         async def fake_async_copy(scan_obj, source_path, target_path, source_size):
             fake_copy(scan_obj, source_path, target_path, source_size)
 
-        monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
         monkeypatch.setattr(manager, "_trigger_jellyfin_scans", fake_trigger_jellyfin)
         monkeypatch.setattr(manager, "_copy_file_with_progress", fake_async_copy)
         monkeypatch.setattr("pathlib.Path.stat", fake_path_stat)
@@ -460,72 +504,6 @@ def test_cross_drive_replace_preserves_existing_target_when_copy_fails(tmp_path,
     assert target.read_bytes() == b"old-video"
 
 
-def test_confirm_stops_seeding_once_for_selected_items(tmp_path, monkeypatch) -> None:
-    source1 = tmp_path / "one.mkv"
-    source2 = tmp_path / "two.mkv"
-    source1.write_bytes(b"one")
-    source2.write_bytes(b"two")
-    target_dir = tmp_path / "library"
-    target1 = target_dir / "one.mkv"
-    target2 = target_dir / "two.mkv"
-
-    manager = ScanManager(
-        AppConfig(
-            paths=PathsConfig(downloadRoots=[]),
-            model=ModelConfig(),
-            log_dir=tmp_path,
-            report_dir=tmp_path,
-        )
-    )
-
-    async def run_test() -> None:
-        scan = await manager.create_scan(ScanRequest())
-        while scan.status == "running":
-            await asyncio.sleep(0)
-        scan.items = [
-            ScannedItem(
-                confirmId="c1",
-                sourcePath=str(source1),
-                name=source1.name,
-                item_type="movie",
-                confidence=1.0,
-                reason="test",
-                target_path=str(target1),
-                action="move",
-            ),
-            ScannedItem(
-                confirmId="c2",
-                sourcePath=str(source2),
-                name=source2.name,
-                item_type="movie",
-                confidence=1.0,
-                reason="test",
-                target_path=str(target2),
-                action="move",
-            ),
-        ]
-        scan.counts.movies = 2
-
-        stop_calls: list[list[str]] = []
-
-        async def fake_stop_seeding(items) -> None:
-            stop_calls.append([item.source_path for item in items])
-
-        async def fake_trigger_jellyfin(updated_paths) -> None:
-            return None
-
-        monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
-        monkeypatch.setattr(manager, "_trigger_jellyfin_scans", fake_trigger_jellyfin)
-
-        await manager.confirm_scan(scan.scan_id)
-        while scan.confirm_status == "running":
-            await asyncio.sleep(0)
-
-        assert stop_calls == [[str(source1), str(source2)]]
-        assert scan.counts.moved == 2
-
-    asyncio.run(run_test())
-
 
 async def _wait_for_history(scan_id: str, report_dir, expect=None):
     """Poll for the async history write; returns report dict or None."""
@@ -573,13 +551,9 @@ def test_confirm_queues_batch_behind_running_move(tmp_path, monkeypatch) -> None
         ]
         scan.counts.movies = 3
 
-        async def fake_stop_seeding(items) -> None:
-            return None
-
         async def fake_trigger_jellyfin(updated_paths) -> None:
             return None
 
-        monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
         monkeypatch.setattr(manager, "_trigger_jellyfin_scans", fake_trigger_jellyfin)
 
         # First confirm: only c1. This batch starts immediately.
@@ -641,13 +615,9 @@ def test_confirm_repersists_history_with_post_confirm_counts(tmp_path, monkeypat
         ]
         scan.counts.movies = 1
 
-        async def fake_stop_seeding(items) -> None:
-            return None
-
         async def fake_trigger_jellyfin(updated_paths) -> None:
             return None
 
-        monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
         monkeypatch.setattr(manager, "_trigger_jellyfin_scans", fake_trigger_jellyfin)
 
         # Snapshot before confirm: the completion-time report has moved=0.
@@ -704,11 +674,6 @@ def test_delete_items_removes_source_and_updates_counts(tmp_path, monkeypatch) -
             )
         ]
         scan.counts.movies = 1
-
-        async def fake_stop_seeding(items) -> None:
-            return None
-
-        monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
 
         updated = await manager.delete_items(scan.scan_id, ["c1"])
 
@@ -815,11 +780,6 @@ def test_delete_items_allows_already_skipped_items(tmp_path, monkeypatch) -> Non
         ]
         scan.counts.skipped = 1
 
-        async def fake_stop_seeding(items) -> None:
-            return None
-
-        monkeypatch.setattr(manager, "_stop_seeding_for_items", fake_stop_seeding)
-
         report_before = _format_scan_report(scan)
         assert any(i["confirmId"] == "s1" and i["action"] == "skip" for i in report_before["items"])
 
@@ -839,195 +799,6 @@ def test_delete_items_allows_already_skipped_items(tmp_path, monkeypatch) -> Non
 
     asyncio.run(run_test())
 
-
-def test_extract_paths_adds_download_root_torrent_name_fallback(tmp_path) -> None:
-    paths_config = PathsConfig(downloadRoots=[str(tmp_path / "torrents1"), str(tmp_path / "torrents2")])
-
-    paths = _extract_paths(
-        [
-            {
-                "name": "My Active Torrent",
-                "save_path": "/remote/downloads",
-            }
-        ],
-        paths_config,
-    )
-
-    assert str(tmp_path / "torrents1" / "My Active Torrent") in paths
-    assert str(tmp_path / "torrents2" / "My Active Torrent") in paths
-
-
-def test_scan_marks_candidate_in_progress_when_folder_matches_torrent_name(tmp_path, monkeypatch) -> None:
-    root = tmp_path / "torrents"
-    release_dir = root / "My Active Torrent"
-    release_dir.mkdir(parents=True)
-    video = release_dir / "episode01.mkv"
-    video.write_bytes(b"video")
-
-    config = AppConfig(
-        paths=PathsConfig(downloadRoots=[str(root)]),
-        model=ModelConfig(),
-        log_dir=tmp_path,
-        report_dir=tmp_path,
-    )
-    manager = ScanManager(config)
-
-    monkeypatch.setattr(
-        manager,
-        "_load_in_progress_paths_sync",
-        lambda: [str(root / "My Active Torrent")],
-    )
-
-    async def run_scan():
-        scan = await manager.create_scan(ScanRequest())
-        while scan.status == "running":
-            await asyncio.sleep(0)
-        return scan
-
-    scan = asyncio.run(run_scan())
-
-    assert scan.counts.skipped == 1
-    assert scan.items[0].source_path == str(video)
-    assert scan.items[0].reason == "In-progress download"
-
-
-def test_scan_marks_single_file_in_progress_when_torrent_name_matches_filename(tmp_path, monkeypatch) -> None:
-    root = tmp_path / "torrents"
-    root.mkdir(parents=True)
-    video = root / "Toy.Story.5.2026.1080p.DCPRIP.x264.Dual YG.mkv"
-    video.write_bytes(b"video")
-
-    config = AppConfig(
-        paths=PathsConfig(downloadRoots=[str(root)]),
-        model=ModelConfig(),
-        log_dir=tmp_path,
-        report_dir=tmp_path,
-    )
-    manager = ScanManager(config)
-
-    monkeypatch.setattr(
-        manager,
-        "_load_in_progress_paths_sync",
-        lambda: [str(root / "Toy.Story.5.2026.1080p.DCPRIP.x264.Dual.YG⭐")],
-    )
-
-    async def run_scan():
-        scan = await manager.create_scan(ScanRequest())
-        while scan.status == "running":
-            await asyncio.sleep(0)
-        return scan
-
-    scan = asyncio.run(run_scan())
-
-    assert scan.counts.skipped == 1
-    assert scan.items[0].source_path == str(video)
-    assert scan.items[0].reason == "In-progress download"
-
-
-def test_scan_does_not_match_unrelated_single_file_just_because_it_shares_download_root(tmp_path, monkeypatch) -> None:
-    root = tmp_path / "torrents"
-    root.mkdir(parents=True)
-    video = root / "Completely.Different.Movie.2024.mkv"
-    video.write_bytes(b"video")
-
-    config = AppConfig(
-        paths=PathsConfig(downloadRoots=[str(root)]),
-        model=ModelConfig(),
-        log_dir=tmp_path,
-        report_dir=tmp_path,
-    )
-    manager = ScanManager(config)
-
-    monkeypatch.setattr(
-        manager,
-        "_load_in_progress_paths_sync",
-        lambda: [str(root / "Toy.Story.5.2026.1080p.DCPRIP.x264.Dual.YG⭐")],
-    )
-    monkeypatch.setattr(
-        "app.services.scan_manager.classify_candidate",
-        lambda candidate: type("Classification", (), {
-            "kind": "movie",
-            "confidence": 1.0,
-            "reason": "test",
-        })(),
-    )
-    monkeypatch.setattr(
-        manager,
-        "_resolve_sync",
-        lambda candidate, classification: type("Resolved", (), {
-            "target_path": str(tmp_path / "movies" / video.name),
-            "folder_exists": False,
-        })(),
-    )
-
-    async def run_scan():
-        scan = await manager.create_scan(ScanRequest())
-        while scan.status == "running":
-            await asyncio.sleep(0)
-        return scan
-
-    scan = asyncio.run(run_scan())
-
-    assert scan.items[0].reason != "In-progress download"
-
-
-def test_scan_report_includes_structured_items_with_skipped(tmp_path, monkeypatch) -> None:
-    root = tmp_path / "torrents"
-    root.mkdir(parents=True)
-    good = root / "Active S01E01.mkv"
-    good.write_bytes(b"video")
-    skipped_file = root / "Skipped Thing S01E02.mkv"
-    skipped_file.write_bytes(b"video")
-
-    config = AppConfig(
-        paths=PathsConfig(
-            downloadRoots=[str(root)],
-            movieRoots={"default": str(tmp_path / "movies")},
-            seriesRoots={"default": str(tmp_path / "series")},
-        ),
-        model=ModelConfig(),
-        log_dir=tmp_path,
-        report_dir=tmp_path,
-    )
-    manager = ScanManager(config)
-
-    monkeypatch.setattr(
-        manager,
-        "_load_in_progress_paths_sync",
-        lambda: [str(root / "Skipped Thing S01E02.mkv")],
-    )
-
-    async def run_scan():
-        scan = await manager.create_scan(ScanRequest())
-        while scan.status == "running":
-            await asyncio.sleep(0)
-        return scan
-
-    scan = asyncio.run(run_scan())
-    report = _format_scan_report(scan)
-
-    assert "items" in report
-    assert isinstance(report["items"], list)
-
-    actionable = [i for i in report["items"] if i["action"] in ("move", "replace")]
-    skipped = [i for i in report["items"] if i["action"] == "skip"]
-
-    assert len(actionable) >= 1
-    assert len(skipped) >= 1
-
-    skipped_item = skipped[0]
-    assert skipped_item["sourcePath"] == str(skipped_file)
-    assert skipped_item["reason"] == "In-progress download"
-    assert skipped_item["action"] == "skip"
-
-    actionable_item = actionable[0]
-    assert actionable_item["sourcePath"] == str(good)
-    assert actionable_item["action"] in ("move", "replace")
-    assert "targetPath" in actionable_item
-    assert "showFolderExists" in actionable_item
-    assert "seasonFolderExists" in actionable_item
-    assert "fileExists" in actionable_item
-    assert report["report_md"]
 
 
 def test_update_scan_rejects_target_path_traversal(tmp_path) -> None:
@@ -1073,11 +844,6 @@ def test_incremental_scan_preserves_edits_and_adds_new(tmp_path, monkeypatch) ->
     )
     manager = ScanManager(config)
 
-    async def fake_load() -> list[str]:
-        return []
-
-    monkeypatch.setattr(manager, "_load_in_progress_paths", fake_load)
-
     async def run():
         s1 = await manager.create_scan(ScanRequest())
         while s1.status == "running":
@@ -1113,12 +879,6 @@ def test_full_rescan_overwrites_and_discards_edits(tmp_path, monkeypatch) -> Non
         report_dir=tmp_path,
     )
     manager = ScanManager(config)
-    monkeypatch.setattr(manager, "_load_in_progress_paths", lambda: asyncio.run(asyncio.sleep(0, result=[])) if False else [])
-    # Use sync mock
-    async def fake_load2() -> list[str]:
-        return []
-
-    monkeypatch.setattr(manager, "_load_in_progress_paths", fake_load2)
 
     async def run():
         s1 = await manager.create_scan(ScanRequest())
@@ -1172,11 +932,6 @@ def test_singleton_persists_across_manager_restart(tmp_path, monkeypatch) -> Non
         report_dir=tmp_path,
     )
     manager = ScanManager(config)
-
-    async def fake_load() -> list[str]:
-        return []
-
-    monkeypatch.setattr(manager, "_load_in_progress_paths", fake_load)
 
     async def run_first():
         s = await manager.create_scan(ScanRequest())

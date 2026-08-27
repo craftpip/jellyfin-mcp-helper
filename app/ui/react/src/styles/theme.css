@@ -415,8 +415,8 @@ td input[type="checkbox"] { accent-color: var(--jf-primary); }
   min-width: 0; flex: 1;
 }
 .chk-label, .modal .chk-label { margin-bottom: 0; }
-.chk-label input[type=checkbox] { width: 24px; height: 24px; flex: none; accent-color: var(--jf-primary); border: 1.5px solid var(--jf-border); background: var(--jf-bg); }
-#reportItems input[type="checkbox"].item-check { width: 24px; height: 24px; accent-color: var(--jf-primary); border: 1.5px solid var(--jf-border); background: var(--jf-bg); }
+.chk-label input[type=checkbox] { width: 20px; height: 20px; flex: none; accent-color: var(--jf-primary); }
+#reportItems input[type="checkbox"].item-check { width: 20px; height: 20px; accent-color: var(--jf-primary); }
 #reportItems td:first-child { overflow: visible; }
 #reportItems th:first-child { overflow: visible; }
 .chk-label .chk-text {

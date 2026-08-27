@@ -33,11 +33,6 @@ def _make_client(tmp_path: Path, monkeypatch) -> TestClient:
         report_dir=tmp_path,
     )
     manager = ScanManager(config)
-
-    async def fake_load_in_progress_paths():
-        return []
-
-    manager._load_in_progress_paths = fake_load_in_progress_paths
     app = create_ui_app(
         scan_manager=manager,
         release_tracker=ReleaseTracker(store_path=tmp_path / "ongoing_releases.json"),

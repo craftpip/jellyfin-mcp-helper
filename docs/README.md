@@ -29,7 +29,7 @@ This folder is the complete project documentation, written from the code.
   - [Resolver](services/resolver.md)
   - [Scan manager](services/scan-manager.md)
   - [Jellyfin client](services/jellyfin.md)
-  - [qBittorrent client](services/download-client.md)
+  - [Incomplete-download detection](services/download-client.md)
   - [Release tracker](services/release-tracker.md)
 - **[Web UI](web-ui/README.md)** — the React frontend
   - [Overview](web-ui/overview.md)
@@ -49,7 +49,7 @@ This folder is the complete project documentation, written from the code.
 | `app/main.py` | FastAPI entry point, MCP JSON-RPC endpoint, tool registry |
 | `app/core/` | Settings, logging, version |
 | `app/models/` | Pydantic schemas |
-| `app/services/` | Scanner, classifier, resolver, scan manager, presenters, env/api-key managers, Jellyfin + qBittorrent clients, release tracker |
+| `app/services/` | Scanner, classifier, resolver, scan manager, presenters, env/api-key managers, Jellyfin client, release tracker |
 | `app/ui/` | FastAPI UI server (`server.py`) and the React app (`react/`) with its built bundle (`react-dist/`) |
 | `config/` | Runtime state (`ongoing_releases.json`) |
 | `reports/` | Generated run/scan reports |
@@ -67,6 +67,8 @@ This folder is the complete project documentation, written from the code.
   fallbacks for SxxEyy patterns, bare episodes, extras, samples, foreign
   language episodes, and movie-marker reclassification.
 - **Integrations:** Jellyfin (library scans, media updates, ongoing-series
-  tracking) and qBittorrent (in-progress detection, seed stopping).
+  tracking). In-progress downloads are detected from incomplete-file markers on
+  disk — no download-client integration (see
+  [Incomplete-download detection](services/download-client.md)).
 - **Clients:** MCP clients (claude, opencode) talk to the service over
   JSON-RPC; the web UI talks to the same endpoint.

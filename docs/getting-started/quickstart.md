@@ -11,11 +11,8 @@ cp .env.example .env
 Common settings:
 
 ```env
-# Optional qBittorrent integration
-ENABLE_DOWNLOAD_CLIENT_CHECK=true
-DOWNLOAD_CLIENT=qbittorrent
-QBT_MCP_URL=http://localhost:8093/mcp
-QBT_MCP_API_KEY=your-mcp-key
+# Optional incomplete-download detection (default: true)
+ENABLE_INCOMPLETE_DOWNLOAD_DETECTION=true
 
 # Optional Jellyfin integration
 ENABLE_JELLYFIN_INTEGRATION=true
@@ -25,7 +22,7 @@ JELLYFIN_MOVIE_LIBRARY_NAME=Movies
 JELLYFIN_SERIES_LIBRARY_NAME=Shows
 
 # Download + library roots
-DOWNLOAD_ROOTS=/media/torrents
+DOWNLOAD_ROOTS=/media/downloads
 MOVIE_ROOTS=/media/movies::Standard movies,/media/movies_4k::4K movies
 SERIES_ROOTS=/media/series::Primary shows folder
 ```

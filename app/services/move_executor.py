@@ -191,27 +191,6 @@ async def apply_item(scan, item, update_state, copy_fn=None) -> None:
 # confirm state, counts and queues which stay owned by ScanManager.
 
 
-async def stop_seeding_for_items(manager, items) -> None:
-    from app.services.download_client import QbittorrentClient
-
-    client = QbittorrentClient.from_env(manager._config.paths)
-    if not client:
-        return
-
-    try:
-        candidate_paths = [item.source_path for item in items if item.source_path]
-        await client.stop_seeding_for_paths(candidate_paths)
-        logger.info("Stopped seeding check completed for %d item(s)", len(candidate_paths))
-    except Exception as exc:
-        error_msg = f"Error stopping seeding in qBittorrent: {str(exc)}"
-        logger.error(error_msg, exc_info=True)
-        if manager._current_scan:
-            if "qBittorrent" not in manager._current_scan.service_errors:
-                manager._current_scan.service_errors["qBittorrent"] = error_msg
-            else:
-                manager._current_scan.service_errors["qBittorrent"] += f"; {error_msg}"
-
-
 def cleanup_empty_parents(manager, original_path: Path) -> None:
     if not manager._config.paths.download_roots:
         return
@@ -326,20 +305,6 @@ async def run_confirm_task(
         # Recompute the total from the live item state: queued confirms may
         # see fewer unconfirmed items than were counted at queue time.
         scan.confirm_total = len(selected_items)
-
-        if selected_items:
-            manager._update_confirm_state(
-                scan,
-                confirm_phase="stopping_seeding",
-                confirm_current_item=None,
-                confirm_current_target=None,
-                confirm_current_size_bytes=None,
-                confirm_current_copied_bytes=None,
-                confirm_current_speed_bytes=None,
-                confirm_current_percent=None,
-                confirm_note="Stopping seeding before move.",
-            )
-            await manager._stop_seeding_for_items(selected_items)
 
         for item in selected_items:
 

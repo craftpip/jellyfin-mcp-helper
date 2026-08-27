@@ -10,23 +10,18 @@ opencode.
 
 MCP requests are gated by `require_mcp_auth` (`app/core/auth.py`):
 
-- `MCP_ALLOW_UNAUTHENTICATED=true` (default) → every request passes and is
+- `JELLYSORT_MCP_TOKEN` empty (default) → every request passes and is
   logged as user `anonymous`.
-- `MCP_ALLOW_UNAUTHENTICATED=false` → the request must present a valid API key
-  via `Authorization: Bearer <key>` **or** `X-API-Key: <key>`:
-  - Valid key → request attributed to the key's `user` (logged as
+- `JELLYSORT_MCP_TOKEN` set → the request must present the same token
+  via `Authorization: Bearer <token>` **or** `X-API-Key: <token>`:
+  - Valid token → request attributed to user `admin` (logged as
     `as <user>`).
-  - `MCP_DEFAULT_TOKEN`, when set, is accepted as a master key for user `admin`
-    (so the UI proxy / admin tooling can authenticate when unauthenticated
-    access is off).
-  - Missing/invalid key → HTTP `401` with a JSON-RPC error body
+  - Deprecated aliases `MCP_DEFAULT_TOKEN` and `ADMIN_UI_TOKEN` are
+    accepted as fallbacks.
+  - Missing/invalid token → HTTP `401` with a JSON-RPC error body
     `{"code": -32001, "message": "unauthorized"}` keeping the request `id`.
 
-API keys are stored **hashed** (SHA-256) in `MCP_KEYS_FILE`
-(`config/mcp_keys.json`, bind-mounted, no restart needed on write) and are
-managed by `app/services/api_key_manager.py`; the full key is shown exactly
-once at creation. See [auth.md](auth.md) for the key lifecycle and the
-admin endpoints.
+See [auth.md](auth.md) for the full auth details.
 
 ## Request/response shape
 

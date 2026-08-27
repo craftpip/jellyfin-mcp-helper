@@ -4,7 +4,7 @@ import { apiGet } from '../api/apiClient.js'
 
 const SECTION_LABELS = {
   ai: 'Classification',
-  download: 'Download Client',
+  download: 'Downloads (Incomplete Detection)',
   web: 'Web UI',
   jellyfin: 'Jellyfin Integration',
   paths: 'Storage Paths',
@@ -502,7 +502,7 @@ export default function SettingsPage() {
         sections.map((section) => {
           const isDownload = section.id === 'download'
           const isJellyfin = section.id === 'jellyfin'
-          const enableKey = isDownload ? 'ENABLE_DOWNLOAD_CLIENT_CHECK' : isJellyfin ? 'ENABLE_JELLYFIN_INTEGRATION' : null
+          const enableKey = isDownload ? 'ENABLE_INCOMPLETE_DOWNLOAD_DETECTION' : isJellyfin ? 'ENABLE_JELLYFIN_INTEGRATION' : null
           const enableEntry = enableKey ? section.items.find((e) => e.key === enableKey) : null
           const isEnabled = enableEntry ? (draft[enableKey] === true || String(draft[enableKey]).toLowerCase() === 'true') : true
           const sectionItems = section.items.filter((e) => {
@@ -612,7 +612,7 @@ export default function SettingsPage() {
                 )
               })}
             </div>
-            {section.id === 'download' && <DownloadClientTest draft={draft} />}
+            {section.id === 'download' && <IncompleteDownloadsNotes />}
             {section.id === 'jellyfin' && <JellyfinTest draft={draft} />}
             {section.id === 'mcp' && <McpClientSetup />}
           </section>
@@ -632,33 +632,44 @@ export default function SettingsPage() {
   )
 }
 
-function DownloadClientTest({ draft }) {
-  const [result, setResult] = useState(null)
-  const [testing, setTesting] = useState(false)
-  async function doTest() {
-    setTesting(true)
-    setResult(null)
-    try {
-      const { apiPost } = await import('../api/apiClient.js')
-      const r = await apiPost('/admin/test-download-client', {
-        clientType: draft.DOWNLOAD_CLIENT,
-        url: draft.QBT_WEBUI_URL || draft.TRANSMISSION_URL || draft.DELUGE_URL,
-        user: draft.QBT_WEBUI_USER || draft.TRANSMISSION_USER,
-        password: draft.QBT_WEBUI_PASS || draft.TRANSMISSION_PASS || draft.DELUGE_PASSWORD,
-      })
-      setResult({ ok: true, text: `Connected to ${r.clientType} — ${r.torrentCount ?? 0} torrents` })
-    } catch (e) {
-      setResult({ ok: false, text: e.message })
-    } finally {
-      setTesting(false)
-    }
-  }
+function IncompleteDownloadsNotes() {
   return (
-    <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-      <button type="button" className="small" onClick={doTest} disabled={testing || !draft.DOWNLOAD_CLIENT}>
-        {testing ? 'Testing...' : 'Test Connection'}
-      </button>
-      {result && <span className={result.ok ? 'good-box' : 'env-error'} style={{ fontSize: '0.82rem', margin: 0 }}>{result.text}</span>}
+    <div
+      style={{
+        marginTop: '12px',
+        padding: '12px 14px',
+        background: 'var(--jf-note-bg, rgba(127, 127, 127, 0.08))',
+        border: '1px solid var(--jf-border, rgba(127, 127, 127, 0.35))',
+        borderRadius: '8px',
+        fontSize: '0.83rem',
+        lineHeight: 1.5,
+        color: 'var(--jf-text, inherit)',
+      }}
+    >
+      <strong style={{ display: 'block', marginBottom: '6px' }}>How in-progress downloads are detected</strong>
+      <p style={{ margin: '0 0 8px 0' }}>
+        JellySort detects downloads that are still downloading by looking for the <em>incomplete-file marker</em> that
+        your download client leaves next to the media file while it is still getting the data. Files with such a
+        marker are skipped and never moved until they finish. When the download completes, the marker is stripped
+        automatically and the file becomes eligible on the next scan.
+      </p>
+      <p style={{ margin: '0 0 8px 0' }}>
+        For this to work, your download client must be configured to append a marker extension to incomplete files.
+        Below are the markers used by the most common download clients — enable the matching option in your client so
+        the marker is written while a download is in progress:
+      </p>
+      <ul style={{ margin: '0 0 10px 0', paddingLeft: '18px' }}>
+        <li><strong>qBittorrent</strong> — <em>.!qB</em>: enable <em>"Append .!qB extension to incomplete files"</em> in <em>Tools &rarr; Options &rarr; BitTorrent</em>.</li>
+        <li><strong>Transmission</strong> — <em>.part</em> (written automatically).</li>
+        <li><strong>µTorrent</strong> — <em>.!ut</em>: enable <em>"Append .!ut to incomplete files"</em> in Preferences.</li>
+        <li><strong>rTorrent</strong> — <em>.part</em> / <em>.partial</em> (written automatically).</li>
+        <li><strong>Deluge</strong> — libtorrent <em>.parts</em> side files: enable <em>"Add .parts extension to incomplete files"</em>.</li>
+      </ul>
+      <p style={{ margin: 0 }}>
+        Detection is case-insensitive and covers both appended suffixes (<em>.!qB</em>, <em>.!ut</em>, <em>.!bt</em>,{' '}
+        <em>.part</em>, <em>.partial</em>, <em>.parts</em>) and prefixed markers (<em>incomplete.</em>). Toggle the
+        switch above to turn skipping of in-progress downloads on or off.
+      </p>
     </div>
   )
 }

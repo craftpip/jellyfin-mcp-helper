@@ -76,7 +76,7 @@ export function groupItems(items) {
   const GENERIC_FOLDERS = new Set(['downloads', 'torrents', 'download', 'complete', 'incomplete'])
   const groups = {}
   items.forEach((item, idx) => {
-    // Group by source folder (torrent folder) per plan 12 — all files in one torrent folder stay together
+    // Group by source folder (download folder) per plan 12 — all files in one download folder stay together
     // But if the sourceFolder is a generic download root (like 'downloads'), fall back to title
     let key = item.sourceFolder || item.containerPath?.split('/').filter(Boolean).pop() || item.title || 'Unknown'
     if (GENERIC_FOLDERS.has(key.toLowerCase())) {

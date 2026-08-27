@@ -4,12 +4,28 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-
 from app.core.config import PathsConfig
 from app.core.constants import VIDEO_EXTENSIONS
 from app.models.schemas import CandidateItem
 
 SKIP_DIR_MARKERS = {".trickplay"}
+
+# Incomplete-file markers (suffixes) that download clients append to a file
+# while a download is still in progress, removed once the file completes.
+# All are matched case-insensitively.
+#   qBittorrent   -> .!qB   (file.mkv -> file.mkv.!qB)
+#   Transmission  -> .part
+#   rTorrent      -> .part  (split_suffix, default .part), plus .partial for split parts
+#   Vuze/Azureus  -> .part
+#   uTorrent      -> .!ut
+#   BitTorrent    -> .!bt   (Windows mainline client)
+#   Deluge        -> no main-filename marker (keeps libtorrent .parts files
+#                    only), so it cannot be detected via a sibling suffix.
+PARTIAL_FILE_MARKERS = (".!qb", ".!ut", ".!bt", ".part", ".partial", ".parts")
+
+# Incomplete-file name prefixes (Tixati appends "incomplete." before the real
+# filename while the file is still downloading: file.mkv -> incomplete.file.mkv).
+PARTIAL_FILE_PREFIXES = ("incomplete.", "incomplete$")
 
 
 @dataclass(slots=True)
@@ -120,6 +136,51 @@ def _should_skip_path(path: Path) -> bool:
     return any(marker in part for part in path.parts for marker in SKIP_DIR_MARKERS)
 
 
+def _is_in_progress_by_marker(path: Path) -> bool:
+    """True when a sibling partial-file marker exists for this file.
+
+    The marker file is case-insensitive (qBittorrent writes `.!qB`, so the
+    sibling is e.g. `file.mkv.!qB`, but the marker format varies by client and
+    the filesystem may or may not be case-sensitive). We scan the parent dir
+    once and treat any sibling whose name ends with ``<candidate name><marker>``
+    (suffix markers, e.g. ``.!qB``/``.part``) as an in-progress marker. We also
+    check prefix markers (Tixati writes ``incomplete.file.mkv``).
+    """
+    name_lower = path.name.lower()
+    try:
+        with os.scandir(path.parent) as entries:
+            for entry in entries:
+                entry_name = entry.name.lower()
+                for marker in PARTIAL_FILE_MARKERS:
+                    if entry_name == name_lower + marker:
+                        return True
+                for prefix in PARTIAL_FILE_PREFIXES:
+                    if entry_name == prefix + name_lower:
+                        return True
+    except OSError:
+        return False
+    return False
+
+
+def _is_partial_marker_file(path: Path) -> bool:
+    """True when this candidate's own name is a partial-file marker,
+    so it should never be treated as a real candidate.
+
+    Suffix markers (`.!qB`, `.part`, ...) already end in non-video extensions
+    and are filtered by the extension check, but Tixati's prefix markers
+    (`incomplete.Show.S01E01.mkv`) still look like a normal video file, so we
+    must skip them explicitly.
+    """
+    name_lower = path.name.lower()
+    for marker in PARTIAL_FILE_MARKERS:
+        if name_lower.endswith(marker):
+            return True
+    for prefix in PARTIAL_FILE_PREFIXES:
+        if name_lower.startswith(prefix):
+            return True
+    return False
+
+
 def scan_candidates(paths_config: PathsConfig) -> ScanCandidatesResult:
     result = ScanCandidatesResult()
     for download_root in paths_config.download_roots:
@@ -147,6 +208,8 @@ def scan_candidates(paths_config: PathsConfig) -> ScanCandidatesResult:
                 if child.is_file():
                     if child.suffix.lower() not in VIDEO_EXTENSIONS:
                         continue
+                    if _is_partial_marker_file(child):
+                        continue
                     result.candidates.append(
                         CandidateItem(
                             source_root_key=root_key,
@@ -157,6 +220,7 @@ def scan_candidates(paths_config: PathsConfig) -> ScanCandidatesResult:
                             container_path=None,
                             relative_path=child.name,
                             file_size=child.stat().st_size,
+                            in_progress=_is_in_progress_by_marker(child),
                         )
                     )
                     continue
@@ -170,6 +234,8 @@ def scan_candidates(paths_config: PathsConfig) -> ScanCandidatesResult:
                     try:
                         if file_path.suffix.lower() not in VIDEO_EXTENSIONS:
                             continue
+                        if _is_partial_marker_file(file_path):
+                            continue
                         result.candidates.append(
                             CandidateItem(
                                 source_root_key=root_key,
@@ -180,6 +246,7 @@ def scan_candidates(paths_config: PathsConfig) -> ScanCandidatesResult:
                                 container_path=str(child),
                                 relative_path=str(file_path.relative_to(child)),
                                 file_size=file_path.stat().st_size,
+                                in_progress=_is_in_progress_by_marker(file_path),
                             )
                         )
                     except OSError as exc:

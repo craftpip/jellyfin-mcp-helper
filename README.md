@@ -8,9 +8,9 @@ The docs in this repo (`README.md`, `docs/`, `AGENTS.md`) describe the code
 at a specific commit, kept in sync by the recursive plan
 `plans/07-code-doc-sync.md` (never deleted, run repeatedly).
 
-- **Last synced commit:** `0db6114` (2026-08-24)
+- **Last synced commit:** `c9f8d94` (2026-08-26)
 
-To sync: review `git log --oneline 0db6114..HEAD`, update the docs for every
+To sync: review `git log --oneline c9f8d94..HEAD`, update the docs for every
 commit in that range, then set this line to the new HEAD.
 
 ## Features
@@ -21,14 +21,13 @@ commit in that range, then set this line to the new HEAD.
 - **Multi-root curation**: movie and series roots can include descriptions to help root selection.
 - **Jellyfin tools**: list libraries, browse items, inspect ongoing series, and trigger targeted scans.
 - **Release Tracker**: store and query locally tracked next-release dates for ongoing series.
-- **qBittorrent integration**: can stop active downloads before moving files.
+- **Incomplete-download detection**: skips downloads that are still in progress (detected via incomplete-file markers on disk).
 - **Guessit + regex classification**: local, pattern-based (no external model required).
 
 ## Requirements
 
 1. Python 3.11+ or Docker.
-2. Optional qBittorrent MCP server for download-state checks and pre-move handling.
-3. Optional Jellyfin server + API key for library refresh and Jellyfin MCP tools.
+2. Optional Jellyfin server + API key for library refresh and Jellyfin MCP tools.
 
 ## Quick Start
 
@@ -43,11 +42,8 @@ cp .env.example .env
 Common settings:
 
 ```env
-# Optional qBittorrent integration
-ENABLE_DOWNLOAD_CLIENT_CHECK=true
-DOWNLOAD_CLIENT=qbittorrent
-QBT_MCP_URL=http://localhost:8093/mcp
-QBT_MCP_API_KEY=your-mcp-key
+# Skip downloads still in progress (incomplete-file markers on disk)
+ENABLE_INCOMPLETE_DOWNLOAD_DETECTION=true
 
 # Optional Jellyfin integration
 ENABLE_JELLYFIN_INTEGRATION=true
@@ -57,7 +53,7 @@ JELLYFIN_MOVIE_LIBRARY_NAME=Movies
 JELLYFIN_SERIES_LIBRARY_NAME=Shows
 
 # Download + library roots
-DOWNLOAD_ROOTS=/media/torrents
+DOWNLOAD_ROOTS=/media/downloads
 MOVIE_ROOTS=/media/movies::Standard movies,/media/movies_4k::4K movies
 SERIES_ROOTS=/media/series::Primary shows folder
 ```
@@ -316,10 +312,7 @@ Important variables from `.env.example`:
 |----------|----------|-------------|
 | `MODEL_CLASSIFY_CONFIDENCE_THRESHOLD` | No | Min confidence for a classification result (0.65) |
 | `MODEL_PATH_CONFIDENCE_THRESHOLD` | No | Min confidence for a path-resolution match (0.6) |
-| `ENABLE_DOWNLOAD_CLIENT_CHECK` | No | Enable qBittorrent download-state checks |
-| `DOWNLOAD_CLIENT` | No | Download client type, currently `qbittorrent` |
-| `QBT_MCP_URL` | If qBittorrent enabled | qBittorrent MCP endpoint |
-| `QBT_MCP_API_KEY` | If qBittorrent enabled | qBittorrent MCP API key |
+| `ENABLE_INCOMPLETE_DOWNLOAD_DETECTION` | No | Skip downloads still in progress (incomplete-file markers on disk, default true) |
 | `ENABLE_JELLYFIN_INTEGRATION` | No | Enable Jellyfin refresh integration |
 | `JELLYFIN_BASE_URL` | If Jellyfin enabled | Jellyfin server URL |
 | `JELLYFIN_API_KEY` | If Jellyfin enabled | Jellyfin API key |
@@ -332,8 +325,7 @@ Important variables from `.env.example`:
 | `WEB_UI_ENABLED` | No | Enable the web UI (served on the same port as MCP, 18328) |
 | `WEB_UI_PORT` | No | Deprecated — unused. The web UI shares the MCP port |
 | `UI_PANEL_PASSWORD` | No | Panel password; when set, the web UI requires login |
-| `MCP_ALLOW_UNAUTHENTICATED` | No | Allow unauthenticated MCP requests (default `true`); when `false`, `/mcp` needs an API key or `MCP_DEFAULT_TOKEN` |
-| `MCP_DEFAULT_TOKEN` | No | MCP master key — bypasses per-client keys for API use |
+| `JELLYSORT_MCP_TOKEN` | No | MCP token — when set, every `/mcp` request must present it; when empty, MCP is open. Deprecated aliases: `MCP_DEFAULT_TOKEN`, `ADMIN_UI_TOKEN` |
 
 Full variable reference and the live-vs-restart apply model:
 [docs/getting-started/configuration.md](docs/getting-started/configuration.md).

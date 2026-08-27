@@ -23,9 +23,8 @@ Components consume it via `useAppStore()` which returns `{ state, actions }`.
 | `confirmActive` / `confirmButtonLabel` / `confirmModal` | Confirm workflow state. |
 | `logEntries` | In-memory log (capped at `LOG_LIMIT = 1000`). |
 | `toasts` | Transient toast messages. |
-| `page` | Active SPA page (`scan` / `settings` / `apikeys`), from `window.location.pathname`. |
+| `page` | Active SPA page (`scan` / `settings`), from `window.location.pathname`. |
 | `envSpec` / `envSaved` / `envEffective` | Settings page data (`GET /api/admin/env`). |
-| `apiKeys` | API-key list (`GET /api/admin/api-keys`). |
 
 ## Confirm queue (background moving)
 
@@ -64,7 +63,7 @@ move is already running (see
 | `runConfirm` / `pollConfirmProgress` | `POST /api/scans/current/confirm`, then poll `GET /api/scans/current/confirm-progress` (or by scan id). Queued batches auto-start via the poll bridge — see "Confirm queue" above. |
 | `retargetItem(confirmId, directory, applyToGroup, reclassifyAsMovie)` | `POST /api/scans/{scan_id}/items/retarget` — re-target an item/group to a browsed folder, then refresh the report. |
 | `deleteSourceItem` / `deleteSelectedSkipped` | `DELETE /api/scans/current/items` after a confirm dialog. |
-| `loadEnv` / `saveEnv` / `loadApiKeys` / `createApiKey` / `toggleApiKey` / `deleteApiKey` | Admin pages: `/api/admin/env` and `/api/admin/api-keys`. |
+| `loadEnv` / `saveEnv` | Admin settings page: `/api/admin/env`. |
 | `toast` / `log` / `copyText` | Feedback primitives. |
 
 ## Notes

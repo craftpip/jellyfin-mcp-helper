@@ -13,34 +13,26 @@ environment variables.
 
 `require_mcp_auth(request)` is a FastAPI dependency on `/mcp`:
 
-- `MCP_ALLOW_UNAUTHENTICATED=true` (default) → pass;
+- `JELLYSORT_MCP_TOKEN` empty (default) → pass;
   `request.state.mcp_user = "anonymous"`.
-- Otherwise, a valid `Authorization: Bearer <key>` or `X-API-Key: <key>` sets
-  `request.state.mcp_user` to the key's `user`; `MCP_DEFAULT_TOKEN` is accepted as
-  user `"admin"`; missing/invalid keys raise `MCPUnauthorizedError` → HTTP 401
-  with the JSON-RPC body `{"code": -32001, "message": "unauthorized"}` (request
-  `id` preserved). The MCP activity log line appends `as <user>`.
+- Otherwise, a valid `Authorization: Bearer <token>` or `X-API-Key: <token>`
+  matching the token sets `request.state.mcp_user` to `"admin"`;
+  missing/invalid tokens raise `MCPUnauthorizedError` → HTTP 401 with the
+  JSON-RPC body `{"code": -32001, "message": "unauthorized"}` (request `id`
+  preserved). Deprecated aliases `MCP_DEFAULT_TOKEN` and `ADMIN_UI_TOKEN` are
+  accepted as fallbacks. The MCP activity log line appends `as <user>`.
 
-## API key store (`app/services/api_key_manager.py`)
+## API key store (deprecated)
 
-State lives in `MCP_KEYS_FILE` (`config/mcp_keys.json`, gitignored, bind
-mounted, read per request — key changes never need a container restart). Keys
-are `jsort_` + 32 hex chars; only the SHA-256 hash is stored on disk.
-
-| Operation | Behavior |
-| --- | --- |
-| `create_key(name, user, scopes)` | Generates the key, stores the hash, returns the **full key exactly once**. `name` is required. |
-| `list_keys()` | Never includes hashes or full keys. |
-| `set_enabled(key_id, enabled)` / `delete_key(key_id)` | Toggle/remove. |
-| `authenticate(raw_key)` | Constant-time compare (`hmac.compare_digest`); updates `last_used_at`. |
-
-Writes are guarded by a `threading.Lock` and use atomic file replacement.
+The old multi-key system (`app/services/api_key_manager.py`, `MCP_KEYS_FILE`)
+has been removed. MCP auth is now a single token (`JELLYSORT_MCP_TOKEN`).
+The `api_key_manager.py` file still exists but is no longer imported.
 
 ## Env management (`app/services/env_manager.py`)
 
 The Settings page backend. `ENV_SPEC` is the manifest of every setting
 `{key, section, type, secret, apply, description}` mirroring `.env.example`
-sections; secret keys (`*API_KEY*`, `QBT_WEBUI_PASS`, `MCP_DEFAULT_TOKEN`) are
+sections; secret keys (`*API_KEY*`, `QBT_WEBUI_PASS`, `JELLYSORT_MCP_TOKEN`) are
 masked. `apply` is `"live"` or `"restart"` (see
 [getting-started/configuration](../getting-started/configuration.md)).
 
@@ -61,12 +53,7 @@ use the UI panel login, not a separate token.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/admin/env` | `ENV_SPEC` + saved + effective + pending-restart diff. |
-| `POST` | `/api/admin/env` | `{updates: {KEY: value}}` → `{appliedLive, needsRecreate}`; blank secret fields mean "keep unchanged". |
-| `GET` | `/api/admin/api-keys` | Key list (no secrets). |
-| `POST` | `/api/admin/api-keys` | `{name, user?, scopes?}` → the full key, once. |
-| `PATCH` | `/api/admin/api-keys/{id}` | Toggle `enabled`. |
-| `DELETE` | `/api/admin/api-keys/{id}` | Delete a key. |
+| `GET` | `/api/admin/env` | List all settings (saved + effective + spec). |
+| `POST` | `/api/admin/env` | Update settings (validates, persists to `.env`, returns `appliedLive`/`needsRecreate`). |
 
-Tests: `test_api_key_manager.py`, `test_mcp_auth.py`, `test_env_manager.py`,
-plus the admin endpoint tests in `test_ui_api.py`.
+Tests: `test_mcp_auth.py`, `test_env_manager.py`, plus the admin endpoint tests in `test_ui_api.py`.

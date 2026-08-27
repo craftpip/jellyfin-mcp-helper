@@ -59,10 +59,6 @@ the admin gate for the `/api/admin/*` routes).
 | `POST` | `/scans/{scan_id}/items/retarget` | Re-target an item (or its whole group) to a browsed folder; server-side filename/season logic, optional `reclassifyAsMovie`. |
 | `GET` | `/admin/env` | Env spec + saved + effective + pending-restart diff (Settings page). |
 | `POST` | `/admin/env` | Save env changes → `{appliedLive, needsRecreate}`. |
-| `GET` | `/admin/api-keys` | MCP API-key list (no secrets). |
-| `POST` | `/admin/api-keys` | Create a key → full key once (requires `name`). |
-| `PATCH` | `/admin/api-keys/{id}` | Enable/disable a key. |
-| `DELETE` | `/admin/api-keys/{id}` | Delete a key. |
 | `GET` | `/history?limit=50` | Confirm history groups (`history_groups` + `history_items`, live `source_exists`/`target_exists`/`pathExists`). |
 | `GET` | `/history/{history_id}` | Single confirm group with items. |
 | `POST` | `/history/{history_id}/undo` | Undo a confirm group (restore moved files). |
@@ -88,16 +84,17 @@ the global settings (which read the real `.env` media roots).
 - `src/main.jsx` mounts `<App/>`.
 - `src/App.jsx` composes the top-level layout; when the API reports
   `auth.required` it renders the login screen instead. Page switching
-  (`/`, `/settings`, `/apikeys`) is path-based SPA routing: the store reads
+  (`/`, `/settings`) is path-based SPA routing: the store reads
   `window.location.pathname` and navigates with `history.pushState` +
   `popstate`; the server serves the same `index.html` for `/scan`,
-  `/settings`, `/apikeys` so deep links refresh.
+  `/settings` so deep links refresh. `/apikeys` is a backward-compat
+  route that serves the SPA (no dedicated page).
 - `src/store/AppStore.jsx` provides `AppStoreProvider` + `useAppStore()`
   (Context + useReducer).
 - `src/api/apiClient.js` is the REST client (`apiGet`, `apiPost`, `apiPatch`,
   `apiDelete`, `setAuthToken`, `ApiError`).
-- `src/components/` — `LoginScreen` (password gate), `SettingsPage` /
-  `ApiKeysPage` (admin pages, nav in `TopBar`), `BrowseModal` (smart-correction
+- `src/components/` — `LoginScreen` (password gate), `SettingsPage`
+  (admin settings, nav in `TopBar`), `BrowseModal` (smart-correction
   folder browser), plus the scan/report/confirm components.
 - `src/utils/` holds pure helpers (`report.js`, `format.js`, `transfer.js`).
 - `src/styles/theme.css` is the stylesheet; `src/test/setup.js` is the test
@@ -108,7 +105,7 @@ the global settings (which read the real `.env` media roots).
 `vite.config.js`:
 
 - `base: '/'` for builds (absolute asset URLs, so the bundle works at `/`,
-  `/settings`, `/apikeys`), `'/'` in dev.
+  `/settings`), `'/'` in dev.
 - `build.outDir: '../react-dist'`, `emptyOutDir: true`.
 - Dev server port `5173` with `/api` proxied to
   `http://localhost:18328`.

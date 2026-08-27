@@ -9,7 +9,7 @@ The processing engine and integrations in `app/services/`.
 | [resolver](resolver.md) | Target path resolution |
 | [scan-manager](scan-manager.md) | Scan → plan → confirm workflow + file moves |
 | [jellyfin](jellyfin.md) | Jellyfin API client |
-| [download-client](download-client.md) | qBittorrent MCP client |
+| [download-client](download-client.md) | In-progress (incomplete-file marker) detection |
 | [release-tracker](release-tracker.md) | Local next-release store |
 | `presenters.py` | Shared report/progress formatters (MCP + UI) |
 | `history_store.py` | Confirm history (`history_groups`/`history_items` in `app.db`, `path_history_json`, `suspect`/`corrected`/`cross_drive`, live `pathExists`) |

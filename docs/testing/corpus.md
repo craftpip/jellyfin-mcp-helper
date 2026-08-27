@@ -11,9 +11,10 @@ This file is committed, so it must **never** reveal the user's actual media:
 - Replace real series names with random words (they do not need to look
   plausible).
 - Replace real release groups with neutral fakes (e.g. `[RlsGrp]`).
-- Replace real root paths like `/media3/torrents/` with neutral ones (e.g.
-  `/media1/downloads/`). The generic word "torrents" is fine when it refers to
-  the download-root concept in code/config.
+- Replace real root paths with neutral ones (e.g. `/media/downloads` →
+  `/media1/downloads/`). Use the generic word "downloads" for the download-root
+  concept; only keep a folder literally named "torrents" when it is real path
+  data in a fixture.
 - Keep the formatting tokens identical so the classifier runs on the same
   patterns: `SxxEyy`, `v2`, `REPACK`/`REPACK2`, years in parens, `1_2`-style
   underscore junk, dot-separated long titles, bracket-wrapped tags,

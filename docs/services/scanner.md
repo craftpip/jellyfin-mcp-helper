@@ -10,6 +10,8 @@ stateless; every scan starts from the filesystem.
 | `VIDEO_EXTENSIONS` | `.mkv .mp4 .avi .mov .m4v .wmv .flv` | Extensions treated as media candidates. |
 | `SKIP_DIR_MARKERS` | `{".trickplay"}` | Directory name fragments to skip. |
 | `SAMPLE_SIZE_THRESHOLD` | `150 * 1024 * 1024` (150 MB) | Files smaller than this are treated as possible samples. |
+| `PARTIAL_FILE_MARKERS` | `.!qb .!ut .!bt .part .partial .parts` | Incomplete-file suffix markers written by download clients (matched case-insensitively) — a sibling named `<candidate name><marker>` marks a download as in-progress. |
+| `PARTIAL_FILE_PREFIXES` | `incomplete.`, `incomplete$` | Name prefixes some clients prepend to the real filename while downloading (e.g. `incomplete.Show.S01E01.mkv`). |
 
 ## Types
 
@@ -32,7 +34,12 @@ Full scan used by the scan/plan workflow:
    - A top-level **video file** becomes a candidate with `container_path=None`.
    - A **directory** is walked recursively (`_iter_child_files`) and each video
      file becomes a candidate with `container_path` set to the top-level folder.
-2. Filesystem errors are recorded as `ScanPathError` and never abort the scan.
+2. Marker files themselves are excluded (`_is_partial_marker_file`), and every
+   candidate gets an `in_progress` flag via `_is_in_progress_by_marker` — True
+   when the parent directory holds a sibling `<name><marker>` or `<prefix><name>`
+   (see [download-client.md](download-client.md)). The scan skips flagged
+   candidates while `ENABLE_INCOMPLETE_DOWNLOAD_DETECTION` is on.
+3. Filesystem errors are recorded as `ScanPathError` and never abort the scan.
 
 ### `recent_video_files(paths_config, hours, errors) -> list[RecentFile]`
 

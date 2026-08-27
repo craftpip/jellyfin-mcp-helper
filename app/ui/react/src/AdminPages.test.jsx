@@ -7,11 +7,11 @@ import { AppStoreProvider } from './store/AppStore.jsx'
 const ENV = {
   spec: [
     { key: 'MODEL_CLASSIFY_CONFIDENCE_THRESHOLD', section: 'ai', type: 'float', secret: false, apply: 'restart', description: 'Classification threshold', saved: '0.65', effective: '0.65' },
-    { key: 'QBT_MCP_API_KEY', section: 'download', type: 'str', secret: true, apply: 'live', description: 'qBittorrent MCP key', saved: '********', effective: '********' },
+    { key: 'ENABLE_INCOMPLETE_DOWNLOAD_DETECTION', section: 'download', type: 'bool', secret: false, apply: 'live', description: 'Skip downloads still in progress', saved: 'true', effective: 'true' },
     { key: 'JELLYSORT_MCP_TOKEN', section: 'mcp', type: 'str', secret: true, apply: 'live', description: 'JellySort MCP token', saved: '', effective: '' },
   ],
-  saved: { MODEL_CLASSIFY_CONFIDENCE_THRESHOLD: '0.65', QBT_MCP_API_KEY: '********', JELLYSORT_MCP_TOKEN: '' },
-  effective: { MODEL_CLASSIFY_CONFIDENCE_THRESHOLD: '0.65', QBT_MCP_API_KEY: '********', JELLYSORT_MCP_TOKEN: '' },
+  saved: { MODEL_CLASSIFY_CONFIDENCE_THRESHOLD: '0.65', ENABLE_INCOMPLETE_DOWNLOAD_DETECTION: 'true', JELLYSORT_MCP_TOKEN: '' },
+  effective: { MODEL_CLASSIFY_CONFIDENCE_THRESHOLD: '0.65', ENABLE_INCOMPLETE_DOWNLOAD_DETECTION: 'true', JELLYSORT_MCP_TOKEN: '' },
   pending: [],
 }
 
@@ -105,8 +105,8 @@ describe('Settings page', () => {
 
     await screen.findByText('Classification')
     expect(screen.getByLabelText('MODEL_CLASSIFY_CONFIDENCE_THRESHOLD')).toHaveValue('0.65')
-    expect(screen.getByLabelText('QBT_MCP_API_KEY')).toHaveAttribute('type', 'password')
-    expect(screen.getByLabelText('QBT_MCP_API_KEY')).toHaveValue('')
+    expect(screen.getByLabelText('JELLYSORT_MCP_TOKEN')).toHaveAttribute('type', 'password')
+    expect(screen.getByLabelText('JELLYSORT_MCP_TOKEN')).toHaveValue('')
     expect(screen.getAllByText('recreate').length).toBeGreaterThan(0)
     expect(screen.getAllByText('live').length).toBeGreaterThan(0)
   })

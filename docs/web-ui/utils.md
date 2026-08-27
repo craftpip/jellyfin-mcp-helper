@@ -17,7 +17,7 @@ Pure, unit-tested helpers (no DOM access) plus the REST API client.
 | --- | --- |
 | `formatBytes(bytes)` | Human-readable size (`B`…`TB`). |
 | `formatDuration(seconds)` | `2h 5m 10s` style. |
-| `formatConfirmPhase(phase)` | Phase → label map (idle, preparing, stopping_seeding, moving, deleting_source, triggering_jellyfin, completed, failed). |
+| `formatConfirmPhase(phase)` | Phase → label map (idle, preparing, moving, deleting_source, triggering_jellyfin, completed, failed). `stopping_seeding` remains as a legacy label but is never emitted. |
 | `fileName(path)` | Last path segment. |
 | `driveRoot(path)` | First path segment (`/media1`). |
 | `isCrossDrive(sourcePath, targetPath)` | Different drive roots → cross-drive. |

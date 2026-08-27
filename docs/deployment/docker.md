@@ -40,7 +40,7 @@ services:
 
 - **Ports:** the app listens on `18327` inside the container and is exposed on
   `18328`. That single port serves both MCP (`/mcp`) and the Web UI (`/`,
-  `/settings`, `/apikeys`, `/api/*`).
+  `/settings`, `/api/*`).
 - **`.env`:** passed via `env_file`, so changes require a `docker compose`
   recreate (`docker compose up -d`) rather than a plain `docker restart`.
 - **Media mounts:** each host download/library path is bind-mounted at a

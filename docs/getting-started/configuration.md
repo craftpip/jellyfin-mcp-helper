@@ -24,10 +24,9 @@ Every variable is classified by `ENV_SPEC` (see
 [app/services/env_manager.py](../../app/services/env_manager.py) and
 [backend/config.md](../backend/config.md)) as either **live** or **restart**:
 
-- **Live** — read per request/operation from `os.environ` (Jellyfin and
-  qBittorrent client settings, `UI_PANEL_PASSWORD`, `MCP_ALLOW_UNAUTHENTICATED` /
-  `MCP_KEYS_FILE` / `MCP_DEFAULT_TOKEN`). Saving them via the Settings page takes
-  effect immediately (no restart).
+- **Live** — read per request/operation from `os.environ` (Jellyfin settings,
+  incomplete-download detection, `UI_PANEL_PASSWORD`, `JELLYSORT_MCP_TOKEN`).
+  Saving them via the Settings page takes effect immediately (no restart).
 - **Restart** — captured in the `ScanManager` snapshot or the startup lifespan
   (media roots, thresholds, `WEB_UI_*`). They need
   `docker compose up -d --force-recreate` (the compose `env_file` applies at
@@ -53,21 +52,17 @@ into the container, so disk edits are visible instantly.
 `MODEL_REQUEST_TIMEOUT_SECONDS`, `MODEL_RETRY_ATTEMPTS` — were removed with the
 LLM clients and are no longer read by the code.)
 
-### Download client (native WebUI)
+### Incomplete-download detection
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `ENABLE_DOWNLOAD_CLIENT_CHECK` | `true` | Enable download-client in-progress checks. |
-| `DOWNLOAD_CLIENT` | *(unset)* | Client type: `qbittorrent` / `transmission` / `deluge` (empty = disabled). |
-| `QBT_WEBUI_URL` | — | qBittorrent WebUI URL (e.g. `http://10.69.1.164:8080`). `DOWNLOAD_CLIENT=qbittorrent` only. |
-| `QBT_WEBUI_USER` | — | qBittorrent username. |
-| `QBT_WEBUI_PASS` | — | qBittorrent password (secret). |
-| `TRANSMISSION_URL` | — | Transmission RPC URL (e.g. `http://10.69.1.164:9091/transmission/rpc`). |
-| `TRANSMISSION_USER` / `TRANSMISSION_PASS` | — | Transmission credentials (pass is secret). |
-| `DELUGE_URL` | — | Deluge WebUI URL (e.g. `http://10.69.1.164:8112`). |
-| `DELUGE_PASSWORD` | — | Deluge password (secret). |
+| `ENABLE_INCOMPLETE_DOWNLOAD_DETECTION` | `true` | Skip files that are still downloading. Detection is filesystem-only: a file whose parent directory contains an incomplete-file marker sibling (`.!qB`, `.part`, `.partial`, `.parts`, …) or whose own name starts with an `incomplete.` prefix is treated as in-progress and skipped with reason `In-progress download`. Set to `false` to scan those files anyway. |
 
-Legacy `QBT_MCP_URL` / `QBT_MCP_API_KEY` (MCP proxy) were removed in `746c7e5` — the client now talks directly to the native WebUI/RPC.
+The legacy download-client integration vars (`ENABLE_DOWNLOAD_CLIENT_CHECK`,
+`DOWNLOAD_CLIENT`, `QBT_*`, `TRANSMISSION_*`, `DELUGE_*`, and the older
+`QBT_MCP_URL`/`QBT_MCP_API_KEY` MCP proxy) were **removed** — JellySort no
+longer talks to any download client API and never stops seeding. See
+[services/download-client](../services/download-client.md).
 
 ### Jellyfin integration (optional)
 
@@ -100,9 +95,7 @@ Legacy `QBT_MCP_URL` / `QBT_MCP_API_KEY` (MCP proxy) were removed in `746c7e5` �
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `MCP_ALLOW_UNAUTHENTICATED` | `true` | Allow unauthenticated MCP requests. When `false`, every `/mcp` request needs a valid API key (`Authorization: Bearer` or `X-API-Key`) or `MCP_DEFAULT_TOKEN`. |
-| `MCP_KEYS_FILE` | `config/mcp_keys.json` | Path to the hashed API-key store (see [backend/auth.md](../backend/auth.md)). |
-| `MCP_DEFAULT_TOKEN` | *(empty)* | Master key accepted by MCP auth for the user `"admin"`. |
+| `JELLYSORT_MCP_TOKEN` | *(empty)* | When set, every `/mcp` request must present it as `Authorization: Bearer <token>` or `X-API-Key`; when empty, MCP is open (no auth). Deprecated aliases `MCP_DEFAULT_TOKEN` and `ADMIN_UI_TOKEN` are accepted as fallbacks. |
 
 ## Derived config structures
 
@@ -121,6 +114,8 @@ Legacy `QBT_MCP_URL` / `QBT_MCP_API_KEY` (MCP proxy) were removed in `746c7e5` �
 It also exposes helpers used across the app:
 
 - `get_media_prefixes()` — strips a trailing `torrents`/`downloads` segment from
-  each download root to derive the media prefix (used to infer cross-drive moves).
+  each download root (i.e. when the folder is literally named that; the download
+  root itself may be named either) to derive the media prefix (used to infer
+  cross-drive moves).
 - `find_download_root_for_folder(name)` — locates which download root contains a
   folder (used to detect in-progress downloads).

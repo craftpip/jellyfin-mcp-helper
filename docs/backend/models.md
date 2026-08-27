@@ -122,7 +122,7 @@ The scan state machine. Core fields:
 - Errors: `error`, `service_errors: dict`
 - Confirm state (per-confirm, scoped):
   - `confirm_status` (`idle|running|completed|failed`)
-  - `confirm_phase` (`idle|preparing|stopping_seeding|moving|deleting_source|triggering_jellyfin|completed|failed`)
+  - `confirm_phase` (`idle|preparing|moving|deleting_source|triggering_jellyfin|completed|failed`; `stopping_seeding` is a legacy literal kept for backwards compat, never emitted)
   - `confirm_current_item`, `confirm_current_target`
   - `confirm_total`, `confirm_processed`
   - baselines `confirm_start_moved/replaced/failed` (snapshotted when a confirm

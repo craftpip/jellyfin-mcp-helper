@@ -4,7 +4,7 @@
 
 | Component | Role |
 | --- | --- |
-| `TopBar` | Header: connection status, auth-aware "Log out" button, scan/report/confirm actions, nav tabs (Scan & Move / Settings / API Keys). |
+| `TopBar` | Header: connection status, auth-aware "Log out" button, scan/report/confirm actions, nav tabs (Scan & Move / Settings). |
 | `ActionsPanel` | Scan start, "Get Report", library list with per-library "Scan" buttons. |
 | `ScanProgressPanel` | Live scan progress (percent, processed/total, current file). |
 | `ReportPanel` | The report table: grouped rows, filters, selection, path editing, per-row target path state. |
@@ -14,7 +14,6 @@
 | `PathPills` | Reusable path/source/target rendering with drive-root highlighting. |
 | `LoginScreen` | Password gate shown when `authRequired && !authed` (also after a 401). |
 | `SettingsPage` | env-var editor: grouped by `ENV_SPEC` section, secret masking + reveal, live vs recreate badges, "Recreate required" banner with the exact command. |
-| `ApiKeysPage` | MCP API-key table (name/user/prefix/enabled/created/last used/scopes) + create form (required name) with the once-only full-key modal and MCP client header hint. |
 | `BrowseModal` | Smart-correction folder browser for re-targeting: search box, combined "All libraries" root view, breadcrumb/`..`, season badges, "Select this folder". |
 | `HistoryPage` | Confirm history: per-`history_id` `▼/▶` cards (`group_title`, `N files`, `confirmed_at`), expanded table `Action` (Cross-drive/Suspect/Corrected + `PathPills`) / `Source → Target Path` (editable + `Browse…` via `FolderPicker`) / `Size` / `Trail` (compact `N hops • M paths` → 920px table popup with per-hop `move`/`replaced`) / `Status` / `Delete` (when `source_exists`), `Undo` + `Save & Move Again`. Shows **only** `history_items` for that confirm (not whole scan report), no summary pills/search/filter chips. |
 

@@ -295,9 +295,8 @@ def _confirm_started_response(scan: ScanPlan) -> dict:
         return response
 
     response["message"] = "Confirm started in the background. This tool returns immediately. No files were moved yet."
-    response["tool_purpose"] = "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. It returns immediately and processes in the background. Use the confirm progress tool to track progress."
+    response["tool_purpose"] = "Apply a completed organizer scan plan. This tool performs write actions: it moves files and returns immediately and processes in the background. Use the confirm progress tool to track progress."
     response["what_happens_now"] = [
-        "The service stops seeding for each source file if qBittorrent is configured.",
         "Each planned item is moved or replaced.",
         "After all items are processed, Jellyfin library scans are triggered if items were moved.",
     ]
@@ -446,94 +445,6 @@ def create_ui_app(
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Jellyfin unreachable at {base_url}: {exc}")
         return {"ok": True, "serverName": info.get("ServerName", ""), "version": info.get("Version", "")}
-
-    @ui_app.post("/api/admin/test-download-client", dependencies=[Depends(require_panel_auth)])
-    async def api_admin_test_download_client(payload: dict | None = None):
-        data = payload or {}
-        client_type = str(data.get("clientType") or data.get("downloadClient") or "").strip().lower()
-        if not client_type:
-            raise HTTPException(status_code=400, detail="clientType is required")
-        # Build a temporary client config from payload
-        base_url = str(data.get("url") or data.get("baseUrl") or data.get("webuiUrl") or "").strip()
-        # Also support old field names for compat
-        if not base_url:
-            base_url = str(data.get("qbtMcpUrl") or data.get("qbtWebuiUrl") or "").strip()
-        if client_type == "qbittorrent" and base_url.endswith("/mcp"):
-            base_url = base_url[:-4].rstrip("/")
-        user = str(data.get("user") or data.get("username") or "").strip() or None
-        password = str(data.get("password") or "").strip() or None
-        if client_type == "qbittorrent":
-            if not base_url:
-                raise HTTPException(status_code=400, detail="WebUI URL is required for qBittorrent")
-            # Try to login and list torrents
-            try:
-                import httpx as _httpx
-
-                async with _httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
-                    # Login
-                    login_data = {}
-                    if user:
-                        login_data["username"] = user
-                    if password:
-                        login_data["password"] = password
-                    resp = await client.post(f"{base_url.rstrip('/')}/api/v2/auth/login", data=login_data)
-                    if resp.status_code not in (200, 403):
-                        resp.raise_for_status()
-                    # Try to list torrents
-                    resp2 = await client.get(f"{base_url.rstrip('/')}/api/v2/torrents/info", params={"filter": "all"})
-                    resp2.raise_for_status()
-                    torrents = resp2.json()
-                    count = len(torrents) if isinstance(torrents, list) else 0
-                    return {"ok": True, "torrentCount": count, "clientType": client_type}
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"qBittorrent connection failed at {base_url}: {exc}")
-        elif client_type == "transmission":
-            if not base_url:
-                raise HTTPException(status_code=400, detail="Transmission URL is required")
-            try:
-                import base64 as _b64
-
-                import httpx as _httpx
-
-                headers = {"Content-Type": "application/json"}
-                if user and password:
-                    token = _b64.b64encode(f"{user}:{password}".encode()).decode()
-                    headers["Authorization"] = f"Basic {token}"
-                async with _httpx.AsyncClient(timeout=8.0) as client:
-                    # Get session id
-                    resp = await client.post(base_url, json={"method": "session-get"}, headers=headers)
-                    if resp.status_code == 409:
-                        sid = resp.headers.get("X-Transmission-Session-Id", "")
-                        if sid:
-                            headers["X-Transmission-Session-Id"] = sid
-                            resp = await client.post(base_url, json={"method": "session-get"}, headers=headers)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    if "result" in data and data["result"] == "success":
-                        return {"ok": True, "clientType": client_type}
-                    raise ValueError(f"Unexpected response: {data}")
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"Transmission connection failed at {base_url}: {exc}")
-        elif client_type == "deluge":
-            if not base_url:
-                raise HTTPException(status_code=400, detail="Deluge URL is required")
-            if not password:
-                raise HTTPException(status_code=400, detail="Deluge password is required")
-            try:
-                import httpx as _httpx
-
-                async with _httpx.AsyncClient(timeout=8.0) as client:
-                    payload = {"method": "auth.login", "params": [password], "id": 1}
-                    resp = await client.post(f"{base_url.rstrip('/')}/json", json=payload)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    if data.get("result") is True:
-                        return {"ok": True, "clientType": client_type}
-                    raise ValueError(f"Deluge login failed: {data}")
-            except Exception as exc:
-                raise HTTPException(status_code=400, detail=f"Deluge connection failed at {base_url}: {exc}")
-        else:
-            raise HTTPException(status_code=400, detail=f"Unknown client type: {client_type}")
 
     @ui_app.post("/api/login")
     async def api_login(payload: dict | None = None):

@@ -35,11 +35,6 @@ def _make_config(tmp_path: Path) -> AppConfig:
 
 def _make_manager(tmp_path: Path, monkeypatch) -> ScanManager:
     manager = ScanManager(_make_config(tmp_path))
-
-    async def fake_load_in_progress_paths():
-        return []
-
-    monkeypatch.setattr(manager, "_load_in_progress_paths", fake_load_in_progress_paths)
     return manager
 
 

@@ -419,7 +419,7 @@ GENERIC_SOURCE_FOLDERS = frozenset({"downloads", "torrents", "download", "comple
 
 
 def format_report_grouped(items_by_action: dict[str, list[ScannedItem]]) -> list[dict]:
-    """Group actionable+skipped items by sourceFolder (torrent folder)."""
+    """Group actionable+skipped items by sourceFolder (download folder)."""
     grouped: dict[str, dict] = {}
     for bucket in ("move", "replace", "skip"):
         for item in items_by_action.get(bucket, []):

@@ -14,22 +14,11 @@ DOTENV_PATH = BASE_DIR / ".env"
 
 class Settings(BaseSettings):
     # Integration toggles
-    enable_download_client_check: bool = Field(default=True, alias="ENABLE_DOWNLOAD_CLIENT_CHECK")
     enable_jellyfin_integration: bool = Field(default=True, alias="ENABLE_JELLYFIN_INTEGRATION")
-    
-    # Download client settings (qBittorrent, etc.)
-    download_client: str = Field(default="", alias="DOWNLOAD_CLIENT")
-    qbt_webui_url: str | None = Field(default=None, alias="QBT_WEBUI_URL")
-    qbt_mcp_url: str | None = Field(default=None, alias="QBT_MCP_URL")
-    qbt_mcp_api_key: str | None = Field(default=None, alias="QBT_MCP_API_KEY")
-    transmission_url: str | None = Field(default=None, alias="TRANSMISSION_URL")
-    transmission_user: str | None = Field(default=None, alias="TRANSMISSION_USER")
-    transmission_pass: str | None = Field(default=None, alias="TRANSMISSION_PASS")
-    deluge_url: str | None = Field(default=None, alias="DELUGE_URL")
-    deluge_password: str | None = Field(default=None, alias="DELUGE_PASSWORD")
-    qbt_webui_user: str | None = Field(default=None, alias="QBT_WEBUI_USER")
-    qbt_webui_pass: str | None = Field(default=None, alias="QBT_WEBUI_PASS")
-    
+
+    # Download settings — in-progress download detection via incomplete-file markers
+    enable_incomplete_download_detection: bool = Field(default=True, alias="ENABLE_INCOMPLETE_DOWNLOAD_DETECTION")
+
     # Jellyfin settings
     jellyfin_base_url: str | None = Field(default=None, alias="JELLYFIN_BASE_URL")
     jellyfin_api_key: str | None = Field(default=None, alias="JELLYFIN_API_KEY")

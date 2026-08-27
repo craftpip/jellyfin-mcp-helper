@@ -62,7 +62,6 @@ class ScanPlan(BaseModel):
     operation: OperationMode
     items: list[ScannedItem] = Field(default_factory=list)
     counts: ScanCounts = Field(default_factory=ScanCounts)
-    skipped_in_progress: int = 0
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -77,7 +76,6 @@ class ScanPlan(BaseModel):
     confirm_phase: Literal[
         "idle",
         "preparing",
-        "stopping_seeding",
         "moving",
         "deleting_source",
         "triggering_jellyfin",
@@ -163,3 +161,4 @@ class CandidateItem(BaseModel):
     container_path: str | None = None
     relative_path: str | None = None
     file_size: int | None = None
+    in_progress: bool = False

@@ -26,7 +26,6 @@ No jellysort skill is installed in this environment yet — do not try to load o
 - app/core/db.py: SQLite `config/app.db` (WAL, `get_db`/`init_db`, migration from JSON)
 - app/services/api_key_manager.py: hashed MCP API-key store (now `config/app.db` `api_keys`, `get_db`/`init_db`)
 - app/services/classifier.py: guessit-based and regex media classification (extra `kind=extra`, `extra_type`)
-- app/services/download_client.py: download client (qbittorrent/transmission/deluge via WebUI/native API, `DOWNLOAD_CLIENT` + `QBT_WEBUI_*` etc.)
 - app/services/env_manager.py: ENV_SPEC manifest + .env read/write/reload (settings page backend, live vs restart)
 - app/services/history_store.py: per-group confirm history (`config/app.db` `history_groups`/`history_items`, `path_history_json`, `suspect`/`corrected`/`cross_drive`, `MAX_HISTORY=200` not applicable — confirm history kept, scan snapshots `200`)
 - app/services/jellyfin.py: Jellyfin API client (`scan_library` via `Items/{id}/Refresh`, `Library/Media/Updated` for moves)
@@ -39,7 +38,7 @@ No jellysort skill is installed in this environment yet — do not try to load o
 - app/services/scan_manager.py: scan-plan workflow (thin delegate, `create_scan` incremental vs `fullRescan`, singleton persist, queue)
 - app/services/scan_orchestrator.py: scan loop (candidates, `classify_candidate`, `_resolve_sync`, `group_retarget_pass`, planned coverage, `single_report` merge)
 - app/services/scan_store.py: in-memory `ScanStore` (`current` singleton + `history` map)
-- app/services/scanner.py: filesystem scanner (`scan_candidates`, `container_path`/`sourceFolder` for torrent folder)
+- app/services/scanner.py: filesystem scanner (`scan_candidates`, `container_path`/`sourceFolder` for downloads folder, incomplete-download marker detection via `PARTIAL_FILE_MARKERS`/`PARTIAL_FILE_PREFIXES`)
 - app/services/confirm_queue.py: confirm queue (`_confirm_queue`, `_start_confirm`, `_start_queued_confirms`)
 - app/services/path_validator.py: path validation (`_is_path_within` root check)
 - app/services/undo.py: undo (`undo_items`/`undo_from_report`, only `move` restorable)
@@ -49,7 +48,7 @@ No jellysort skill is installed in this environment yet — do not try to load o
 - app/ui/react-dist/: built React bundle served at `/` (`/react` and `/react/assets` are backward-compat mounts that 308-redirect/re-serve)
 - app/ui/react/src/store/AppStore.jsx: Context + useReducer store
 - app/ui/react/src/api/apiClient.js: REST API client (apiGet/Post/Patch/Delete, auth token)
-- app/ui/react/src/components/: React components (ReportPanel, ConfirmModal, PathPills, LoginScreen, SettingsPage, ApiKeysPage, etc.)
+- app/ui/react/src/components/: React components (ReportPanel, ConfirmModal, PathPills, LoginScreen, SettingsPage, etc.)
 - app/ui/react/src/utils/report.js: pure helpers (item mapping, grouping, filters, smart path sync)
 - plans/: project plans and roadmap documents (markdown)
 - tests/: pytest test suite
@@ -264,6 +263,19 @@ if not new_target.endswith((".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".fl
 
 **Verification:** `python3 -m pytest tests/` and call update with at least one item.
 
+### Incomplete-download detection via file markers (replaces download-client API)
+
+**Problem:** In-progress downloads were detected by querying a download client's API (qBittorrent/Transmission/Deluge) and "stop seeding" was attempted before moves. This added a hard dependency on those clients, leaked API keys into `.env`, and the seeding step is no longer wanted.
+
+**Replacements:**
+- `app/services/download_client.py` (all client classes + `_extract_paths`) is **deleted**. The `QBT_*`/`TRANSMISSION_*`/`DELUGE_*`/`DOWNLOAD_CLIENT`/`ENABLE_DOWNLOAD_CLIENT_CHECK` config fields, ENV_SPEC entries, `ui/server.py` test endpoint, and the seeding-stop path in `move_executor.py` are all removed.
+- In-progress detection is now **filesystem-only**: `app/services/scanner.py` flags a candidate `in_progress=True` when a sibling incomplete-file marker exists, using case-insensitive suffix markers `PARTIAL_FILE_MARKERS = (".!qb", ".!ut", ".!bt", ".part", ".partial", ".parts")` and prefix markers `PARTIAL_FILE_PREFIXES = ("incomplete.", "incomplete$")`. Marker files themselves are excluded via `_is_partial_marker_file`.
+- `scan_orchestrator.py` skips in-progress candidates (reason `"In-progress download"`) only when `ENABLE_INCOMPLETE_DOWNLOAD_DETECTION` is true (read via `_incomplete_detection_enabled()` from `get_settings()`).
+- The `stopping_seeding` confirm phase is removed from `schemas.py`, `types.ts`, and `format.js`.
+- Requires the download client to append an incomplete-file marker (e.g. qBittorrent "Append .!qB extension to incomplete files"). Documented in the Settings page Downloads section.
+
+**Verification:** `python3 -m pytest tests/` (scanner marker tests, `test_create_scan_skips_incomplete_download_by_marker`, toggle-off test in `test_scan_errors.py`). Frontend `npm test` in `app/ui/react`.
+
 ### Replace existing checkbox default
 
 **Problem:** Good candidates like Mortal Kombat (1995) were skipped with reason "Matched movie pattern" despite being correctly classified as a movie.
@@ -292,6 +304,20 @@ Use `JellyfinClient.scan_library()` for the MCP tool `trigger jellyfin library s
 
 **Verification:** After changing scan behavior, run `python3 -m pytest tests/`, rebuild/restart Docker, and manually trigger a real library such as `Movies` or `Shows R` to confirm Jellyfin shows the scan.
 
+### Source library must also be scanned on library-to-library re-move
+
+**Problem:** When moving a file between two Jellyfin libraries (e.g. from Library A to Library B via history re-move), only the destination library was scanned. The item stayed as a ghost in the source library until Jellyfin naturally resynced.
+
+**Cause:** `run_confirm_task()` in `move_executor.py` only collected `item.target_path` in `updated_paths`. Non-library source paths (e.g. downloads folders) are correctly ignored by `libraries_for_paths()` since they don't match any configured media root.
+
+**Fix:** Also add `item.source_path` to `updated_paths`. The existing `libraries_for_paths()` already filters by configured media roots, so:
+- **Downloads → Library:** source path won't match any root → only destination library scanned (unchanged behavior).
+- **Library → Library:** both paths match configured roots → both libraries scanned.
+
+**Affected file:** `app/services/move_executor.py` (`run_confirm_task`, `trigger_jellyfin_scans`)
+
+**Verification:** `python3 -m pytest tests/` (27 move-executor tests pass). Rebuild/restart Docker.
+
 ### Resolver scan hang with sorted(rglob) in series_aliases
 
 **Problem:** Scan hangs for minutes on the first candidate during the "resolving target" step. No progress past 0%.
@@ -300,7 +326,6 @@ Use `JellyfinClient.scan_library()` for the MCP tool `trigger jellyfin library s
 
 **Affected files:**
 - `app/services/resolver.py` (`series_aliases`, `_pick_exact_path_match`)
-- `app/services/download_client.py` (qBittorrent view filter)
 
 **Fixes (four parts):**
 
@@ -489,18 +514,18 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 ### MCP auth + admin pages
 
-**Design:** `MCP_ALLOW_UNAUTHENTICATED` defaults to `true`. When `false`, `/mcp` requests must present a valid API key (`Authorization: Bearer` or `X-API-Key`) or `MCP_DEFAULT_TOKEN`; the activity log line appends `as <user>`. Keys live hashed in `config/mcp_keys.json` (gitignored); the full key is returned exactly once at creation. Unauthenticated rejections are HTTP 401 with a JSON-RPC body `{code: -32001, message: "unauthorized"}` keeping the request `id`. Full write-up: `docs/backend/auth.md`.
+**Design:** Single-token auth via `JELLYSORT_MCP_TOKEN` (env var, `.env`). When set, every `/mcp` request must present it as `Authorization: Bearer <token>` or `X-API-Key`; when empty, MCP is open (no auth). Deprecated aliases `MCP_DEFAULT_TOKEN` and `ADMIN_UI_TOKEN` are accepted as fallbacks. The activity log line appends `as <user>` (`admin` on valid token, `anonymous` when open). Full write-up: `docs/backend/auth.md`.
 
 **Key code locations:**
 - `app/core/auth.py` — `require_mcp_auth` dependency + `MCPUnauthorizedError`; handler in `app/main.py:273`.
-- `app/services/api_key_manager.py` — hashed store, atomic writes, `threading.Lock`.
-- `app/services/env_manager.py` — `ENV_SPEC` manifest drives the Settings page. `apply` classification: Jellyfin/download/MCP-UI vars are `live` (read from `os.environ` per call); model/paths/`WEB_UI_*` vars are `restart` (baked into the `ScanManager` snapshot). `update_env` validates via `Settings(**merged)`, rewrites `.env` preserving comments, and returns `{appliedLive, needsRecreate}`.
-- `app/ui/server.py` — `/api/admin/env` + `/api/admin/api-keys` (CRUD). **Routes are under `/api/admin/*`, not `/admin/*`**, because the React apiClient prepends `/api`. All admin routes use `require_panel_auth` (the UI login), not a separate token.
-- React: `TopBar.jsx` nav (Scan & Move / Settings / API Keys), `SettingsPage.jsx`, `ApiKeysPage.jsx`, page switching in `App.jsx` via `state.page`.
+- `app/core/config.py` — `Settings.mcp_token` property resolves `JELLYSORT_MCP_TOKEN` → `MCP_DEFAULT_TOKEN` → `ADMIN_UI_TOKEN` fallback chain.
+- `app/services/env_manager.py` — `ENV_SPEC` manifest drives the Settings page. Only `JELLYSORT_MCP_TOKEN` is in `ENV_SPEC` (the old `MCP_ALLOW_UNAUTHENTICATED`, `MCP_KEYS_FILE`, per-key API key management have been removed). `apply` classification: Jellyfin/download/MCP-UI vars are `live` (read from `os.environ` per call); model/paths/`WEB_UI_*` vars are `restart` (baked into the `ScanManager` snapshot). `update_env` validates via `Settings(**merged)`, rewrites `.env` preserving comments, and returns `{appliedLive, needsRecreate}`.
+- `app/ui/server.py` — `/api/admin/env` (Settings page CRUD). **Routes are under `/api/admin/*`, not `/admin/*`**, because the React apiClient prepends `/api`. All admin routes use `require_panel_auth` (the UI login), not a separate token.
+- React: `TopBar.jsx` nav (Scan & Move / Settings), `SettingsPage.jsx`, page switching in `App.jsx` via `state.page`. The standalone `ApiKeysPage.jsx` has been removed — MCP key management is now a single token in Settings.
 
 **Live config reload:** `.env` is bind-mounted into `/app`, so Settings saves take effect on disk instantly. `reload_settings()` patches `os.environ` from `.env`, resets `_settings`, and clears `get_config` — this is what makes `live` vars work without a restart. `restart` vars need `docker compose up -d --force-recreate`.
 
-**Verification:** `python3 -m pytest tests/` (390 tests incl. `test_api_key_manager.py`, `test_mcp_auth.py`, `test_env_manager.py`, admin endpoint tests in `test_ui_api.py`). Frontend: `npm test` in `app/ui/react` (73 tests incl. `AdminPages.test.jsx`).
+**Verification:** `python3 -m pytest tests/` (415 backend tests incl. `test_mcp_auth.py`, `test_env_manager.py`, admin endpoint tests in `test_ui_api.py`). Frontend: `npm test` in `app/ui/react` (112 tests).
 
 ### Test suite counts
 

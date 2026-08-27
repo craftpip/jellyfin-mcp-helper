@@ -21,8 +21,7 @@ from app.core.config import BASE_DIR, Settings, get_settings, reset_settings
 #   description UI help text
 #
 # apply was verified against the actual call sites (Aug 2026):
-#   - JellyfinClient.from_env() / QbittorrentClient.from_env() read os.environ
-#     per call  -> live.
+#   - JellyfinClient.from_env() reads os.environ per call -> live.
 #   - MCP auth + ApiKeyManager read get_settings() per request -> live.
 #   - ScanManager holds AppConfig at startup (paths, thresholds, model config)
 #     and presenters use the cached get_config() -> model/path vars are restart.
@@ -32,17 +31,8 @@ ENV_SPEC: list[dict[str, Any]] = [
     {"key": "MODEL_CLASSIFY_CONFIDENCE_THRESHOLD", "section": "ai", "type": "float", "secret": False, "apply": "restart", "description": "Confidence threshold for classification (0.0 - 1.0)."},
     {"key": "MODEL_PATH_CONFIDENCE_THRESHOLD", "section": "ai", "type": "float", "secret": False, "apply": "restart", "description": "Confidence threshold for path resolution (0.0 - 1.0)."},
 
-    # ── Download Client ──
-    {"key": "ENABLE_DOWNLOAD_CLIENT_CHECK", "section": "download", "type": "bool", "secret": False, "apply": "live", "description": "Enable download client checks (stop seeding before moves)."},
-    {"key": "DOWNLOAD_CLIENT", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "Download client type.", "options": ["", "qbittorrent", "transmission", "deluge"]},
-    {"key": "QBT_WEBUI_URL", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "qBittorrent WebUI URL (e.g. http://10.69.1.164:8080).", "showWhen": {"DOWNLOAD_CLIENT": "qbittorrent"}},
-    {"key": "QBT_WEBUI_USER", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "qBittorrent WebUI username.", "showWhen": {"DOWNLOAD_CLIENT": "qbittorrent"}},
-    {"key": "QBT_WEBUI_PASS", "section": "download", "type": "str", "secret": True, "apply": "live", "description": "qBittorrent WebUI password.", "showWhen": {"DOWNLOAD_CLIENT": "qbittorrent"}},
-    {"key": "TRANSMISSION_URL", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "Transmission RPC URL (e.g. http://10.69.1.164:9091/transmission/rpc).", "showWhen": {"DOWNLOAD_CLIENT": "transmission"}},
-    {"key": "TRANSMISSION_USER", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "Transmission username (if auth enabled).", "showWhen": {"DOWNLOAD_CLIENT": "transmission"}},
-    {"key": "TRANSMISSION_PASS", "section": "download", "type": "str", "secret": True, "apply": "live", "description": "Transmission password.", "showWhen": {"DOWNLOAD_CLIENT": "transmission"}},
-    {"key": "DELUGE_URL", "section": "download", "type": "str", "secret": False, "apply": "live", "description": "Deluge WebUI URL (e.g. http://10.69.1.164:8112).", "showWhen": {"DOWNLOAD_CLIENT": "deluge"}},
-    {"key": "DELUGE_PASSWORD", "section": "download", "type": "str", "secret": True, "apply": "live", "description": "Deluge password.", "showWhen": {"DOWNLOAD_CLIENT": "deluge"}},
+    # ── Download (incomplete download detection) ──
+    {"key": "ENABLE_INCOMPLETE_DOWNLOAD_DETECTION", "section": "download", "type": "bool", "secret": False, "apply": "live", "description": "Skip downloads that are still in progress by looking for incomplete-file markers on disk."},
 
     # ── Web UI ──
     {"key": "UI_PANEL_PASSWORD", "section": "web", "type": "str", "secret": True, "apply": "live", "description": "Panel login password. Empty = direct login."},
@@ -54,7 +44,7 @@ ENV_SPEC: list[dict[str, Any]] = [
 
 
     # ── Storage Paths ──
-    {"key": "DOWNLOAD_ROOTS", "section": "paths", "type": "str", "secret": False, "apply": "restart", "description": "Comma-separated paths where torrent downloads reside."},
+    {"key": "DOWNLOAD_ROOTS", "section": "paths", "type": "str", "secret": False, "apply": "restart", "description": "Comma-separated paths where new downloads reside."},
     {"key": "MOVIE_ROOTS", "section": "paths", "type": "str", "secret": False, "apply": "restart", "description": "Comma-separated movie roots. Optional '::description' per entry."},
     {"key": "SERIES_ROOTS", "section": "paths", "type": "str", "secret": False, "apply": "restart", "description": "Comma-separated series roots. Optional '::description' per entry."},
     {"key": "SERIES_TITLE_ALIASES", "section": "paths", "type": "str", "secret": False, "apply": "restart", "description": "Series title aliases: 'alias::canonical' entries separated by commas."},

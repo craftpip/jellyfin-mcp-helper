@@ -78,7 +78,10 @@ Each item records:
 
 Rules applied while building the plan:
 
-- In-progress downloads (qBittorrent, when enabled) are skipped.
+- In-progress downloads are skipped when `ENABLE_INCOMPLETE_DOWNLOAD_DETECTION`
+  is on (default): a file whose parent directory holds an incomplete-file marker
+  sibling (`.!qB`, `.part`, `.partial`, `.parts`, …) or whose own name starts
+  with `incomplete.` is recorded as `skip` with reason `In-progress download`.
 - Zero-byte files are skipped.
 - Revision files (`v2`, `REPACK2`) overwrite existing targets.
 - Items whose target already exists and `replace_existing` is false are skipped.
@@ -100,16 +103,14 @@ Before confirming, callers can:
 `confirm_scan` runs in the background and walks the items in phases:
 
 1. `preparing` — reset counters, resolve prerequisites.
-2. `stopping_seeding` — if qBittorrent integration is on and the item matches an
-   active download path, stop seeding before moving.
-3. `moving` — perform the file operation:
+2. `moving` — perform the file operation:
    - **Same drive** → `os.replace` (atomic).
    - **Cross drive** → chunked copy to a `.{name}.partial` temp file, `fsync`,
      then `os.replace`; progress (copied bytes, speed, percent) is tracked live.
-4. `deleting_source` — remove the source and clean up empty parent folders.
-5. `triggering_jellyfin` — for new/updated paths, notify Jellyfin and trigger
+3. `deleting_source` — remove the source and clean up empty parent folders.
+4. `triggering_jellyfin` — for new/updated paths, notify Jellyfin and trigger
    library scans for the affected libraries.
-6. `completed` / `failed`.
+5. `completed` / `failed`.
 
 Per-confirm progress is scoped to the current batch (`confirm_processed`,
 baseline snapshots of cumulative counts), while the final report still reflects

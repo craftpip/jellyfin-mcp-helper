@@ -8,7 +8,9 @@ How to install, configure, and run JellySort.
 ## Requirements
 
 - Python 3.11+ or Docker.
-- Optional: a qBittorrent MCP server for download-state checks and pre-move handling.
+- No download client is required — in-progress downloads are detected from
+  incomplete-file markers on disk (see
+  [Incomplete-download detection](../services/download-client.md)).
 - Optional: a Jellyfin server + API key for library refresh and Jellyfin MCP tools.
 
 ## Quick summary

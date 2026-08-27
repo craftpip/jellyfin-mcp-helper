@@ -16,9 +16,10 @@ The `lifespan` async context manager wires up singletons at startup:
 - Jellyfin library list — fetched once and cached to augment the
   `get available jellyfin libraries list` tool description.
 
-The Jellyfin and qBittorrent clients are **not** app-level singletons — they are
-built on demand from env settings (`JellyfinClient.from_env()`,
-`QbittorrentClient.from_env()`) inside the tool handlers.
+The Jellyfin client is **not** an app-level singleton — it is built on demand
+from env settings (`JellyfinClient.from_env()`) inside the tool handlers.
+There is no download-client integration: in-progress downloads are detected by
+the scanner from incomplete-file markers on disk.
 
 On shutdown only a log line is emitted; **no scan state is persisted**. Scan
 plans live in memory on the `ScanManager` (`config/current_scan.json` is not
@@ -55,5 +56,5 @@ See [api.md](api.md) for the full list (`/health`, `/scans/*`, `/runs/*`).
 | `scan_manager` | `app/services/scan_manager.py` | Create/update/confirm/delete scans |
 | `release_tracker` | `app/services/release_tracker.py` | Local next-release store |
 
-Jellyfin and qBittorrent clients are constructed per use (see above), not wired
-as app singletons.
+The Jellyfin client is constructed per use (see above), not wired as an app
+singleton.

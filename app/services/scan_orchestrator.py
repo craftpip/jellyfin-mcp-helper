@@ -16,6 +16,15 @@ from app.models.schemas import ScannedItem
 
 logger = logging.getLogger(__name__)
 
+
+def _incomplete_detection_enabled() -> bool:
+    try:
+        from app.core.config import get_settings
+
+        return bool(get_settings().enable_incomplete_download_detection)
+    except Exception:
+        return True
+
 REVISION_RE = re.compile(r"\bv(\d+)\b", re.IGNORECASE)
 
 
@@ -237,8 +246,6 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
         list(manager._config.paths.movie_roots.values()),
         list(manager._config.paths.series_roots.values()),
     )
-    in_progress_paths = manager._load_in_progress_paths_sync()
-    scan.skipped_in_progress = len(in_progress_paths)
     # Incremental: seed from existing items present at scan start
     initial_source_paths: set[str] = set()
     initial_items_snapshot: list = []
@@ -264,7 +271,7 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                     sk = Path(it.target_path).parent.parent.name
                 except Exception:
                     sk = it.target_path
-                # Use generic seeding for gap detection (best-effort)
+                # Add season/episode for gap detection (best-effort)
                 season_num, ep_num = tag
                 planned_seasons.setdefault(sk, set()).add(season_num)
                 planned_episodes.setdefault((sk, season_num), set()).add(ep_num)
@@ -290,7 +297,8 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
         if candidate.source_path in initial_source_paths:
             scan.processed_candidates = index
             continue
-        if in_progress_paths and manager._is_in_progress(candidate.source_path, in_progress_paths):
+        _detect_incomplete = _incomplete_detection_enabled()
+        if candidate.in_progress and _detect_incomplete:
             scan.counts.skipped += 1
             logger.warning("Scan %s skipped in-progress download: %s", scan.scan_id, candidate.source_path)
             _cp = candidate.container_path
@@ -560,82 +568,6 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
     group_retarget_pass(manager, scan, planned_targets)
     manager._resolver.reset_runtime_state()
 
-IN_PROGRESS_LABEL_RE = re.compile(r"[^a-z0-9]+")
-
-def _normalize_in_progress_label(value: str) -> str:
-    lowered = value.casefold()
-    return IN_PROGRESS_LABEL_RE.sub(" ", lowered).strip()
-
-def _path_name_labels(path_value: str) -> set[str]:
-    path = Path(path_value)
-    labels = {
-        _normalize_in_progress_label(path.name),
-        _normalize_in_progress_label(path.stem),
-    }
-    return {label for label in labels if label}
-
-def _is_path_within(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
-
-async def load_in_progress_paths(manager) -> list[str]:
-    from app.services.download_client import QbittorrentClient
-    client = QbittorrentClient.from_env(manager._config.paths)
-    if not client:
-        logger.warning("qBittorrent integration is not configured; skipping in-progress download check")
-        return []
-    try:
-        paths = await client.list_in_progress_paths()
-        logger.info("Checked qBittorrent: found %s in-progress paths", len(paths))
-        return paths
-    except Exception as exc:
-        error_msg = f"Error loading in-progress paths from qBittorrent: {str(exc)}"
-        logger.error(error_msg, exc_info=True)
-        if manager._current_scan:
-            manager._current_scan.service_errors["qBittorrent"] = str(exc)
-        return []
-
-def load_in_progress_paths_sync(manager) -> list[str]:
-    from app.services.scan_manager import asyncio_run_in_thread
-    return asyncio_run_in_thread(load_in_progress_paths(manager))
-
-def candidate_release_labels(manager, candidate_path: str) -> set[str]:
-    from app.services.scanner import _to_absolute_path
-    candidate = Path(_to_absolute_path(candidate_path))
-    for root in manager._config.paths.download_roots:
-        root_path = Path(root)
-        try:
-            relative = candidate.relative_to(root_path)
-        except ValueError:
-            continue
-        if not relative.parts:
-            break
-        first_part = relative.parts[0]
-        return {
-            label for label in {
-                _normalize_in_progress_label(first_part),
-                _normalize_in_progress_label(Path(first_part).stem),
-            } if label
-        }
-    return _path_name_labels(str(candidate))
-
-def is_in_progress(manager, candidate_path: str, in_progress_paths: list[str]) -> bool:
-    from app.services.scanner import _to_absolute_path
-    candidate_norm = str(Path(_to_absolute_path(candidate_path))).rstrip("/")
-    candidate_labels = candidate_release_labels(manager, candidate_norm)
-    for path in in_progress_paths:
-        active_norm = str(Path(path)).rstrip("/")
-        if candidate_norm == active_norm:
-            return True
-        if candidate_norm.startswith(active_norm + "/"):
-            return True
-        if candidate_labels and candidate_labels & _path_name_labels(active_norm):
-            return True
-    return False
-
 def resolve_sync(manager, candidate, classification):
     from app.services.scan_manager import asyncio_run_in_thread
     return asyncio_run_in_thread(manager._resolver.resolve(candidate, classification))
@@ -667,7 +599,6 @@ async def delete_items(manager, scan_id: str, item_ids: list[str]):
             status_code=400,
             detail="No matching unconfirmed move/replace/skip items found for the given itemIds.",
         )
-    await manager._stop_seeding_for_items(selected)
     deleted: list[str] = []
     for item in selected:
         source_path = Path(item.source_path)

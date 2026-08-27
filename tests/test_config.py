@@ -183,21 +183,20 @@ class TestSettingsDefaults:
 
     def test_settings_type_annotations(self) -> None:
         fields = Settings.model_fields
-        assert "enable_download_client_check" in fields
+        assert "enable_incomplete_download_detection" in fields
         assert "web_ui_enabled" in fields
-        assert "mcp_allow_unauthenticated" in fields
         assert "ui_panel_password" in fields
 
     def test_settings_env_prefix_mappings(self) -> None:
         fields = Settings.model_fields
-        assert fields["enable_download_client_check"].alias == "ENABLE_DOWNLOAD_CLIENT_CHECK"
+        assert fields["enable_incomplete_download_detection"].alias == "ENABLE_INCOMPLETE_DOWNLOAD_DETECTION"
         assert fields["web_ui_enabled"].alias == "WEB_UI_ENABLED"
         assert fields["download_roots"].alias == "DOWNLOAD_ROOTS"
 
     def test_settings_extra_fields_ignored(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("TOTALLY_UNKNOWN_FIELD", "value")
         settings = Settings()
-        assert hasattr(settings, "enable_download_client_check")
+        assert hasattr(settings, "enable_incomplete_download_detection")
 
 
 # ---------------------------------------------------------------------------

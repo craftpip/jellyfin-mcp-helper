@@ -961,9 +961,8 @@ async def mcp(request: dict) -> JSONResponse:
                         }
                     )
                 response["message"] = "Confirm started in the background. This tool returns immediately. No files were moved yet."
-                response["tool_purpose"] = "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. It returns immediately and processes in the background. Use the confirm progress tool to track progress."
+                response["tool_purpose"] = "Apply a completed organizer scan plan. This tool performs write actions: it moves files and returns immediately and processes in the background. Use the confirm progress tool to track progress."
                 response["what_happens_now"] = [
-                    "The service stops seeding for each source file if qBittorrent is configured.",
                     "Each planned item is moved or replaced.",
                     "After all items are processed, Jellyfin library scans are triggered if items were moved.",
                 ]

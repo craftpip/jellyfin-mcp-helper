@@ -1,55 +1,64 @@
-# Download Client — `app/services/download_client.py`
+# Incomplete-Download Detection
 
-Multi-client native integration (qbittorrent / transmission / deluge) over **WebUI/RPC**, no MCP proxy. Used for two things:
+The legacy download-client module (`app/services/download_client.py`) and the
+download-client API integration (qBittorrent / Transmission / Deluge clients,
+`ENABLE_DOWNLOAD_CLIENT_CHECK`, `DOWNLOAD_CLIENT`, `QBT_*`, `TRANSMISSION_*`,
+`DELUGE_*`) have been **removed**. JellySort no longer talks to any download
+client's API and never stops seeding. In-progress downloads are detected purely
+from the filesystem by looking for **incomplete-file markers** that download
+clients leave next to (or on) files while they are still downloading.
 
-1. Detecting **in-progress downloads** so the scan can skip them.
-2. **Stopping seeding** before a move (so the torrent doesn't recreate files).
+## Marker-based detection
 
-## `DownloadClient` (qbittorrent / transmission / deluge)
+Detection lives in `app/services/scanner.py`. Two marker families are checked,
+all matched case-insensitively:
 
-`DownloadClient.from_env(paths_config)` / `QbittorrentClient` (backward-compat alias) returns `None` unless:
+1. **Suffix markers** — a sibling file named `<candidate name><marker>`, e.g.
+   `Show.S01E01.mkv.!qB` for candidate `Show.S01E01.mkv`:
 
-- `ENABLE_DOWNLOAD_CLIENT_CHECK` is truthy (default true),
-- `DOWNLOAD_CLIENT` in `qbittorrent`/`transmission`/`deluge`,
-- the matching `*_URL` is set (`QBT_WEBUI_URL` for qbittorrent, `TRANSMISSION_URL`, `DELUGE_URL`).
+   | Marker | Client that writes it |
+   | --- | --- |
+   | `.!qB` | qBittorrent |
+   | `.part` | Transmission, rTorrent, Vuze/Azureus |
+   | `.partial` | rTorrent (split parts) |
+   | `.parts` | libtorrent (kept by Deluge) |
+   | `.!ut` | uTorrent |
+   | `.!bt` | BitTorrent (Windows mainline client) |
 
-### Methods
+2. **Prefix markers** — the candidate's own name starts with an
+   `incomplete.` / `incomplete$` prefix (Tixati writes `incomplete.Show.S01E01.mkv`
+   while the file is downloading).
 
-| Method | qBittorrent MCP tool | Purpose |
+`_is_in_progress_by_marker(path)` scans the parent directory once and returns
+True when any sibling matches `<name><marker>` or `<prefix><name>`, setting
+`CandidateItem.in_progress`. `_is_partial_marker_file(path)` skips candidates
+whose own name is a marker (the `incomplete.` prefix variants still look like
+normal video files and would otherwise be picked up).
+
+## How the scan uses it
+
+`app/services/scan_orchestrator.py` reads `ENABLE_INCOMPLETE_DOWNLOAD_DETECTION`
+(via `_incomplete_detection_enabled()`, default **true**) during the scan loop.
+Candidates flagged `in_progress` are skipped and recorded as items with
+`item_type="skip"` and `reason="In-progress download"` (counted as skipped;
+excluded from planned coverage). Zero-byte files are skipped separately with
+`reason="Zero-byte file; download is incomplete or invalid"`. When the setting is
+`false`, in-progress files are scanned like any other candidate.
+
+## Configuration
+
+| Variable | Default | Description |
 | --- | --- | --- |
-| `list_in_progress_paths()` | `list_torrents {view: "all"}` | Paths of torrents with `progress < 0.999`. |
-| `stop_seeding_for_paths(candidate_paths)` | `list_torrents {view: "seeding"}` then `stop_torrents {hashes}` | Stop seeding for torrents matching the candidate paths; returns the matched items. |
-| `list_items(view)` | `list_torrents {view}` | Raw torrent list (parses the MCP text payload as JSON). |
+| `ENABLE_INCOMPLETE_DOWNLOAD_DETECTION` | `true` | Skip files that are still downloading (marker-based, see above). |
 
-`_call_tool` posts JSON-RPC `tools/call` to `QBT_MCP_URL`. Authentication is
-either the `X-MCP-Key` header (when `QBT_MCP_API_KEY` is set) or HTTP Basic
-auth from `QBT_WEBUI_USER` / `QBT_WEBUI_PASS`. Timeout is 20 s.
+It is a **live** setting (see [backend/config](../backend/config.md)) — no
+restart needed. Full reference in
+[getting-started/configuration](../getting-started/configuration.md).
 
-## Path normalization
+## Notes
 
-qBittorrent reports paths as seen on its own host, which may not match the
-container's mount points. `_normalize_qbt_path` reconciles them:
-
-- Extracts the torrent folder name from the qBittorrent path and searches for a
-  matching folder inside the configured `download_roots`
-  (`PathsConfig.find_download_root_for_folder`), then rebuilds the path from
-  that root.
-- Without a `PathsConfig`, the path is returned as-is.
-
-`_item_paths` collects candidate paths from `content_path`, `root_path`,
-`download_path`, `save_path + name`, plus a fallback that joins each download
-root with the torrent name.
-
-## Matching helpers
-
-- `_is_incomplete(item)` — `progress < 0.999`.
-- `_extract_paths(items, paths_config)` — deduped, normalized paths.
-- `_item_matches_paths(item, candidate_paths, paths_config)` — prefix-based
-  overlap: a candidate matches when it equals an item path or one is a path
-  prefix of the other.
-
-## Related in-progress logic
-
-The scan manager also matches by **label** (top-level folder/file
-name) via `_candidate_release_labels` / `_path_name_labels`, so torrents whose
-paths don't map cleanly into the container still get detected.
+- The confirm phase `stopping_seeding` no longer exists in the running code
+  (nothing is ever stopped); the literal remains in the `ScanPlan.confirm_phase`
+  schema only for backwards compatibility.
+- The scan manager's matching by **label** (top-level folder/file name) is
+  separate from marker detection and still applies for other skip reasons.
