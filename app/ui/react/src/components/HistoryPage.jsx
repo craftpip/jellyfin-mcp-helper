@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { apiGet, apiPost } from '../api/apiClient.js'
 import { useAppStore } from '../store/AppStore.jsx'
 import { formatBytes, isCrossDrive } from '../utils/format.js'
-import { computePathSync } from '../utils/report.js'
+import { computePathSync, compareReportItemsAsc, typeLabelFor } from '../utils/report.js'
 import PathPills from './PathPills.jsx'
 import { FolderPicker } from './BrowseModal.jsx'
 
@@ -196,7 +196,7 @@ export default function HistoryPage() {
             </div>
 
             {isExpanded && (() => {
-              const isGroupSeries = group.items.some((it) => (it.item_type || it.itemType) === 'series')
+              const sortedItems = [...group.items].sort(compareReportItemsAsc)
               return (
               <div style={{ marginTop: '12px' }}>
                 <div style={{ overflowX: 'auto' }}>
@@ -204,8 +204,8 @@ export default function HistoryPage() {
                     <thead>
                       <tr>
                         <th style={{ width: '150px' }}>Action</th>
-                        {isGroupSeries && <th style={{ width: '90px' }}>Episode</th>}
-                        <th style={{ minWidth: 0 }} colSpan={isGroupSeries ? 1 : 1}>Source → Target Path</th>
+                        <th style={{ width: '110px' }}>Type</th>
+                        <th style={{ minWidth: 0 }} colSpan={1}>Source → Target Path</th>
                         <th style={{ width: '90px', textAlign: 'right' }}>Size</th>
                         <th style={{ width: '140px', textAlign: 'left' }}>Trail</th>
                         <th style={{ width: '90px' }}>Status</th>
@@ -213,15 +213,13 @@ export default function HistoryPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {group.items.map((item) => {
+                      {sortedItems.map((item) => {
                         const currentTarget = item.target_path
                         const edited = groupEdits[item.confirm_id] ?? currentTarget
                         const history = item.pathHistory && item.pathHistory.length ? item.pathHistory : [item.source_path, item.target_path].filter(Boolean)
                         const hops = Math.max(0, history.length - 1)
                         const trailSummary = hops === 0 ? '—' : hops === 1 ? '1 hop' : `${hops} hops`
                         const trail = history.join(' → ')
-                        const epMatch = (item.target_path || '').match(/S\d{2}E\d{2,3}/i)
-                        const episode = epMatch ? epMatch[0].toUpperCase() : ''
                         const showLink = group.items.length > 1
                         const linked = isLinked(group.history_id, item.confirm_id)
                         const isEdited = edited !== currentTarget
@@ -250,7 +248,7 @@ export default function HistoryPage() {
                                 </span>
                               </div>
                             </td>
-                            {isGroupSeries && <td style={{ fontSize: '0.8rem', textAlign: 'left' }}>{episode}</td>}
+                            <td style={{ fontSize: '0.8rem', textAlign: 'left' }}>{typeLabelFor(item)}</td>
                             <td>
                               <div className="path-cell">
                                 <div className="source-name" title={item.source_path}>

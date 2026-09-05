@@ -491,6 +491,7 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                     candidate_targets=resolved.candidate_targets,
                     container_path=container_path,
                     source_folder=source_folder,
+                    extra_type=classification.extra_type,
                 )
             )
             if (

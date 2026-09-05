@@ -27,7 +27,9 @@ The main table (`ReportGroup` / `ReportRow`):
   "Update Paths" instead of "Confirm"** — the user applies or discards the edit
   before confirming.
 - Rows show source name, source path, target path, type, action, file size,
-  cross-drive indicator, and status pills.
+  cross-drive indicator, and status pills. The `Type` column shows `SxxEyy` for
+  episodes, `Movie` for movies, and `Extra` (+ extra kind when known) for
+  extras; rows within a group are ordered ascending (S01E01 first).
 - Suspect rows show a warning badge + flags + `correctionNote`; corrected rows
   show a "Corrected" badge; each row has a "Browse…" button that opens
   `BrowseModal` for re-targeting (per row or per title group).
@@ -83,7 +85,8 @@ renders exists/type/action hints with tooltips.
   for the full movement trail, plus live `source_exists`/`target_exists`/`pathExists`
   computed by `history_store.list_history_groups`/`get_history_group` for `PathPills`.
 * **Expanded row parity with `ReportPanel`:** `Action` badge + `Cross-drive`/`Suspect`/`Corrected`
-  badges + `PathPills`, editable target input with `Browse…` (`BrowseModal.jsx:FolderPicker`
+  badges + `PathPills`, `Type` column (`SxxEyy` / `Movie` / `Extra`, ascending
+  row order), editable target input with `Browse…` (`BrowseModal.jsx:FolderPicker`
   extracted presentational picker), `Size` (`formatBytes`), `Trail` (compact summary button →
   modal table `#/Path/Action` with per-hop badge: first hop reflects stored `action` (`move` vs
   `replaced`), later hops are retargets), `Status`, `Delete` when `source_exists` (`POST

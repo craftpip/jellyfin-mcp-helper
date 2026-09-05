@@ -152,6 +152,8 @@ def format_report_items(scan: ScanPlan, items_by_action: dict[str, list[ScannedI
             "correctionNote": item.correction_note,
             "containerPath": item.container_path,
             "sourceFolder": item.source_folder,
+            "extraType": item.extra_type,
+            "extra_type": item.extra_type,
             "candidateTargets": [
                 {
                     "path": ct.path,
@@ -464,6 +466,8 @@ def format_report_grouped(items_by_action: dict[str, list[ScannedItem]]) -> list
                 "correctionNote": item.correction_note,
                 "containerPath": item.container_path,
                 "sourceFolder": item.source_folder,
+                "extraType": item.extra_type,
+                "extra_type": item.extra_type,
                 "candidateTargets": [
                     {"path": ct.path, "label": ct.label, "evidence": ct.evidence, "source": ct.source, "reclassifyAsMovie": ct.reclassify_as_movie}
                     for ct in item.candidate_targets

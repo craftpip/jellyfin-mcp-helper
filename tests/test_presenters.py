@@ -446,3 +446,11 @@ class TestFormatReportItems:
         result = format_report_items(scan, items_by_action)
         assert len(result[0]["candidateTargets"]) == 1
         assert result[0]["candidateTargets"][0]["path"] == "/movies/Alt"
+
+    def test_extra_type_passthrough(self) -> None:
+        item = _movie_item(item_type="extra", extra_type="trailer")
+        scan = _scan_plan()
+        items_by_action = {"move": [item], "replace": [], "skip": []}
+        result = format_report_items(scan, items_by_action)
+        assert result[0]["extraType"] == "trailer"
+        assert result[0]["extra_type"] == "trailer"

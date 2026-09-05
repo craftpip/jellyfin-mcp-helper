@@ -210,7 +210,6 @@ export default function ReportPanel() {
 
 function ReportGroup({ gid, gi, group, expanded, visibleItems, matchedIds, query, filter }) {
   const { state, actions } = useAppStore()
-  const isSeries = group.items[0].itemType === 'series'
   const skipOnly = group.items.every((i) => i.action === 'skip')
   const hasPathEdits = group.items.some(
     (i) => ((i._liveTarget || i.targetPath) || '').trim() !== ((i.originalTarget || i.targetPath) || '').trim()
@@ -273,7 +272,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, matchedIds, query
             <tr>
               <th style={{ width: '40px' }} />
               <th style={{ width: '150px' }}>Action</th>
-              {isSeries && <th style={{ width: '90px' }}>Episode</th>}
+              <th style={{ width: '110px' }}>Type</th>
               <th colSpan={2}>Source → Target Path</th>
               <th style={{ width: '90px', textAlign: 'right' }}>Size</th>
               <th style={{ width: '70px', textAlign: 'right' }}></th>
@@ -283,7 +282,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, matchedIds, query
             {visibleItems.map((item) => {
               const isMatched = matchedIds ? matchedIds.has(item.confirmId) : true
               const shouldHighlight = isMatched && (filter !== 'all' || (query && query.trim() !== ''))
-              return <ReportRow key={item.confirmId} item={item} isSeries={isSeries} query={query} group={group} isHighlighted={shouldHighlight} />
+              return <ReportRow key={item.confirmId} item={item} query={query} group={group} isHighlighted={shouldHighlight} />
             })}
           </tbody>
         </table>
@@ -292,7 +291,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, matchedIds, query
   )
 }
 
-function ReportRow({ item, isSeries, query, group, isHighlighted }) {
+function ReportRow({ item, query, group, isHighlighted }) {
   const { state, actions } = useAppStore()
   const selected = state.selectedIds.includes(item.confirmId)
   const liveTarget = item._liveTarget || item.targetPath
@@ -318,7 +317,7 @@ function ReportRow({ item, isSeries, query, group, isHighlighted }) {
             <span className="badge action-skip">Skipped</span>
           </div>
         </td>
-        {isSeries && <td />}
+        <td style={{ fontSize: '0.8rem' }}>{item.typeLabel || '—'}</td>
         <td colSpan={2}>
           <div className="path-cell">
             <div className="source-name" title={item.sourcePath || item.sourceName || ''}>
@@ -380,7 +379,7 @@ function ReportRow({ item, isSeries, query, group, isHighlighted }) {
           </span>
         </div>
       </td>
-      {isSeries && <td>{item.episode || ''}</td>}
+      {<td style={{ fontSize: '0.8rem' }}>{item.typeLabel || item.episode || '—'}</td>}
       <td colSpan={2}>
         <div className="path-cell">
           <div className="source-name" title={item.sourcePath || item.sourceName || ''}>

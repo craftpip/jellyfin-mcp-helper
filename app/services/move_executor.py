@@ -386,6 +386,8 @@ async def run_confirm_task(
                             "corrected": bool(it.corrected),
                             "correctionNote": it.correction_note,
                             "crossDrive": _is_cross_drive(it.source_path, it.target_path),
+                            "extraType": it.extra_type,
+                            "extra_type": it.extra_type,
                         }
                     )
                 history_id = append_history_group(

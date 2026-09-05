@@ -46,8 +46,8 @@ def append_history_group(
                 path_history = [source, target]
             conn.execute(
                 """
-                INSERT INTO history_items (history_id, confirm_id, source_path, source_folder, target_path, path_history_json, action, item_type, file_size, status, error, suspect, corrected, correction_note, cross_drive)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO history_items (history_id, confirm_id, source_path, source_folder, target_path, path_history_json, action, item_type, file_size, status, error, suspect, corrected, correction_note, cross_drive, extra_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     history_id,
@@ -65,6 +65,7 @@ def append_history_group(
                     1 if item.get("corrected") else 0,
                     item.get("correctionNote") or item.get("correction_note"),
                     1 if item.get("crossDrive") or item.get("cross_drive") else 0,
+                    item.get("extraType") or item.get("extra_type"),
                 ),
             )
         conn.commit()

@@ -101,6 +101,22 @@ class TestHistoryStoreFlags:
         assert item["correction_note"] == "merged into existing show folder"
         assert item["cross_drive"] == 1
 
+    def test_persists_extra_type(self, tmp_path):
+        db = tmp_path / "app.db"
+        _seed_scan(db, "scan1")
+        base = _series_item(tmp_path)
+        base.update({"item_type": "extra", "extraType": "trailer"})
+        append_history_group(
+            scan_id="scan1",
+            group_title="Show",
+            group_key="k",
+            items=[base],
+            db_path=db,
+        )
+        item = list_history_groups(db_path=db)[0]["items"][0]
+        assert item["item_type"] == "extra"
+        assert item["extra_type"] == "trailer"
+
     def test_live_fields_series_target_exists(self, tmp_path):
         db = tmp_path / "app.db"
         _seed_scan(db, "scan1")

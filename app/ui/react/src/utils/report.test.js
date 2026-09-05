@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  compareReportItemsAsc,
   computePathSync,
   defaultSelection,
   groupItems,
@@ -7,6 +8,7 @@ import {
   mapReportItems,
   matchesFilter,
   itemSearchText,
+  typeLabelFor,
 } from './report.js'
 
 const REPORT = {
@@ -114,14 +116,100 @@ describe('mapReportItems', () => {
     expect(movie.suspect).toBe(false)
     expect(movie.corrected).toBe(false)
   })
+
+  it('maps type labels for the Type column', () => {
+    const items = buildItems()
+    const series = items.find((i) => i.confirmId === 'c1')
+    const movie = items.find((i) => i.confirmId === 'c2')
+    const skip = items.find((i) => i.action === 'skip')
+    expect(series.typeLabel).toBe('S01E01')
+    expect(movie.typeLabel).toBe('Movie')
+    // c3 is a series-kind skip without a target, so it falls back to the kind label
+    expect(skip.typeLabel).toBe('Series')
+    expect(typeLabelFor({ itemType: 'skip' })).toBe('—')
+  })
+
+  it('passes through extraType and labels extras', () => {
+    const report = {
+      summary: {},
+      items: [
+        { confirmId: 'x1', action: 'move', itemType: 'extra', extraType: 'trailer', sourcePath: '/d/x.mkv', targetPath: '/s/Show/Extras/x.mkv' },
+      ],
+    }
+    const [extra] = mapReportItems(report)
+    expect(extra.extraType).toBe('trailer')
+    expect(extra.typeLabel).toBe('Extra · trailer')
+  })
 })
 
 describe('groupItems', () => {
-  it('groups by title and sums size (newest first)', () => {
+  it('groups by title and sums size (newest group first)', () => {
     const groups = groupItems(buildItems())
-    // Newest (highest _idx) first — incremental scans surface new files at the top
+    // Newest group (highest _idx) first — incremental scans surface new files at the top
     expect(groups.map((g) => g.title)).toEqual(['Skipped items', 'Movie (2024)', 'Show Name (2020)'])
     expect(groups.find((g) => g.title === 'Show Name (2020)').totalSize).toBe(1073741824)
+  })
+
+  it('sorts rows within a group ascending (S01E01 before S01E02)', () => {
+    const items = [
+      { confirmId: 'e2', title: 'Show', sourceFolder: 'Pack', targetPath: '/s/Show/Season 01/Show S01E02.mkv', itemType: 'series', episode: 'S01E02', action: 'move' },
+      { confirmId: 'e10', title: 'Show', sourceFolder: 'Pack', targetPath: '/s/Show/Season 01/Show S01E10.mkv', itemType: 'series', episode: 'S01E10', action: 'move' },
+      { confirmId: 'e1', title: 'Show', sourceFolder: 'Pack', targetPath: '/s/Show/Season 01/Show S01E01.mkv', itemType: 'series', episode: 'S01E01', action: 'move' },
+    ]
+    const [group] = groupItems(items)
+    expect(group.items.map((i) => i.confirmId)).toEqual(['e1', 'e2', 'e10'])
+  })
+
+  it('sorts series before movies before extras within a mixed group', () => {
+    const items = [
+      { confirmId: 'x1', title: 'Pack', sourceFolder: 'Pack', targetPath: '/m/Extra.mkv', itemType: 'extra', action: 'move' },
+      { confirmId: 'm1', title: 'Pack', sourceFolder: 'Pack', targetPath: '/m/Movie (2024)/Movie.mkv', itemType: 'movie', action: 'move' },
+      { confirmId: 's1', title: 'Pack', sourceFolder: 'Pack', targetPath: '/s/Show/Season 01/Show S01E01.mkv', itemType: 'series', episode: 'S01E01', action: 'move' },
+    ]
+    const [group] = groupItems(items)
+    expect(group.items.map((i) => i.confirmId)).toEqual(['s1', 'm1', 'x1'])
+  })
+})
+
+describe('typeLabelFor', () => {
+  it('shows the episode tag for series', () => {
+    expect(typeLabelFor({ itemType: 'series', episode: 'S01E04', targetPath: '/s/Show/Season 01/x.mkv' })).toBe('S01E04')
+  })
+
+  it('uppercases a lowercase episode tag from the target path', () => {
+    expect(typeLabelFor({ itemType: 'series', targetPath: '/s/Show/Season 01/Show s01e04.mkv' })).toBe('S01E04')
+  })
+
+  it('falls back to Series when no episode is parseable', () => {
+    expect(typeLabelFor({ itemType: 'series', targetPath: '/s/Show/Season 01/x.mkv' })).toBe('Series')
+  })
+
+  it('shows Movie for movies', () => {
+    expect(typeLabelFor({ itemType: 'movie', targetPath: '/m/Movie (2024)/Movie.mkv' })).toBe('Movie')
+  })
+
+  it('shows Extra, with the extra-type suffix when present', () => {
+    expect(typeLabelFor({ itemType: 'extra', targetPath: '/s/Show/Extras/x.mkv' })).toBe('Extra')
+    expect(typeLabelFor({ itemType: 'extra', extraType: 'trailer', targetPath: '/s/Show/Extras/x.mkv' })).toBe('Extra · trailer')
+  })
+
+  it('reads snake_case history shapes', () => {
+    expect(typeLabelFor({ item_type: 'movie', target_path: '/m/Movie/Movie.mkv' })).toBe('Movie')
+    expect(typeLabelFor({ item_type: 'series', target_path: '/s/Show/Season 02/Show s02e03.mkv' })).toBe('S02E03')
+    expect(typeLabelFor({ item_type: 'extra', extra_type: 'featurette', target_path: '/s/Show/Extras/x.mkv' })).toBe('Extra · featurette')
+  })
+
+  it('shows an em dash for skips', () => {
+    expect(typeLabelFor({ itemType: 'skip' })).toBe('—')
+  })
+})
+
+describe('compareReportItemsAsc', () => {
+  it('orders S01E10 before S02E01 numerically', () => {
+    const a = { itemType: 'series', episode: 'S01E10', targetPath: '/s/Show/Season 01/Show S01E10.mkv' }
+    const b = { itemType: 'series', episode: 'S02E01', targetPath: '/s/Show/Season 02/Show S02E01.mkv' }
+    expect(compareReportItemsAsc(a, b)).toBeLessThan(0)
+    expect(compareReportItemsAsc(b, a)).toBeGreaterThan(0)
   })
 })
 
@@ -313,5 +401,12 @@ describe('itemSearchText', () => {
     expect(text).toContain('show name (2020)')
     expect(text).toContain('s01e01')
     expect(text).toContain('/media1/series')
+  })
+
+  it('matches type labels such as movie and extra', () => {
+    const items = buildItems()
+    const movie = items.find((i) => i.confirmId === 'c2')
+    expect(itemSearchText(movie)).toContain('movie')
+    expect(itemSearchText({ itemType: 'extra', extraType: 'trailer', targetPath: '/s/Show/Extras/x.mkv', typeLabel: 'Extra · trailer' })).toContain('trailer')
   })
 })

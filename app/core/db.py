@@ -111,6 +111,7 @@ def init_db(db_path: Path | None = None) -> None:
                 corrected INTEGER NOT NULL DEFAULT 0,
                 correction_note TEXT,
                 cross_drive INTEGER NOT NULL DEFAULT 0,
+                extra_type TEXT,
                 FOREIGN KEY(history_id) REFERENCES history_groups(history_id) ON DELETE CASCADE
             )
             """
@@ -130,6 +131,10 @@ def init_db(db_path: Path | None = None) -> None:
             pass
         try:
             conn.execute("ALTER TABLE history_items ADD COLUMN cross_drive INTEGER NOT NULL DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE history_items ADD COLUMN extra_type TEXT")
         except Exception:
             pass
         # Indexes

@@ -89,7 +89,8 @@ One planned item in a scan.
 | `confirm_id` | `confirmId` | Stable id used by update/confirm/delete tools. |
 | `source_path` | `sourcePath` | Source file. |
 | `name` | — | Display name. |
-| `item_type` | — | `movie` / `series` / `skip`. |
+| `item_type` | — | `movie` / `series` / `extra` / `skip`. |
+| `extra_type` | `extraType` | Extra kind (`trailer`, `featurette`, …) when `item_type` is `extra`. |
 | `confidence` / `reason` | — | Classification. |
 | `target_path` | `targetPath` | Planned destination. |
 | `action` | — | `move`, `replace`, or `skip`. |

@@ -28,9 +28,11 @@ Pure, unit-tested helpers (no DOM access) plus the REST API client.
 
 | Function | Purpose |
 | --- | --- |
-| `mapReportItems(report)` | Maps raw report items to rows; derives `title`/`season`/`episode` from the target path; skipped items get `title: "Skipped items"` and a `reason`. Passes through `suspect`/`corrected`/`flags`/`correctionNote`/`candidateTargets`. |
-| `groupItems(items)` | Groups rows by title with `totalSize`; each row carries `_idx`. |
-| `itemSearchText(item)` | Free-text search blob (title, episode, paths, reason). |
+| `mapReportItems(report)` | Maps raw report items to rows; derives `title`/`season`/`episode` from the target path; computes `typeLabel` via `typeLabelFor` and passes through `extraType`; skipped items get `title: "Skipped items"` and a `reason`. Passes through `suspect`/`corrected`/`flags`/`correctionNote`/`candidateTargets`. |
+| `groupItems(items)` | Groups rows by title with `totalSize`; each row carries `_idx`. Rows within a group sort ascending via `compareReportItemsAsc` (episodes numeric, then series → movie → extra); group order stays newest-first. |
+| `itemSearchText(item)` | Free-text search blob (title, episode, type label/kind/extra-type, paths, reason). |
+| `typeLabelFor(item)` | Single source for the `Type` column: series → `SxxEyy` (or `Series` fallback), movie → `Movie`, extra → `Extra` (+ `· extraType` when present), skip/other → `—`. Accepts camelCase report shapes and snake_case history shapes. |
+| `compareReportItemsAsc(a, b)` | Within-group ascending comparator (kind rank, then numeric season/episode, then target path, then `_idx`). Shared by the report and history tables. |
 | `matchesFilter(item, query, filterVal)` | Applies the query + action/fileExists axis (`move`, `replace`, `existing`, `new`). |
 | `computePathSync(idx, oldPath, newPath, items)` | Group-scoped smart path sync — see below. |
 | `defaultSelection(items)` | All actionable items checked. |
