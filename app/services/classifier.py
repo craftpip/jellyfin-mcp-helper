@@ -102,10 +102,13 @@ def classify_candidate(candidate: CandidateItem, series_title_aliases: dict[str,
     episode = _extract_int(parsed.get("episode"))
     fallback_season, fallback_episode = _extract_season_episode(label)
     has_explicit_episode = fallback_episode is not None
-    if season is None:
+    # Prefer explicit SxxEyy found by regex over guessit's title-embedded
+    # mis-parse (e.g. SAC_2045 → S20E45/2045 vs real S01E10.NET mis-identified as website)
+    if fallback_season is not None:
         season = fallback_season
-    if episode is None:
+    if fallback_episode is not None:
         episode = fallback_episode
+        has_explicit_episode = True
     season_from_folder = False
     if season is None:
         season = _extract_season_from_folder(candidate)
@@ -408,7 +411,7 @@ def _extract_series_from_source(candidate: CandidateItem) -> str | None:
     cleaned = _TRAILING_GROUP_RE.sub("", cleaned)
     parts = _SEASON_MARKER_RE.split(cleaned, maxsplit=1)
     if len(parts) > 1:
-        result = parts[0].strip()
+        result = parts[0].strip().rstrip(" -._")
         if result:
             return result
     original = cleaned
@@ -416,11 +419,11 @@ def _extract_series_from_source(candidate: CandidateItem) -> str | None:
     any_change = cleaned != original
     parts = _TECH_TAG_RE.split(cleaned, maxsplit=1)
     if len(parts) > 1:
-        result = parts[0].strip()
+        result = parts[0].strip().rstrip(" -._")
         if result:
             return result
     if any_change:
-        return cleaned or None
+        return (cleaned.strip().rstrip(" -._") or None) if cleaned else None
     return None
 
 
@@ -462,7 +465,7 @@ def _clean_source_folder_name(raw_name: str) -> str | None:
     while _TRAILING_BRACKET_RE.search(cleaned):
         cleaned = _TRAILING_BRACKET_RE.sub("", cleaned)
     cleaned = _TRAILING_GROUP_RE.sub("", cleaned)
-    return cleaned.strip() or None
+    return cleaned.strip().rstrip(" -._") or None
 
 
 def _has_container_episode_context(candidate: CandidateItem) -> bool:
@@ -545,7 +548,7 @@ def _get_folder_title(candidate: CandidateItem) -> str | None:
                 tmp = _TRAILING_BRACKET_RE.sub("", tmp)
             tmp = _TRAILING_PAREN_TECH_RE.sub("", tmp)
             tmp = _TRAILING_GROUP_RE.sub("", tmp)
-            tmp = tmp.strip()
+            tmp = tmp.strip().rstrip(" -._")
             if tmp and not _is_generic_folder_title(tmp):
                 return tmp
             if cleaned and not _is_generic_folder_title(cleaned):

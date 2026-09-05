@@ -400,6 +400,33 @@ def test_series_title_alias_not_applied_when_no_match() -> None:
     assert result.title == "Yani Neko"
 
 
+def test_sac_2045_s01e10_with_net_website_is_not_misparsed_as_204() -> None:
+    # Regression for SAC_2045 mis-parse: S01E10.NET was treated as website
+    # and SAC_2045 was parsed as S20E45/E2045 (or truncated 204), dropping the real S01E10.
+    result = classify_candidate(_candidate(
+        name="Ghost.in.the.Shell.SAC_2045.S01E10.NET.PEOPLE.-.Reasons.Leading.to.Flameout.720p.NF.WEB-DL.DD+2.0.x264-BonsaiHD.mkv",
+        container_path="/media3/torrents/Ghost in the Shell SAC_2045 S01 Complete 720p NF WEB-DL Dual Audio [Hindi + English] ESub x264 - Shadow (BonsaiHD)",
+        relative_path="Ghost.in.the.Shell.SAC_2045.S01E10.NET.PEOPLE.-.Reasons.Leading.to.Flameout.720p.NF.WEB-DL.DD+2.0.x264-BonsaiHD.mkv",
+    ))
+    assert result.kind == "series"
+    assert result.season == 1, f"expected S01, got S{result.season}"
+    assert result.episode == 10, f"expected E10, got E{result.episode} (misparsed as 204/2045 from SAC_2045)"
+    assert result.episode != 204
+    assert result.episode != 2045
+    assert result.season != 20
+
+
+def test_sac_2045_s01e10_with_net_and_s01e09_are_consistent() -> None:
+    # S01E09 with same prefix must also be S01E09, not S20E45
+    result = classify_candidate(_candidate(
+        name="Ghost.in.the.Shell.SAC_2045.S01E09.IDENTITY.THEFT.-.The.Lonely.Struggle.720p.NF.WEB-DL.DD+2.0.x264-BonsaiHD.mkv",
+        container_path="/media3/torrents/Ghost in the Shell SAC_2045 S01 Complete 720p NF WEB-DL Dual Audio [Hindi + English] ESub x264 - Shadow (BonsaiHD)",
+        relative_path="Ghost.in.the.Shell.SAC_2045.S01E09.IDENTITY.THEFT.-.The.Lonely.Struggle.720p.NF.WEB-DL.DD+2.0.x264-BonsaiHD.mkv",
+    ))
+    assert result.season == 1
+    assert result.episode == 9
+
+
 RELEASE_JUNK_TOKENS = (
     "1080p", "720p", "2160p", "x265", "hevc", "x264", "av1",
     "flac", "eac3", "aac", "opus", "ddp", "dual-audio", "dual audio",

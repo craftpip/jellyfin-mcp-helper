@@ -377,6 +377,7 @@ class PathResolver:
             if folder_title and not _is_generic_folder_title(folder_title) and not _is_generic_extra_title(folder_title):
                 show_name = sanitize_name(folder_title)
         show_name = re.sub(r"([^a-zA-Z0-9])\1+$", r"\1", show_name)
+        show_name = show_name.strip().rstrip(" -._")
         series_key = series_lookup_key(show_name, classification.year)
         logger.info(
             "  [resolver] resolving series=%s season=%s episode=%s candidate=%s",
@@ -423,7 +424,7 @@ class PathResolver:
             logger.info("  [resolver] new season dir: %s", season_dir)
         ext = Path(candidate.source_path).suffix or ".mkv"
         # Trust the folder for the show title - the episode title is not the show
-        show_title = sanitize_name(classification.title or show_dir.name)
+        show_title = sanitize_name(classification.title or show_dir.name).strip().rstrip(" -._")
         episode_base = f"{show_title} - S{season_number:02d}E{episode_number:02d}"
         target_path = str(season_dir / f"{episode_base}{ext}")
         # Check if an existing file for this episode already exists in the season dir
@@ -689,34 +690,71 @@ class PathResolver:
         wanted_tokens = [tokenize(value) for value in (title, desired_name) if tokenize(value)]
         alias_values = series_aliases(target_path) if Path(target_path).is_dir() else {Path(target_path).name}
 
+        def _year_tokens(tokens: set[str]) -> set[str]:
+            return {t for t in tokens if len(t) == 4 and t.isdigit() and 1900 <= int(t) <= 2100}
+
         for alias in alias_values:
             alias_norm = normalize_series_text(alias)
             alias_tokens = tokenize(alias)
             alias_core = normalize_series_text(alias.split('(')[0].strip()) if '(' in alias else alias_norm
             if alias_norm in wanted_norms:
                 return True
-            if any(wn and wn in alias_norm for wn in wanted_norms):
-                return True
-            if alias_core and any(alias_core in wn for wn in wanted_norms):
-                return True
+            # alias contains wanted as substring - only safe if extra is just a year
+            for wn in wanted_norms:
+                if wn and wn in alias_norm and wn != alias_norm:
+                    extra = alias_norm.replace(wn, "").strip()
+                    extra_tokens = tokenize(extra) - _year_tokens(tokenize(extra))
+                    if len(extra_tokens) == 0:
+                        return True
+            # alias_core substring of wanted - only safe if extra is just a year
+            if alias_core:
+                for wn in wanted_norms:
+                    if alias_core and alias_core in wn and alias_core != wn:
+                        extra = wn.replace(alias_core, "").strip()
+                        extra_tokens = tokenize(extra) - _year_tokens(tokenize(extra))
+                        if len(extra_tokens) == 0:
+                            return True
             if any(tokens and tokens <= alias_tokens for tokens in wanted_tokens):
                 return True
-            if any(alias_tokens and len(alias_tokens) >= 3 and alias_tokens <= tokens for tokens in wanted_tokens):
-                return True
+            # alias subset of title - only safe if title has no extra non-year token
+            for tokens in wanted_tokens:
+                if alias_tokens and len(alias_tokens) >= 3 and alias_tokens <= tokens:
+                    extra = tokens - alias_tokens
+                    extra_non_year = extra - _year_tokens(extra)
+                    if len(extra_non_year) == 0:
+                        return True
             alias_core_tokens_check = tokenize(alias_core) if alias_core else set()
-            if any(alias_core_tokens_check and len(alias_core_tokens_check) >= 3 and alias_core_tokens_check <= tokens for tokens in wanted_tokens):
-                return True
+            for tokens in wanted_tokens:
+                if alias_core_tokens_check and len(alias_core_tokens_check) >= 3 and alias_core_tokens_check <= tokens:
+                    extra = tokens - alias_core_tokens_check
+                    extra_non_year = extra - _year_tokens(extra)
+                    if len(extra_non_year) == 0:
+                        return True
             for tokens in wanted_tokens:
                 if not tokens or not alias_tokens:
                     continue
                 inter = len(tokens & alias_tokens)
                 min_len = min(len(tokens), len(alias_tokens))
+                union = len(tokens | alias_tokens)
                 alias_core_tokens = tokenize(alias_core) if alias_core else set()
                 inter_core = len(tokens & alias_core_tokens) if alias_core_tokens else 0
-                if inter >= 3 and inter >= min_len * 0.6:
+                # require high Jaccard to avoid franchise prefix merges
+                if inter >= 3 and inter >= min_len * 0.6 and union > 0 and inter / union >= 0.65:
+                    title_only = tokens - alias_tokens
+                    alias_only = alias_tokens - tokens
+                    # any non-year extra on either side indicates a distinct show
+                    if (title_only - _year_tokens(title_only)) or (alias_only - _year_tokens(alias_only)):
+                        continue
                     return True
-                if alias_core_tokens and inter_core >= 3 and inter_core >= min(len(alias_core_tokens), len(tokens)) * 0.6:
-                    return True
+                if alias_core_tokens and inter_core >= 3 and inter_core >= min(len(alias_core_tokens), len(tokens)) * 0.6 and union > 0:
+                    # check Jaccard for core as well
+                    union_core = len(tokens | alias_core_tokens)
+                    if inter_core / union_core >= 0.65:
+                        title_only_c = tokens - alias_core_tokens
+                        alias_only_c = alias_core_tokens - tokens
+                        if (title_only_c - _year_tokens(title_only_c)) or (alias_only_c - _year_tokens(alias_only_c)):
+                            continue
+                        return True
         return False
 
     def _pick_exact_path_match(
@@ -1189,6 +1227,15 @@ class PathResolver:
 
     def _movie_folder_name(self, classification: ClassificationResult) -> str:
         title = sanitize_name(classification.title or "Unknown Movie")
+        alias = (classification.series_alias or "").strip()
+        if alias and alias.lower() not in title.lower():
+            # Distinguish same-year franchise entries (e.g., Border 1 vs Border 2)
+            # that share title/year but have a distinct alternative_title.
+            alias_clean = sanitize_name(alias).strip().rstrip(" -._")
+            if alias_clean and not _is_generic_folder_title(alias_clean) and not _is_generic_extra_title(alias_clean):
+                # Only append alias when it looks like a distinguishing subtitle/border
+                # to avoid polluting simple movie titles.
+                title = f"{title} - {alias_clean}"
         if classification.year:
             return f"{title} ({classification.year})"
         return title
