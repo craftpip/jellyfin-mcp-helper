@@ -961,3 +961,163 @@ def test_singleton_persists_across_manager_restart(tmp_path, monkeypatch) -> Non
     manager2 = ScanManager(config)
     assert manager2.get_current_scan() is not None
     assert len(manager2.get_current_scan().items) == len(s1.items)
+
+
+def test_confirm_persists_singleton_with_confirmed_flags(tmp_path, monkeypatch) -> None:
+    """Regression: a confirm must persist current.json.
+
+    Restart recovery loads the singleton; without a post-confirm save it
+    resurrects already-moved items as actionable, so a re-confirm fails with
+    ENOENT on the gone source and writes a spurious "failed" history group
+    even though the file is already at its target.
+    """
+    source = tmp_path / "download.mkv"
+    source.write_bytes(b"video-bytes")
+    target = tmp_path / "library" / "download.mkv"
+
+    recorded: dict = {}
+
+    def fake_history(scan_id, group_title, group_key, items, confirmed_by=None):
+        recorded["items"] = items
+        return {"history_id": "h_test"}
+
+    monkeypatch.setattr("app.services.history_store.append_history_group", fake_history)
+
+    def make_manager() -> ScanManager:
+        return ScanManager(
+            AppConfig(
+                paths=PathsConfig(downloadRoots=[]),
+                model=ModelConfig(),
+                log_dir=tmp_path,
+                report_dir=tmp_path,
+            )
+        )
+
+    manager = make_manager()
+
+    async def run_test():
+        from app.services.scan_history import load_singleton
+
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        # Wait for the scan-completion singleton write to land first so it
+        # cannot overwrite the post-confirm state afterwards.
+        for _ in range(200):
+            singleton = load_singleton(tmp_path)
+            if singleton is not None and singleton.scan_id == scan.scan_id:
+                break
+            await asyncio.sleep(0.01)
+        scan.items = [
+            ScannedItem(
+                confirmId="c1",
+                sourcePath=str(source),
+                name=source.name,
+                item_type="movie",
+                confidence=1.0,
+                reason="test",
+                target_path=str(target),
+                action="move",
+                crossDrive=True,
+            )
+        ]
+        scan.counts.movies = 1
+
+        async def fake_trigger_jellyfin(updated_paths) -> None:
+            return None
+
+        monkeypatch.setattr(manager, "_trigger_jellyfin_scans", fake_trigger_jellyfin)
+
+        await manager.confirm_scan(scan.scan_id, item_ids=["c1"])
+        while scan.confirm_status == "running":
+            await asyncio.sleep(0)
+        assert scan.confirm_status == "completed"
+        assert scan.counts.moved == 1
+        assert target.exists()
+        assert not source.exists()
+
+        loaded = None
+        for _ in range(200):
+            loaded = load_singleton(tmp_path)
+            if loaded is not None and loaded.items and loaded.items[0].confirmed and loaded.counts.moved == 1:
+                break
+            await asyncio.sleep(0.01)
+        return loaded
+
+    loaded = asyncio.run(run_test())
+    assert loaded is not None and loaded.items and loaded.items[0].confirmed
+    assert loaded.counts.moved == 1
+    # Stored cross-drive flag survives the gone source in history metadata.
+    assert recorded["items"][0]["crossDrive"] is True
+    # A fresh manager restores the confirmed state (no resurrection).
+    restored = make_manager().get_current_scan()
+    assert restored is not None and restored.items and restored.items[0].confirmed
+
+
+def test_reconfirm_already_moved_item_is_skipped_not_failed(tmp_path, monkeypatch) -> None:
+    """Regression for the spurious failed history group: source gone but target
+    present with the expected size must mark confirmed without failed counts
+    and without writing a duplicate history group."""
+    from fastapi import HTTPException
+
+    target = tmp_path / "library" / "Show - S01E08.mkv"
+    target.parent.mkdir(parents=True)
+    payload = b"v" * 4096
+    target.write_bytes(payload)
+    missing_source = tmp_path / "downloads" / "Show.S01E08.mkv"
+
+    calls: list = []
+
+    def fake_history(scan_id, group_title, group_key, items, confirmed_by=None):
+        calls.append(items)
+        return {"history_id": "h_test"}
+
+    monkeypatch.setattr("app.services.history_store.append_history_group", fake_history)
+
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(downloadRoots=[]),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+
+    async def run_test():
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        scan.items = [
+            ScannedItem(
+                confirmId="c1",
+                sourcePath=str(missing_source),
+                name=missing_source.name,
+                item_type="series",
+                confidence=1.0,
+                reason="test",
+                target_path=str(target),
+                action="move",
+                fileSize=len(payload),
+            )
+        ]
+
+        async def fake_trigger_jellyfin(updated_paths) -> None:
+            return None
+
+        monkeypatch.setattr(manager, "_trigger_jellyfin_scans", fake_trigger_jellyfin)
+
+        await manager.confirm_scan(scan.scan_id, item_ids=["c1"])
+        while scan.confirm_status == "running":
+            await asyncio.sleep(0)
+        # A further confirm now has nothing to do (400, not another group).
+        with pytest.raises(HTTPException):
+            await manager.confirm_scan(scan.scan_id, item_ids=["c1"])
+        return scan
+
+    scan = asyncio.run(run_test())
+    assert scan.confirm_status == "completed"
+    assert scan.counts.failed == 0
+    assert scan.counts.moved == 0
+    assert scan.items[0].confirmed
+    assert scan.items[0].error is None
+    assert calls == []

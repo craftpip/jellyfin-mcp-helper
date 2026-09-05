@@ -283,10 +283,11 @@ async def run_confirm_task(
     from datetime import UTC, datetime
 
     from app.services.presenters import format_scan_report
-    from app.services.scan_history import save_report
+    from app.services.scan_history import save_report, save_singleton
 
     scan = manager.get_scan(scan_id)
     updated_paths: set[str] = set()
+    acted_items: list = []
     now = datetime.now(UTC)
     try:
         selected_items = [
@@ -320,9 +321,30 @@ async def run_confirm_task(
                 confirm_note="Preparing next item.",
             )
             try:
+                # Idempotency guard: a restart used to resurrect already-moved
+                # items as actionable (stale singleton), so a re-confirm hit a
+                # missing source and wrote a spurious "failed" history entry
+                # even though the file was already at its target. When the
+                # source is gone but the target exists with the expected size,
+                # treat it as already moved: mark confirmed, count nothing.
+                if not Path(item.source_path).is_file() and Path(item.target_path).is_file():
+                    try:
+                        size_ok = item.file_size is None or Path(item.target_path).stat().st_size == item.file_size
+                    except OSError:
+                        size_ok = False
+                    if size_ok:
+                        logger.info(
+                            "Skipping already-moved %s -> %s (source gone, target present with expected size)",
+                            item.source_path,
+                            item.target_path,
+                        )
+                        item.confirmed = True
+                        item.error = None
+                        continue
                 logger.info("Applying %s: %s -> %s", item.action, item.source_path, item.target_path)
                 await manager._apply_item(scan, item)
                 item.confirmed = True
+                acted_items.append(item)
                 if item.item_type in ("movie", "series"):
                     updated_paths.add(item.target_path)
                     updated_paths.add(item.source_path)
@@ -334,6 +356,7 @@ async def run_confirm_task(
                 logger.info("Finished %s: %s", item.action, item.target_path)
             except Exception as exc:
                 scan.counts.failed += 1
+                acted_items.append(item)
                 item.error = str(exc)
                 manager._update_confirm_state(
                     scan,
@@ -343,14 +366,16 @@ async def run_confirm_task(
             finally:
                 scan.confirm_processed += 1
 
-        # Write to history (SQLite) for per-group review
-        if selected_items:
+        # Write to history (SQLite) for per-group review.
+        # Only items actually acted on are recorded: already-moved skips were
+        # confirmed by an earlier batch and must not create duplicate groups.
+        if acted_items:
             try:
                 from app.services.history_store import append_history_group
 
                 # Group by target for display: for series, it's the show folder; for movies, it's the movie folder
                 # Use the first item to determine group
-                first = selected_items[0]
+                first = acted_items[0]
                 first_target = Path(first.target_path)
                 if first.item_type == "movie":
                     # For movies, each movie is its own group: use the movie folder
@@ -365,7 +390,7 @@ async def run_confirm_task(
                     group_title = f"Batch {scan_id[:6]}"
 
                 history_items = []
-                for it in selected_items:
+                for it in acted_items:
                     # Determine status
                     status = "moved" if it.action == "move" else "replaced" if it.action == "replace" else "failed" if it.error else "moved"
                     if it.error:
@@ -385,7 +410,10 @@ async def run_confirm_task(
                             "suspect": bool(it.suspect),
                             "corrected": bool(it.corrected),
                             "correctionNote": it.correction_note,
-                            "crossDrive": _is_cross_drive(it.source_path, it.target_path),
+                            # Prefer the scan-time flag: re-statting the source
+                            # fails once it has been moved away, which used to
+                            # misreport cross-drive moves as same-drive.
+                            "crossDrive": bool(getattr(it, "cross_drive", False)) or _is_cross_drive(it.source_path, it.target_path),
                             "extraType": it.extra_type,
                             "extra_type": it.extra_type,
                         }
@@ -466,3 +494,10 @@ async def run_confirm_task(
             await to_thread(save_report, scan_id, format_scan_report(scan), manager._config.report_dir)
         except Exception:
             logger.warning("Could not persist post-confirm report for scan %s", scan_id)
+        # Persist the singleton too: restart recovery loads current.json, and
+        # without this a restart resurrects confirmed items as actionable,
+        # allowing double-confirms that fail with ENOENT on the gone source.
+        try:
+            await to_thread(save_singleton, scan, manager._config.report_dir)
+        except Exception:
+            logger.warning("Could not persist post-confirm singleton for scan %s", scan_id)
