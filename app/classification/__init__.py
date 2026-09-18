@@ -1,0 +1,93 @@
+"""Classification package — public entry points.
+
+Ported JellyJake robustness lives in episodes.py; kinds stay
+series/movie/extra/skip (no pack taxonomy change).
+"""
+from __future__ import annotations
+
+from app.classification.classifier import (
+    _candidate_has_movie_marker,
+    _candidate_label,
+    _clean_source_folder_name,
+    _extract_int,
+    _extract_movie_marker_number_text,
+    _extract_movie_marker_title,
+    _has_movie_marker,
+    _parse_guessit,
+    classify_candidate,
+)
+from app.classification.episodes import (
+    _bare_season_anchor,
+    _extract_bare_episode_from_name,
+    _extract_contained_bare_episode,
+    _extract_contained_bare_episode_title,
+    _extract_season_episode,
+    _extract_season_from_folder,
+)
+from app.classification.kinds import (
+    _extra_type,
+    _infer_kind,
+    _looks_like_extra,
+    _looks_like_sample,
+)
+from app.classification.titles import (
+    _apply_title_alias,
+    _clean_source_folder_name as _titles_clean_source_folder_name,
+    _container_is_movie_folder,
+    _extract_container_series_for_bare_episode,
+    _extract_episode_title,
+    _extract_series_alias,
+    _extract_series_from_source,
+    _extract_title,
+    _get_folder_title,
+    _has_alpha,
+    _has_container_episode_context,
+    _is_fuller_title,
+    _is_generic_extra_title,
+    _is_generic_folder_title,
+    _is_series_alias_text,
+    _is_year_word,
+    _normalize_title_key,
+    _should_use_folder_title,
+    _split_foreign_episode_title,
+)
+
+__all__ = [
+    "classify_candidate",
+    "_candidate_has_movie_marker",
+    "_candidate_label",
+    "_clean_source_folder_name",
+    "_extract_int",
+    "_extract_movie_marker_number_text",
+    "_extract_movie_marker_title",
+    "_has_movie_marker",
+    "_parse_guessit",
+    "_bare_season_anchor",
+    "_extract_bare_episode_from_name",
+    "_extract_contained_bare_episode",
+    "_extract_contained_bare_episode_title",
+    "_extract_season_episode",
+    "_extract_season_from_folder",
+    "_extra_type",
+    "_infer_kind",
+    "_looks_like_extra",
+    "_looks_like_sample",
+    "_apply_title_alias",
+    "_container_is_movie_folder",
+    "_extract_container_series_for_bare_episode",
+    "_extract_episode_title",
+    "_extract_series_alias",
+    "_extract_series_from_source",
+    "_extract_title",
+    "_get_folder_title",
+    "_has_alpha",
+    "_has_container_episode_context",
+    "_is_fuller_title",
+    "_is_generic_extra_title",
+    "_is_generic_folder_title",
+    "_is_series_alias_text",
+    "_is_year_word",
+    "_normalize_title_key",
+    "_should_use_folder_title",
+    "_split_foreign_episode_title",
+]

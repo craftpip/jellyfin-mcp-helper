@@ -26,7 +26,8 @@ No jellysort skill is installed in this environment yet — do not try to load o
 - app/core/constants.py: single source for VIDEO_EXTENSIONS + BROWSE_* caps
 - app/core/db.py: SQLite `config/app.db` (WAL, `get_db`/`init_db`, migration from JSON)
 - app/services/api_key_manager.py: hashed MCP API-key store (now `config/app.db` `api_keys`, `get_db`/`init_db`) — deprecated, single-token auth via `JELLYSORT_MCP_TOKEN` is used instead (file still present but no longer imported)
-- app/services/classifier.py: guessit-based and regex media classification (extra `kind=extra`, `extra_type`)
+- app/services/classifier.py: backward-compat shim — re-exports from `app/classification/` (do not add logic here)
+- app/classification/: classification package — `patterns.py` (all regexes incl. JellyJake-ported), `episodes.py` (`_extract_season_episode` + x-notation/word-form/anchor guards), `titles.py` (folder-hierarchy title logic), `kinds.py` (`series/movie/extra/skip` inference), `classifier.py` (`classify_candidate` orchestrator), `__init__.py` (public re-exports)
 - app/services/env_manager.py: ENV_SPEC manifest + .env read/write/reload (settings page backend, live vs restart)
 - app/services/history_store.py: per-group confirm history (`config/app.db` `history_groups`/`history_items`, `path_history_json`, `suspect`/`corrected`/`cross_drive`, `MAX_HISTORY=200` not applicable — confirm history kept, scan snapshots `200`)
 - app/services/jellyfin.py: Jellyfin API client (`scan_library` via `Items/{id}/Refresh`, `Library/Media/Updated` for moves)
@@ -255,6 +256,19 @@ Prefer adding the new case to the existing examples list.
 - Absolute→relative conversion with hint season S: `episode = N - 12*(S-1)` when that yields 1..99; otherwise keep N as the episode of the hint season and flag `hint-episode-ambiguous` (suspect) instead of collapsing. Never emits two files to the same target+revision. Every strict reason still contains "hint".
 
 **Verification:** `tests/test_scan_hints_absolute_numbering.py` (placeholder-only names: season-2 absolute mapping, SxxEyy control, codec-decimal guard, ambiguous-flag case). Live check needs `fullRescan: true` — incremental scans preserve existing report items verbatim, so a re-scan without it will not re-classify already-reported files.
+
+### JellyJake-ported robust S/E parsing (single-file collapse, no kind change)
+
+**Scope:** `app/classification/episodes.py:_extract_season_episode` ports JellyJake (`/www2/jellyjake/src/utils/queryBuilder.js:classifyTorrent`) robustness without its pack taxonomy — kinds stay `series/movie/extra/skip`, ranges collapse to their start episode (`S01E01-E13` → S1E1, `S01 1-2` → S1E1). No `episodeEnd`/`seasonRange` outputs.
+
+**Ported (with guards):**
+- x-notation `1x05` → S1E5; season 1..60 (kills `1920x1080`), ep never 264/265 (kills `1 x264` codec tails).
+- Word form without dash `Season 1 Episode 5` / `Ep 03` (season kept, previously only dash forms matched).
+- E-only with same-label anchor `S04 ... e07` → S4E7 (`_bare_season_anchor`, word-boundary only).
+- Anime `Part 2 - 06` + anchor → episode; `S2 - 12 END` finale → S2E12.
+- Year/resolution rejection: `S02 - 2019` / `Season 1 - 720p` → season-only, never episode 201/720.
+
+**Verification:** `tests/test_classification_episodes.py` (11 adapted JellyJake cases). Full suite `docker exec jellysort python3 -m pytest tests/` = 418 passed.
 
 ### Update scan path validation bug
 
@@ -556,7 +570,7 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 ### Test suite counts
 
-Backend `python3 -m pytest tests/` runs **388 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **112 tests**. Keep both green after changes.
+Backend `python3 -m pytest tests/` runs **418 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **112 tests**. Keep both green after changes.
 
 ### Browse + retarget (smart correction UI)
 
@@ -592,6 +606,19 @@ Backend `python3 -m pytest tests/` runs **388 tests** (uses the container: `dock
 - `ConfirmModal` shows a warn box ("A move is already running — this batch will be added to the queue…") when `confirmActive`.
 
 **Verification:** backend `tests/test_scan_errors.py::test_confirm_queues_batch_behind_running_move` (two confirms, first runs, second queued, both complete, moved=3); frontend `App.test.jsx` "queues a confirm batch instead of blocking…" and `Toasts.test.jsx` queued-batch header cases. Backend suite is 390 tests, frontend 73.
+
+### Report UI and History UI must stay in sync
+
+**Problem:** `ReportPanel.jsx` (scan report rows) and `HistoryPage.jsx` (confirmed-group rows) render the same row chrome — action badge, type label, cross-drive/suspect/corrected badges, `PathPills`, editable target + link-toggle, `target-tools` Browse button — but the markup was duplicated. Fixes applied to one side (browse-btn sizing, toolbar borders, cross-drive verdict, badge labels) silently diverged from the other.
+
+**Rule:** shared row chrome lives in shared code; both pages consume it. Any visual/behavioral change to a report row must be mirrored to the history row and vice versa.
+
+- Shared helpers (`app/ui/react/src/utils/report.js`): `typeLabelFor`, `actionLabelFor`, `isCrossDriveItem`, `compareReportItemsAsc`, `computePathSync` — all accept camelCase (report) and snake_case (history) shapes. Never inline a one-off label/verdict in either page; use the helper. History adapts its edit state (`{ ...item, _liveTarget: isEdited ? edited : undefined }`) instead of reimplementing the verdict.
+- Shared component (`PathPills.jsx`): tolerates both shapes and missing `pathExists` (treats as nothing-exists). Callers pass the item through directly.
+- Shared CSS (`theme.css`): `.action-cell`, `.path-cell`, `.target-tools`, `.browse-btn`, `.link-toggle` (+`.active`), `.crossdrive-badge`, `.suspect-badge`, `.corrected-badge`. Never duplicate row styles as inline `style={{...}}` in either page — the duplicated link-toggle style block was the concrete smell that motivated this rule. When extracting an inline style to a class, qualify the selector so it beats `button.small` (e.g. `button.small.link-toggle`, not bare `.link-toggle`) — otherwise `button.small`'s `padding: 5px 12px` wins on specificity and the button renders broken on both pages.
+- **Intentional divergences (do not "sync" away):** History-only Trail/Status columns, Undo + Save & Move Again, conditional Delete (`source_exists`); Report-only search highlight, selection checkboxes, Confirm/Update Paths, skip rows.
+
+**Verification:** `npm test` in `app/ui/react`, then `npm run build` + `docker restart jellysort`.
 
 ## Plans
 
