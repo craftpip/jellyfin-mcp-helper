@@ -8,9 +8,9 @@ The docs in this repo (`README.md`, `docs/`, `AGENTS.md`) describe the code
 at a specific commit, kept in sync by the recursive plan
 `plans/07-code-doc-sync.md` (never deleted, run repeatedly).
 
-- **Last synced commit:** `c9f8d94` (2026-08-26)
+- **Last synced commit:** `93634ef` (2026-08-28)
 
-To sync: review `git log --oneline c9f8d94..HEAD`, update the docs for every
+To sync: review `git log --oneline 93634ef..HEAD`, update the docs for every
 commit in that range, then set this line to the new HEAD.
 
 ## Features
@@ -183,7 +183,8 @@ Legacy compatibility endpoints still exist under `/runs`, but new integrations s
 A React single-page app for the scan -> review -> confirm workflow, enabled via
 `WEB_UI_ENABLED=true`. The UI is mounted at `/` on the MCP app, so it is served
 on the **same port as MCP (`18328`)** — `http://host:18328/`, `/settings`,
-`/apikeys`, and the MCP endpoint `http://host:18328/mcp` all share one port.
+and the MCP endpoint `http://host:18328/mcp` all share one port (`/apikeys` is a
+backward-compat route that serves the same SPA).
 The UI talks to the backend through native `/api` REST routes (no MCP round-trip):
 
 - `GET /api/status` — service info + `auth.required`.

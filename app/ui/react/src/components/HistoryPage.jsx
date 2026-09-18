@@ -208,8 +208,7 @@ export default function HistoryPage() {
                         <th style={{ minWidth: 0 }} colSpan={1}>Source → Target Path</th>
                         <th style={{ width: '90px', textAlign: 'right' }}>Size</th>
                         <th style={{ width: '140px', textAlign: 'left' }}>Trail</th>
-                        <th style={{ width: '90px' }}>Status</th>
-                        <th style={{ width: '70px', textAlign: 'right' }}></th>
+                        <th style={{ width: '110px' }}>Status</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -329,18 +328,18 @@ export default function HistoryPage() {
                               <span className={`badge ${item.status === 'failed' ? 'skip' : item.status === 'undone' ? 'skip' : 'move'}`}>
                                 {item.status}
                               </span>
-                            </td>
-                            <td style={{ textAlign: 'right' }}>
                               {item.source_exists ? (
-                                <button
-                                  type="button"
-                                  className="danger small"
-                                  disabled={busy === group.history_id}
-                                  onClick={() => handleDeleteSource(group, item)}
-                                  title="Delete the leftover source file"
-                                >
-                                  Delete
-                                </button>
+                                <div style={{ marginTop: '6px' }}>
+                                  <button
+                                    type="button"
+                                    className="danger small"
+                                    disabled={busy === group.history_id}
+                                    onClick={() => handleDeleteSource(group, item)}
+                                    title="Delete the leftover source file"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
                               ) : null}
                             </td>
                           </tr>

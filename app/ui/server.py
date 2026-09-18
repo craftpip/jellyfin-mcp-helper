@@ -14,6 +14,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
 from app.core.config import get_config, get_settings
 from app.core.constants import (  # single source of truth — re-exported for tests that import from server
@@ -26,7 +27,7 @@ from app.core.constants import (  # single source of truth — re-exported for t
 )
 from app.core.logging import set_request_id
 from app.core.version import VERSION
-from app.models.schemas import ScanPlan, ScanRequest
+from app.models.schemas import ScanPlan, ScanRequest, SortHint
 from app.services.env_manager import list_env, update_env
 from app.services.jellyfin import JellyfinClient
 from app.services.presenters import (
@@ -51,6 +52,9 @@ SSE_MAX_SECONDS = 900
 HERE = Path(__file__).resolve().parent
 REACT_INDEX_HTML = HERE / "react-dist" / "index.html"
 REACT_ASSETS_DIR = HERE / "react-dist" / "assets"
+# Static marketing/docs site, also published to GitHub Pages from website/.
+# Served on the same port at /website (repo root website/, i.e. /app/website in container).
+WEBSITE_DIR = HERE.parent.parent / "website"
 
 
 def _browse_root_configs(config) -> list[dict]:
@@ -360,6 +364,13 @@ def create_ui_app(
             name="react-assets-legacy",
         )
 
+    if WEBSITE_DIR.exists():
+        ui_app.mount(
+            "/website",
+            StaticFiles(directory=str(WEBSITE_DIR), html=True),
+            name="website",
+        )
+
     def _serve_react() -> HTMLResponse:
         if not REACT_INDEX_HTML.exists():
             return HTMLResponse(
@@ -532,14 +543,20 @@ def create_ui_app(
         payload = payload or {}
         manager: ScanManager = request.app.state.scan_manager
         try:
+            raw_hints = payload.get("hints") or []
+            hints = [SortHint(**h) if isinstance(h, dict) else SortHint.model_validate(h) for h in raw_hints]
             scan = await manager.create_scan(
                 ScanRequest(
                     replaceExisting=payload.get("replaceExisting", True),
                     fullRescan=bool(payload.get("fullRescan", False)),
+                    hints=hints,
+                    hintScope=payload.get("hintScope", "additive"),
                 )
             )
         except HTTPException as exc:
             raise HTTPException(status_code=400, detail=exc.detail)
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid hints: {exc.errors(include_url=False)}")
         return _scan_started_response(scan)
 
     @ui_app.get("/api/scans/current/progress", dependencies=[Depends(require_panel_auth)])

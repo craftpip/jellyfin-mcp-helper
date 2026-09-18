@@ -95,7 +95,7 @@ class TestRewriteEnv:
 class TestFieldForKey:
     def test_maps_alias(self):
         assert _field_for_key("MOVIE_ROOTS") == "movie_roots"
-        assert _field_for_key("MCP_ALLOW_UNAUTHENTICATED") == "mcp_allow_unauthenticated"
+        assert _field_for_key("JELLYSORT_MCP_TOKEN") == "jellysort_mcp_token"
 
     def test_unknown_key(self):
         assert _field_for_key("NOPE") is None
@@ -128,8 +128,8 @@ class TestListEnv:
         for key in list(os.environ):
             if key in ENV_SPEC_KEYS:
                 monkeypatch.delenv(key, raising=False)
-        os.environ["MCP_DEFAULT_TOKEN"] = "super-secret"
-        (tmp_path / ".env").write_text("MCP_DEFAULT_TOKEN=super-secret\n", encoding="utf-8")
+        os.environ["JELLYSORT_MCP_TOKEN"] = "super-secret"
+        (tmp_path / ".env").write_text("JELLYSORT_MCP_TOKEN=super-secret\n", encoding="utf-8")
 
         from app.core.config import reset_settings
 
@@ -139,7 +139,7 @@ class TestListEnv:
         finally:
             reset_settings()
 
-        entry = [e for e in result["spec"] if e["key"] == "MCP_DEFAULT_TOKEN"][0]
+        entry = [e for e in result["spec"] if e["key"] == "JELLYSORT_MCP_TOKEN"][0]
         assert entry["saved"] == "********"
         assert entry["effective"] == "********"
         assert "super-secret" not in str(result)
@@ -178,10 +178,10 @@ class TestUpdateEnv:
         assert _parse_env_file()[ "JELLYFIN_API_KEY"] == "real"
 
     def test_live_change_returns_applied_live(self, tmp_path):
-        (tmp_path / ".env").write_text("MCP_ALLOW_UNAUTHENTICATED=true\n", encoding="utf-8")
-        result = update_env({"MCP_ALLOW_UNAUTHENTICATED": "false"})
-        assert result["appliedLive"] == ["MCP_ALLOW_UNAUTHENTICATED"]
-        assert _parse_env_file()["MCP_ALLOW_UNAUTHENTICATED"] == "false"
+        (tmp_path / ".env").write_text("JELLYSORT_MCP_TOKEN=old\n", encoding="utf-8")
+        result = update_env({"JELLYSORT_MCP_TOKEN": "new"})
+        assert result["appliedLive"] == ["JELLYSORT_MCP_TOKEN"]
+        assert _parse_env_file()["JELLYSORT_MCP_TOKEN"] == "new"
 
     def test_restart_change_returns_needs_recreate(self, tmp_path):
         (tmp_path / ".env").write_text("MOVIE_ROOTS=/media1/movies\n", encoding="utf-8")

@@ -12,9 +12,112 @@ import re
 from pathlib import Path
 
 from app.core.constants import VIDEO_EXTENSIONS
-from app.models.schemas import ScannedItem
+from app.models.schemas import ClassificationResult, ScannedItem, SortHint
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_hint_key(value: str | None) -> str:
+    return (value or "").casefold().strip()
+
+
+def _build_hint_index(hints: list[SortHint] | None) -> dict[str, SortHint]:
+    """Index strict hints by normalized source_prefix (torrent folder basename)."""
+    index: dict[str, SortHint] = {}
+    for hint in hints or []:
+        if hint is not None and getattr(hint, "strict", True):
+            index.setdefault(_normalize_hint_key(hint.source_prefix), hint)
+    return index
+
+
+def _hint_for_candidate(candidate, hint_index: dict[str, SortHint]) -> SortHint | None:
+    """Match a candidate to a hint by download container dirname (JellyJake truth)."""
+    if not hint_index:
+        return None
+    if candidate.container_path:
+        folder_name = Path(candidate.container_path).name
+    else:
+        folder_name = Path(candidate.source_path).parent.name
+    return hint_index.get(_normalize_hint_key(folder_name))
+
+
+# Trailing bare absolute number in a strict-hint filename ("Show - 13.mkv" -> 13).
+# Anchored to the end of the stem so mid-name codec decimals (Opus 2.0 / DDP2.0)
+# and resolutions (1080p) never match; _HINT_TRAILING_DECIMAL_RE rejects a
+# decimal tail outright. 4+-digit runs (1080) can't match \d{1,3}$ fully.
+_HINT_TRAILING_NUMBER_RE = re.compile(r"[\s\-_.]+(?P<num>\d{1,3})(?:v\d+)?\s*$", re.IGNORECASE)
+_HINT_TRAILING_DECIMAL_RE = re.compile(r"\d\.\d+\s*$")
+# Upper bound for a sane per-season episode number after absolute->relative
+# conversion (N - 12*(S-1)).
+_HINT_MAX_EPISODE = 99
+
+
+def _extract_hint_bare_number(name: str) -> int | None:
+    """Bare trailing episode number for the strict-hint path only.
+
+    Returns None for decimal tails (codec versions like 2.0) or when no
+    standalone trailing number exists. SxxEyy-tagged files never reach here
+    (handled before this is called), so their numbering is untouched.
+    """
+    stem = Path(name).stem
+    if _HINT_TRAILING_DECIMAL_RE.search(stem):
+        return None
+    match = _HINT_TRAILING_NUMBER_RE.search(stem)
+    if not match:
+        return None
+    try:
+        return int(match.group("num"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _classification_from_hint(candidate, hint: SortHint) -> tuple[ClassificationResult, list[str]]:
+    """Strict hint bypass: hint title/kind are authoritative; season/episode still
+    parsed from the filename's SxxEyy tag as today (hint.season is the default
+    only when the filename has no tag). Bare trailing absolute numbers
+    ("Show - 13.mkv") map to distinct episodes: with hint season S, convert
+    absolute->relative via N - 12*(S-1) when that yields 1.._HINT_MAX_EPISODE;
+    otherwise keep N as the episode of the hint season and flag ambiguous."""
+    from app.services.classifier import _extract_season_episode
+
+    file_season, file_episode = _extract_season_episode(candidate.name)
+    season = file_season if file_season is not None else hint.season
+    episode = file_episode
+    flags: list[str] = []
+    reason = "JellyJake hint (strict)"
+    if hint.kind == "movie":
+        season = None
+        episode = None
+    elif file_episode is None:
+        bare = _extract_hint_bare_number(candidate.name)
+        if bare is not None and hint.kind == "series":
+            hint_season = hint.season or 1
+            if hint_season == 1:
+                episode = bare
+                reason = f"JellyJake hint (strict): bare episode {bare}"
+            else:
+                relative = bare - 12 * (hint_season - 1)
+                if 1 <= relative <= _HINT_MAX_EPISODE:
+                    episode = relative
+                    reason = f"JellyJake hint (strict): absolute {bare} -> S{hint_season:02d}E{episode:02d}"
+                else:
+                    episode = bare
+                    flags.append("hint-episode-ambiguous")
+                    reason = f"JellyJake hint (strict): absolute {bare} kept as episode (ambiguous)"
+    if hint.season is not None and file_season is not None and file_season != hint.season:
+        flags.append("hint-season-mismatch")
+    return (
+        ClassificationResult(
+            type=hint.kind,
+            title=hint.title,
+            year=hint.year,
+            season=season,
+            episode=episode,
+            confidence=1.0,
+            reason=reason,
+        ),
+        flags,
+    )
 
 
 def _incomplete_detection_enabled() -> bool:
@@ -280,6 +383,9 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
     candidates = scan_result.candidates
     scan.total_candidates = len(candidates)
     record_scan_errors(manager, scan, scan_result.errors)
+    hint_index = _build_hint_index(getattr(request, "hints", None))
+    if hint_index:
+        logger.info("Scan %s using %d JellyJake sort hint(s)", scan.scan_id, len(hint_index))
     logger.info(
         "Scan %s found %s readable candidates and %s unreadable paths",
         scan.scan_id,
@@ -349,7 +455,19 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
             continue
 
         try:
-            classification = classify_candidate(candidate, manager._config.series_title_aliases)
+            hint = _hint_for_candidate(candidate, hint_index)
+            hint_flags: list[str] = []
+            if hint is not None:
+                classification, hint_flags = _classification_from_hint(candidate, hint)
+                logger.info(
+                    "Scan %s using JellyJake hint for %s: kind=%s title=%s",
+                    scan.scan_id,
+                    candidate.source_path,
+                    classification.kind,
+                    classification.title,
+                )
+            else:
+                classification = classify_candidate(candidate, manager._config.series_title_aliases)
             scan.counts.total += 1
             logger.info("Scan %s processing candidate %d/%d: %s", scan.scan_id, scan.counts.total, len(candidates), candidate.source_path)
 
@@ -441,19 +559,28 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
             elif classification.kind == "series":
                 scan.counts.series += 1
 
-            flags: list[str] = []
+            flags: list[str] = list(hint_flags)
             if classification.kind == "series" and resolved.season_number and resolved.episode_number:
                 series_key = resolved.series_key or ""
+                base_key = series_key.split("::")[0] if "::" in series_key else series_key
+                has_base_planned = any((k.split("::")[0] if "::" in k else k) == base_key for k in planned_seasons)
                 if (
                     resolved.phantom_show_folder
                     and (resolved.season_number > 1 or resolved.episode_number > 1)
                     and series_key not in planned_seasons
+                    and not has_base_planned
                 ):
                     flags.append("phantom_show_folder")
+                # collect seasons for base title to handle year-variant seasons of same show (e.g. Krypton S01 2018 vs S02 2019)
+                base_seasons: set[int] = set()
+                for k, v in planned_seasons.items():
+                    if (k.split("::")[0] if "::" in k else k) == base_key:
+                        base_seasons.update(v)
                 if (
                     resolved.season_number > 1
                     and not resolved.has_previous_season
                     and (resolved.season_number - 1) not in planned_seasons.get(series_key, set())
+                    and (resolved.season_number - 1) not in base_seasons
                 ):
                     flags.append("season_gap")
                 if (

@@ -76,6 +76,8 @@ class ScanManager:
 
     async def create_scan(self, request: ScanRequest) -> ScanPlan:
         self._loop = get_running_loop()
+        if getattr(request, "hint_scope", "additive") == "only":
+            raise HTTPException(status_code=400, detail="hint_scope='only' is not implemented in v1; use 'additive'.")
         previous_task = None
         if self._current_scan and self._current_scan.status == "running":
             previous_scan = self._current_scan
@@ -103,6 +105,7 @@ class ScanManager:
                 scan_id=scan_id,
                 status="running",
                 operation=request.operation,
+                hints=[h.model_copy(deep=True) for h in request.hints],
                 items=seeded_items,
                 counts=seeded_counts,
                 created_at=now,
@@ -125,6 +128,7 @@ class ScanManager:
                 scan_id=scan_id,
                 status="running",
                 operation=request.operation,
+                hints=[h.model_copy(deep=True) for h in request.hints],
                 items=[],
                 counts=ScanCounts(),
                 created_at=now,

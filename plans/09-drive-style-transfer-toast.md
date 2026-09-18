@@ -1,6 +1,10 @@
 # 09 — Drive-style collapsed transfer toast
 
-> **Status: PROPOSED — awaiting `go` before implementation.**
+> **Status: IMPLEMENTED 2026-09-05 (uncommitted).**
+>
+> Defaults chosen for the open questions: always collapsed (no auto-expand for
+> small batches or failures — failures stay inspectable via the expander until
+> auto-dismiss); footer wording `{K} files in queue`.
 
 ## Goal
 

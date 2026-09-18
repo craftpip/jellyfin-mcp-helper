@@ -27,8 +27,7 @@ The processing engine, split by responsibility:
 - `presenters.py` — shared report/progress formatting (MCP + UI).
 - `jellyfin.py` — Jellyfin API client (libraries, scans, ongoing series).
 - `release_tracker.py` — locally stored next-release dates.
-- `api_key_manager.py` / `env_manager.py` — MCP key store + env management
-  (see [backend/auth](../backend/auth.md)).
+- `env_manager.py` — env management (`ENV_SPEC`, live vs restart; see [backend/auth](../backend/auth.md)); `api_key_manager.py` is the deprecated hashed key store (still present but no longer imported).
 
 ### Web UI — `app/ui/`
 

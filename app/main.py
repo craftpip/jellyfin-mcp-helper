@@ -9,12 +9,13 @@ from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from app.core.auth import MCPUnauthorizedError, require_mcp_auth
 from app.core.config import get_config
 from app.core.logging import configure_logging, set_request_id
 from app.core.version import VERSION
-from app.models.schemas import ScanPlan, ScanRequest
+from app.models.schemas import ScanPlan, ScanRequest, SortHint
 from app.services.jellyfin import JellyfinClient
 from app.services.presenters import (
     format_confirm_progress,
@@ -47,6 +48,18 @@ _report_next_step = report_next_step
 _is_cross_drive_transfer = is_cross_drive_transfer
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_sort_hints(raw_hints: object) -> list[SortHint]:
+    """Validate MCP/REST hint payloads into SortHint models (400 on bad input)."""
+    if not raw_hints:
+        return []
+    if not isinstance(raw_hints, list):
+        raise HTTPException(status_code=400, detail="hints must be an array of {sourcePrefix, title, kind, ...} objects.")
+    try:
+        return [SortHint(**h) if isinstance(h, dict) else SortHint.model_validate(h) for h in raw_hints]
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid hints: {exc.errors(include_url=False)}") from exc
 
 _cached_library_list: str = ""
 
@@ -335,6 +348,49 @@ def _mcp_tools() -> list[dict[str, object]]:
                         "type": "boolean",
                         "default": False,
                         "description": "When true, rescan all files and overwrite the report (discarding previous edits). When false (default), only new files not already in the report are added."
+                    },
+                    "hints": {
+                        "type": "array",
+                        "default": [],
+                        "description": "Per-folder authoritative metadata (e.g. from JellyJake at download time). Each hint strictly classifies the files in one torrent folder instead of re-guessing. Non-hinted folders classify as usual (additive scope).",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "sourcePrefix": {
+                                    "type": "string",
+                                    "description": "Torrent folder basename the hint applies to (matched case-insensitively against the download container dirname)."
+                                },
+                                "title": {
+                                    "type": "string",
+                                    "description": "Canonical show/movie title — authoritative."
+                                },
+                                "kind": {
+                                    "type": "string",
+                                    "enum": ["movie", "series"],
+                                    "description": "Authoritative media kind."
+                                },
+                                "year": {
+                                    "type": "integer",
+                                    "description": "Release/first-air year when known."
+                                },
+                                "season": {
+                                    "type": "integer",
+                                    "description": "Pack season when known. Used as the default when the filename has no SxxEyy tag; a conflicting file tag flags the item as suspect."
+                                },
+                                "strict": {
+                                    "type": "boolean",
+                                    "default": True,
+                                    "description": "When true (default), bypass guess-based classification for title/kind. When false, the hint is ignored."
+                                }
+                            },
+                            "required": ["sourcePrefix", "title", "kind"]
+                        }
+                    },
+                    "hintScope": {
+                        "type": "string",
+                        "enum": ["additive", "only"],
+                        "default": "additive",
+                        "description": "Only 'additive' works in v1 (hints apply to matching folders, everything else classifies as usual). 'only' returns an error."
                     }
                 }
             },
@@ -799,6 +855,8 @@ async def mcp(request: dict) -> JSONResponse:
                     ScanRequest(
                         replaceExisting=arguments.get("replaceExisting", True),
                         fullRescan=bool(arguments.get("fullRescan", False)),
+                        hints=_parse_sort_hints(arguments.get("hints")),
+                        hintScope=arguments.get("hintScope", "additive"),
                     )
                 )
                 response = _format_scan_progress(scan)

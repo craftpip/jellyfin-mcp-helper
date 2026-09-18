@@ -7,6 +7,15 @@ export default function TopBar() {
   const { state, actions } = useAppStore()
   const [scanMenuOpen, setScanMenuOpen] = useState(false)
   const scanMenuRef = useRef(null)
+  const barRef = useRef(null)
+  useEffect(() => {
+    const el = barRef.current
+    if (!el) return
+    const onScroll = () => { el.classList.toggle('stuck', window.scrollY > 8) }
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
   useEffect(() => {
     if (!scanMenuOpen) return
     const onDocClick = (e) => {
@@ -17,7 +26,7 @@ export default function TopBar() {
   }, [scanMenuOpen])
   return (
     <>
-      <div className="top-bar">
+      <div className="top-bar" ref={barRef}>
         <div
           className="brand"
           onClick={() => actions.setPage('scan')}
@@ -41,6 +50,7 @@ export default function TopBar() {
         <div className="top-actions">
           {state.page === 'scan' && !state.scanRunning && (
             <div ref={scanMenuRef} style={{ position: 'relative', display: 'inline-flex' }}>
+              <span className="scan-split">
               <button
                 type="button"
                 className="primary"
@@ -48,7 +58,6 @@ export default function TopBar() {
                 disabled={state.confirmActive}
                 onClick={() => { setScanMenuOpen(false); actions.startScan({ fullRescan: false }) }}
                 title="Scan for new files only (preserves edits)"
-                style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
               >
                 Scan
               </button>
@@ -58,12 +67,14 @@ export default function TopBar() {
                 disabled={state.confirmActive}
                 onClick={() => setScanMenuOpen((v) => !v)}
                 title="More scan options"
-                style={{ padding: '0 8px', borderLeft: '1px solid rgba(255,255,255,0.2)', borderTopLeftRadius: 0, borderBottomLeftRadius: 0 }}
+                style={{ padding: '0 10px', borderLeft: '1px solid rgba(255,255,255,0.2)' }}
+                aria-label="More scan options"
               >
                 ▾
               </button>
+              </span>
               {scanMenuOpen && (
-                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--jf-bg-raised)', border: '1px solid var(--jf-border)', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', zIndex: 50, minWidth: 220, maxWidth: 'min(300px, 90vw)' }}>
+                <div className="scan-menu">
                   <button
                     type="button"
                     className="small"

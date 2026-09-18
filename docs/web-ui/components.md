@@ -63,12 +63,15 @@ an "as movie" candidate flips the item type to movie. On select → POST
 
 ## Toasts
 
-`TransferToasts` renders per-file state for the active batch
-(`deriveTransferQueue`: queued/copying/done/failed). When batches are queued
-behind the active move, the header appends `· N batch(es) queued` and a
-"Queued" section lists each pending batch (`title — N item(s)`).
-
-## PathPills
+`TransferToasts` is a Drive-style collapsed card for the active batch
+(`deriveTransferQueue`: queued/copying/done/failed): the header (`Moving X of
+Y`, overall bar, `Moved/Replaced/Failed`), one live row (the `copying` file
+with per-file bar/speed/ETA, or `Up next` before the copy starts), and an
+`N file(s) in queue` footer. `Show all N` / `Show less` toggles the full
+scrollable list (`40vh`); completed/failed states show header + counts only
+until auto-dismiss. When batches are queued behind the active move, the header
+appends `· N batch(es) queued` and a "Queued" section lists each pending batch
+(`title — N item(s)`).## PathPills
 
 Renders a path with the drive root styled separately (`splitDrive`); `StatusPill`
 renders exists/type/action hints with tooltips.

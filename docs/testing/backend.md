@@ -16,8 +16,8 @@ python3 -m pytest tests/
 | `test_scan_errors.py` | Scan flow edge cases: filesystem errors collected as skip items, in-progress downloads skipped by marker (and not when the toggle is off), zero-byte skip, scan progress/report formatting, per-confirm progress scoping, update-target validation, confirm queueing. |
 | `test_mcp_errors.py` | MCP JSON-RPC error shapes, `tools/list` contents, Jellyfin client formatting (`list_library_items`, fuzzy search, `_fuzzy_score`), ongoing-series status handling, `notify_media_updated`, library-scan trigger, Release Tracker upsert/get/due/list/delete. |
 | `test_recent_files.py` | `recent_video_files` (mtime window, extension filter, nested dirs, skip markers, hours guard) and recent-file item shaping. |
-| `test_mcp_auth.py` | `require_mcp_auth`: unauth pass-through, key + `MCP_DEFAULT_TOKEN` paths, 401 JSON-RPC body. |
-| `test_api_key_manager.py` | Hashed key store: create/list/toggle/delete, once-only full key, atomic writes. |
+| `test_mcp_auth.py` | `require_mcp_auth`: unauth pass-through, valid `JELLYSORT_MCP_TOKEN` + deprecated `MCP_DEFAULT_TOKEN`/`ADMIN_UI_TOKEN` fallback paths, 401 JSON-RPC body. |
+| `test_api_key_manager.py` | Hashed key store (deprecated, file still present but no longer imported): create/list/toggle/delete, once-only full key, atomic writes. |
 | `test_env_manager.py` | `ENV_SPEC` parsing, `list_env`/`update_env`/`reload_settings`, comment-preserving rewrite. |
 | `test_presenters.py` | Shared report/progress formatters used by the MCP + UI endpoints. |
 | `test_release_tracker.py` | Release Tracker storage: upsert/get/due/list/delete, date parsing. |

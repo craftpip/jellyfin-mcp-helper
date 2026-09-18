@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useAppStore } from '../store/AppStore.jsx'
 import { formatBytes } from '../utils/format.js'
 import { matchesFilter, isCrossDriveItem } from '../utils/report.js'
@@ -43,6 +44,19 @@ export default function ReportPanel() {
     expandedGroups,
   } = state
 
+  // Mark group headers that are currently stuck so radius can drop for a seamless join
+  useEffect(() => {
+    if (!reportVisible) return
+    const onScroll = () => {
+      document.querySelectorAll('#reportItems .group-header').forEach((el) => {
+        el.classList.toggle('stuck', el.getBoundingClientRect().top <= 65)
+      })
+    }
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [reportVisible, reportGroups.length, expandedGroups.length])
+
   if (!reportVisible) return null
 
   const actionable = reportAll.filter((i) => i.action !== 'skip')
@@ -87,35 +101,26 @@ export default function ReportPanel() {
 
   return (
     <>
-      <div id="reportPanel" style={{ background: 'transparent', border: 'none', padding: 0, boxShadow: 'none' }}>
-        <h2>Scan Report</h2>
-      <div className="summary-strip">
-        {[
-          ['Movies', summary.movies ?? 0, ''],
-          ['Series', summary.series ?? 0, ''],
-          ['Skipped', summary.skipped ?? 0, '#9aa4ab'],
-          ['Actions Needed', summary.action_required ?? 0, '#e8b34b'],
-        ].map(([label, value, color]) => (
-          <div className="summary-pill" key={label} style={color ? { color } : undefined}>
-            <strong>{value}</strong> {label}
-          </div>
-        ))}
-        <div className="search-bar" style={{ marginLeft: 8, maxWidth: 260, flex: '0 1 240px', minWidth: 180, marginBottom: 0 }}>
+      <div id="reportPanel" className="report-bar">
+        <h2 className="report-title">Scan Report</h2>
+        <span className="report-counts">
+          <b>{summary.movies ?? 0}</b> <span>Movies</span> · <b>{summary.series ?? 0}</b> <span>Series</span> ·{' '}
+          <b>{summary.skipped ?? 0}</b> <span>Skipped</span> · <b>{summary.action_required ?? 0}</b> <span>Actions Needed</span>
+        </span>
+        <div className="search-bar report-search">
           <input
             type="text"
             id="filterInput"
             value={query}
             onChange={(e) => actions.setSearchQuery(e.target.value)}
             placeholder="Search by title, path..."
-            style={{ borderRadius: 999 }}
           />
           {query && (
-            <button className="small" onClick={() => actions.setSearchQuery('')} title="Clear search" style={{ borderRadius: 999 }}>
-              Clear
+            <button className="small" onClick={() => actions.setSearchQuery('')} title="Clear search">
+              ✕
             </button>
           )}
         </div>
-      </div>
 
       {state.reportServiceErrors && Object.keys(state.reportServiceErrors).length > 0 && (() => {
         return (
@@ -219,7 +224,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, matchedIds, query
     group.items.every((i) => state.selectedIds.includes(i.confirmId))
 
   return (
-    <>
+    <div className="report-group">
       <div className={'group-header' + (expanded ? ' expanded' : ' collapsed')} onClick={() => actions.toggleGroup(gid)}>
         <span className={'arrow' + (expanded ? '' : ' collapsed')}>▾</span>
         <span className="g-title">{highlight(group.title, query)}</span>
@@ -267,15 +272,21 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, matchedIds, query
             </button>
           )}
         </div>
-        <table>
+        <table className="report-table">
+          <colgroup>
+            <col style={{ width: 34 }} />
+            <col style={{ width: 150 }} />
+            <col />
+            <col style={{ width: 76 }} />
+            <col style={{ width: 76 }} />
+          </colgroup>
           <thead>
             <tr>
-              <th style={{ width: '40px' }} />
-              <th style={{ width: '150px' }}>Action</th>
-              <th style={{ width: '110px' }}>Type</th>
-              <th colSpan={2}>Source → Target Path</th>
-              <th style={{ width: '90px', textAlign: 'right' }}>Size</th>
-              <th style={{ width: '70px', textAlign: 'right' }}></th>
+              <th />
+              <th>Action</th>
+              <th>Source → Target Path</th>
+              <th style={{ textAlign: 'right' }}>Size</th>
+              <th style={{ textAlign: 'right' }}></th>
             </tr>
           </thead>
           <tbody>
@@ -287,7 +298,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, matchedIds, query
           </tbody>
         </table>
       </div>
-    </>
+    </div>
   )
 }
 
@@ -314,11 +325,13 @@ function ReportRow({ item, query, group, isHighlighted }) {
         </td>
         <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={() => actions.selectItem(item.confirmId, !selected)}>
           <div className="action-cell" style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>
-            <span className="badge action-skip">Skipped</span>
+            <span className="action-top">
+              <span className="badge action-skip">Skipped</span>
+              <span className="action-type">{item.typeLabel || '—'}</span>
+            </span>
           </div>
         </td>
-        <td style={{ fontSize: '0.8rem' }}>{item.typeLabel || '—'}</td>
-        <td colSpan={2}>
+        <td>
           <div className="path-cell">
             <div className="source-name" title={item.sourcePath || item.sourceName || ''}>
               {highlight(item.sourcePath || item.sourceName || '', query)}
@@ -358,7 +371,10 @@ function ReportRow({ item, query, group, isHighlighted }) {
       </td>
       <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={() => actions.selectItem(item.confirmId, !selected)}>
         <div className="action-cell" style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>
-          <span className={'badge action-' + item.action}>{actionLabel}</span>
+          <span className="action-top">
+            <span className={'badge action-' + item.action}>{actionLabel}</span>
+            <span className="action-type">{item.typeLabel || item.episode || '—'}</span>
+          </span>
           {isCrossDriveItem(item) && (
             <span className="crossdrive-badge" title="Moved between hard drives — will take some time">
               Cross-drive
@@ -379,8 +395,7 @@ function ReportRow({ item, query, group, isHighlighted }) {
           </span>
         </div>
       </td>
-      {<td style={{ fontSize: '0.8rem' }}>{item.typeLabel || item.episode || '—'}</td>}
-      <td colSpan={2}>
+      <td>
         <div className="path-cell">
           <div className="source-name" title={item.sourcePath || item.sourceName || ''}>
             {highlight(item.sourcePath || item.sourceName || '', query)}

@@ -8,7 +8,7 @@ export default function ActionsPanel() {
 
   return (
     <div className={'start-scan' + (logsVisible ? ' compact' : '')}>
-      <div className="start-scan-sub">Scan your new files and organize them into your library</div>
+      <span className="start-scan-sub">No report loaded — scan new files, then review and confirm.</span>
       <button
         className={'primary btn-start' + (scanRunning ? ' scanning' : '')}
         id="btnStartScan"

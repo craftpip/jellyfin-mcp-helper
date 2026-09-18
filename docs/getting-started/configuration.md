@@ -24,19 +24,22 @@ Every variable is classified by `ENV_SPEC` (see
 [app/services/env_manager.py](../../app/services/env_manager.py) and
 [backend/config.md](../backend/config.md)) as either **live** or **restart**:
 
-- **Live** — read per request/operation from `os.environ` (Jellyfin settings,
-  incomplete-download detection, `UI_PANEL_PASSWORD`, `JELLYSORT_MCP_TOKEN`).
-  Saving them via the Settings page takes effect immediately (no restart).
+- **Live** — read per request/operation via `get_settings()` (which re-parses
+  `.env` on every `reload_settings()` call; no `os.environ` patching).
+  Covers Jellyfin settings, incomplete-download detection, `UI_PANEL_PASSWORD`,
+  `JELLYSORT_MCP_TOKEN`. Saving them via the Settings page takes effect
+  immediately (no restart).
 - **Restart** — captured in the `ScanManager` snapshot or the startup lifespan
   (media roots, thresholds, `WEB_UI_*`). They need
   `docker compose up -d --force-recreate` (the compose `env_file` applies at
   container creation) — the Settings page shows a "Recreate required" banner
   listing exactly these vars.
 
-`reload_settings()` (env_manager) re-parses `.env`, patches `os.environ` for
-changed keys, resets the `Settings` cache and clears `get_config()` — this is
-what makes `live` vars take effect without a restart. `.env` is bind-mounted
-into the container, so disk edits are visible instantly.
+`reload_settings()` re-parses `.env` via `_read_dotenv()` and resets the
+`Settings` cache (`reset_settings()`); `.env` is authoritative and is fed as
+init kwargs to `Settings` (no `os.environ` mutation). This makes `live` vars
+take effect on the next per-request read without a restart. `.env` is
+bind-mounted into the container, so disk edits are visible instantly.
 
 ## Variables
 

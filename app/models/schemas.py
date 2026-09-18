@@ -10,10 +10,29 @@ ItemKind = Literal["movie", "series", "skip", "extra"]
 ScanStatus = Literal["running", "completed", "confirmed", "failed", "cancelled"]
 
 
+class SortHint(BaseModel):
+    """Per-folder authoritative metadata from an external caller (JellyJake).
+
+    source_prefix is the torrent folder basename the hint applies to.
+    title/kind are authoritative; year/season refine resolution.
+    """
+
+    source_prefix: str = Field(alias="sourcePrefix")
+    title: str
+    kind: Literal["movie", "series"]
+    year: int | None = None
+    season: int | None = None
+    strict: bool = True
+
+    model_config = {"populate_by_name": True}
+
+
 class ScanRequest(BaseModel):
     replace_existing: bool = Field(default=True, alias="replaceExisting")
     operation: OperationMode = Field(default="organize")
     full_rescan: bool = Field(default=False, alias="fullRescan")
+    hints: list[SortHint] = Field(default_factory=list)
+    hint_scope: Literal["additive", "only"] = Field(default="additive", alias="hintScope")
 
     model_config = {"populate_by_name": True}
 
@@ -60,6 +79,7 @@ class ScanPlan(BaseModel):
     scan_id: str
     status: ScanStatus
     operation: OperationMode
+    hints: list[SortHint] = Field(default_factory=list)
     items: list[ScannedItem] = Field(default_factory=list)
     counts: ScanCounts = Field(default_factory=ScanCounts)
     created_at: datetime

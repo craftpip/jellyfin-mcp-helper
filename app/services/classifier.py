@@ -270,22 +270,26 @@ def _extract_title(parsed: dict[str, Any], candidate: CandidateItem) -> str | No
             else:
                 file_title = parsed.get("title") or parsed.get("movie") or ""
                 # Use _is_fuller_title to ensure folder is actually fuller/cleaner
-                if _is_fuller_title(path_series, file_title) or (not file_title.strip() or len(file_title.split()) <= 2):
+                if _is_fuller_title(path_series, file_title) or (not file_title.strip()):
+                    return path_series
+                if len(file_title.split()) <= 2 and file_title.strip().lower() not in path_series.lower():
                     return path_series
                 # For the specific World's End Harem case, the file title is short episode title
                 if isinstance(file_title, str) and file_title.strip().lower() in ["school's secret", "school's secret"]:
                     return path_series
                 # Also check if the file title is very short (likely episode title) and folder is longer and clean
                 if isinstance(file_title, str) and len(file_title.split()) <= 3 and len(path_series.split()) > len(file_title.split()):
-                    return path_series
+                    if file_title.strip().lower() not in path_series.lower():
+                        return path_series
         # If the folder name is clearly a show title and the file's title looks like an episode title, prefer folder
         title = parsed.get("title") or parsed.get("movie")
         if isinstance(title, str) and title.strip():
             # If the file's title is likely an episode title (short, maybe with episode-like words), prefer folder
             # This handles cases like "[Group] S01E04-Episode Title" where guessit picks episode title as show
-            # But check for numeric junk in folder
+            # But check for numeric junk in folder and avoid overriding when file title is already the show name
             if parsed.get("type") == "episode" and len(title.split()) <= 4 and not re.search(r"\b\d+_\d+\b", path_series):
-                return path_series
+                if _is_fuller_title(path_series, title) or title.strip().lower() not in path_series.lower():
+                    return path_series
     series = parsed.get("series")
     if isinstance(series, str) and series.strip():
         if (parsed.get("type") == "episode" or parsed.get("episode") is not None) and _is_fuller_title(path_series, series):
@@ -297,8 +301,10 @@ def _extract_title(parsed: dict[str, Any], candidate: CandidateItem) -> str | No
             if _is_fuller_title(path_series, title) or (path_series and not _has_alpha(title)):
                 return path_series
             # Also prefer folder if it exists and the title is short/episodic, but not if folder has numeric junk
+            # Avoid overriding when file title is the show name (prefix of folder)
             if path_series and candidate.container_path and len(title.split()) <= 3 and not re.search(r"\b\d+_\d+\b", path_series):
-                return path_series
+                if title.strip().lower() not in path_series.lower():
+                    return path_series
         return title.strip()
     if candidate.container_path:
         folder_name = Path(candidate.container_path).name
@@ -308,7 +314,7 @@ def _extract_title(parsed: dict[str, Any], candidate: CandidateItem) -> str | No
     return stem.strip() if stem else None
 
 
-_SEASON_MARKER_RE = re.compile(r"\s+(?:S\d{1,2}(?:\+?P\d{1,2})?(?:\+SP)?|\(?Season\s*\d{1,2}\)?)(?:\s|$)", re.IGNORECASE)
+_SEASON_MARKER_RE = re.compile(r"\s+(?:S\d{1,2}(?:[-–_]\s*S?\d{1,2})?(?:\+?P\d{1,2})?(?:\+SP)?|\(?Season\s*\d{1,2}(?:\s*[-–]\s*\d{1,2})?\)?)(?=\s|[-,._]|$)", re.IGNORECASE)
 _SEASON_PLUS_TEXT_RE = re.compile(r"\s+S\d{1,2}\+.*$", re.IGNORECASE)
 _TECH_TAG_RE = re.compile(
     r"\s+\[?(?:\d{3,4}p|(?:Dual\s+)?Audio|BDRip|BluRay|WEB[.-]?DL|WebRip|HDRip|x264|x265|HEVC|10\s*bit)",
@@ -409,6 +415,9 @@ def _extract_series_from_source(candidate: CandidateItem) -> str | None:
         cleaned = _TRAILING_BRACKET_RE.sub("", cleaned)
     cleaned = _TRAILING_PAREN_TECH_RE.sub("", cleaned)
     cleaned = _TRAILING_GROUP_RE.sub("", cleaned)
+    # Strip trailing collection/description like " - Complete SUPERMAN Prequel TV Series, Season 1-2 S01-S02"
+    # This handles release folders that include descriptive junk after the show name
+    cleaned = re.sub(r"\s*[-–]\s*Complete\b.*$", "", cleaned, flags=re.IGNORECASE)
     parts = _SEASON_MARKER_RE.split(cleaned, maxsplit=1)
     if len(parts) > 1:
         result = parts[0].strip().rstrip(" -._")

@@ -12,19 +12,20 @@ No jellysort skill is installed in this environment yet — do not try to load o
 
 - Test: python3 -m pytest tests/
 - Rebuild after source changes: docker compose build && docker compose restart
+- Note: on hosts without the compose plugin, `.:/app` is bind-mounted into the container, so host edits are live and `docker restart jellysort` alone picks them up (no rebuild needed). Verify with `docker exec jellysort grep -c <marker> /app/<file>` after restart.
 - Web UI: enabled via WEB_UI_ENABLED=true in .env, served on the MCP port (single port)
-- MCP API: port 18328 (external), 18327 (internal). The Web UI is mounted at `/` on the same server, so UI (``/``, `/settings`, `/apikeys`, `/api/*`) and MCP (`/mcp`) all share port 18328.
+- MCP API: port 18328 (external), 18327 (internal). The Web UI is mounted at `/` on the same server, so UI (``/``, `/settings`, `/api/*`) and MCP (`/mcp`) all share port 18328.
 - Domain is dynamic — do not hardcode `localhost` or `10.69.1.164`. Discover at runtime: `docker ps` shows `0.0.0.0:18328->18327/tcp`, `docker inspect jellysort` for IP, or `cat .env` for `JELLYFIN_BASE_URL` host. Prefer `docker exec jellysort curl http://127.0.0.1:18327/mcp` (container-internal) or `curl http://<discovered-host>:18328/mcp` for MCP; never assume a fixed host.
 
 ## Project Structure
 
 - app/core/config.py: settings and config models
 - app/core/logging.py: logging setup
-- app/core/auth.py: MCP auth dependency (require_mcp_auth, MCP_DEFAULT_TOKEN as admin key)
+- app/core/auth.py: MCP auth dependency (require_mcp_auth, JELLYSORT_MCP_TOKEN as single admin token; MCP_DEFAULT_TOKEN/ADMIN_UI_TOKEN deprecated aliases)
 - app/models/schemas.py: Pydantic models
 - app/core/constants.py: single source for VIDEO_EXTENSIONS + BROWSE_* caps
 - app/core/db.py: SQLite `config/app.db` (WAL, `get_db`/`init_db`, migration from JSON)
-- app/services/api_key_manager.py: hashed MCP API-key store (now `config/app.db` `api_keys`, `get_db`/`init_db`)
+- app/services/api_key_manager.py: hashed MCP API-key store (now `config/app.db` `api_keys`, `get_db`/`init_db`) — deprecated, single-token auth via `JELLYSORT_MCP_TOKEN` is used instead (file still present but no longer imported)
 - app/services/classifier.py: guessit-based and regex media classification (extra `kind=extra`, `extra_type`)
 - app/services/env_manager.py: ENV_SPEC manifest + .env read/write/reload (settings page backend, live vs restart)
 - app/services/history_store.py: per-group confirm history (`config/app.db` `history_groups`/`history_items`, `path_history_json`, `suspect`/`corrected`/`cross_drive`, `MAX_HISTORY=200` not applicable — confirm history kept, scan snapshots `200`)
@@ -43,7 +44,7 @@ No jellysort skill is installed in this environment yet — do not try to load o
 - app/services/path_validator.py: path validation (`_is_path_within` root check)
 - app/services/undo.py: undo (`undo_items`/`undo_from_report`, only `move` restorable)
 - app/main.py: FastAPI entry point and MCP handlers
-- app/ui/server.py: Web UI FastAPI server (serves React bundle, native `/api` routes, panel auth, `/api/admin/*` env+key endpoints); mounted at `/` on the MCP app in `main.py` so UI and MCP share one port
+- app/ui/server.py: Web UI FastAPI server (serves React bundle, native `/api` routes, panel auth, `/api/admin/*` env endpoints); mounted at `/` on the MCP app in `main.py` so UI and MCP share one port
 - app/ui/react/: React.js web UI (Vite build, source)
 - app/ui/react-dist/: built React bundle served at `/` (`/react` and `/react/assets` are backward-compat mounts that 308-redirect/re-serve)
 - app/ui/react/src/store/AppStore.jsx: Context + useReducer store
@@ -243,6 +244,18 @@ For each new pattern, document:
 
 Prefer adding the new case to the existing examples list.
 
+### Strict-hint bare absolute numbering (anime batches)
+
+**Problem:** A strict hint (`move new downloads scan` with `hints=[{sourcePrefix, title, kind: series, season: S}]`) on a folder of bare-numbered files (`[RlsGrp] Show - 13.mkv` … `- 24.mkv`, absolute numbering, no SxxEyy) resolved every file to the same target. Only the first file was actionable; the rest skipped with "Lower revision v0 skipped; keeping v0 for same episode".
+
+**Cause:** `_classification_from_hint` (`app/services/scan_orchestrator.py`) only called `_extract_season_episode`, which matches SxxEyy tags — bare numbers yielded `episode=None` for every file, and the resolver defaults `episode=None` to 1 (`episode_number = classification.episode or 1` in `app/services/resolver.py`), so all files collided on S0SE01 and the revision-dedup skipped all but the first.
+
+**Fix (`app/services/scan_orchestrator.py`):**
+- `_extract_hint_bare_number` parses the trailing standalone number of the file stem only (end-anchored, so mid-name codec decimals like Opus 2.0 / DDP2.0 and resolutions like 1080p never match; a `\d\.\d+$` tail is rejected outright; 4+-digit runs can't match `\d{1,3}$`). Called only when no SxxEyy tag exists, so tagged files behave exactly as before.
+- Absolute→relative conversion with hint season S: `episode = N - 12*(S-1)` when that yields 1..99; otherwise keep N as the episode of the hint season and flag `hint-episode-ambiguous` (suspect) instead of collapsing. Never emits two files to the same target+revision. Every strict reason still contains "hint".
+
+**Verification:** `tests/test_scan_hints_absolute_numbering.py` (placeholder-only names: season-2 absolute mapping, SxxEyy control, codec-decimal guard, ambiguous-flag case). Live check needs `fullRescan: true` — incremental scans preserve existing report items verbatim, so a re-scan without it will not re-classify already-reported files.
+
 ### Update scan path validation bug
 
 **Problem:** `update move new downloads scan` failed with `tuple expected at most 1 argument, got 7`.
@@ -303,6 +316,20 @@ Use `JellyfinClient.scan_library()` for the MCP tool `trigger jellyfin library s
 **Path update distinction:** `Library/Media/Updated` is useful after moving or replacing known media files because it can notify Jellyfin about specific updated paths. Keep this for organizer/confirm flows that already know the changed target paths.
 
 **Verification:** After changing scan behavior, run `python3 -m pytest tests/`, rebuild/restart Docker, and manually trigger a real library such as `Movies` or `Shows R` to confirm Jellyfin shows the scan.
+
+### Confirms must persist the singleton, or restarts resurrect moved items as failed
+
+**Problem:** A history group showed `status=failed` with `ENOENT` on the source, yet the file was correctly sitting at its target (verified byte-identical size). A duplicate group for the same source→target existed: first `moved`, then `failed` minutes later. Scan summary counts also reset between confirms.
+
+**Cause:** `run_confirm_task` (`app/services/move_executor.py`) re-persisted the history report but never `save_singleton`'d `current.json`. `ScanManager` init restores that singleton, so any container restart between confirms reloaded pre-confirm state (`confirmed=False`, `counts=0`). The already-moved item re-appeared as actionable, a re-confirm hit the gone source → `ENOENT` → spurious `failed` history group. Same staleness zeroed the archived scan counts on the next fullRescan, and `_is_cross_drive` re-stat of the gone source misreported cross-drive moves as same-drive.
+
+**Fix (`app/services/move_executor.py`, `run_confirm_task`):**
+- `finally` block now also `await to_thread(save_singleton, scan, ...)` after `save_report`.
+- Idempotency guard: source gone + target present with expected `file_size` → `item.confirmed=True`, count nothing, `continue` (still bumps `confirm_processed` via `finally`).
+- History is built from `acted_items` only, so already-moved skips create no duplicate group; a further re-confirm then correctly 400s ("No matching unconfirmed items").
+- History `crossDrive` prefers the scan-time `it.cross_drive` flag over re-statting (`bool(getattr(it, "cross_drive", False)) or _is_cross_drive(...)`).
+
+**Verification:** `docker exec jellysort python3 -m pytest tests/` (regressions `test_confirm_persists_singleton_with_confirmed_flags`, `test_reconfirm_already_moved_item_is_skipped_not_failed` in `tests/test_scan_errors.py`). Live: target file size matched `history_items.file_size` exactly, confirming the first move had succeeded.
 
 ### Source library must also be scanned on library-to-library re-move
 
@@ -519,17 +546,17 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 **Key code locations:**
 - `app/core/auth.py` — `require_mcp_auth` dependency + `MCPUnauthorizedError`; handler in `app/main.py:273`.
 - `app/core/config.py` — `Settings.mcp_token` property resolves `JELLYSORT_MCP_TOKEN` → `MCP_DEFAULT_TOKEN` → `ADMIN_UI_TOKEN` fallback chain.
-- `app/services/env_manager.py` — `ENV_SPEC` manifest drives the Settings page. Only `JELLYSORT_MCP_TOKEN` is in `ENV_SPEC` (the old `MCP_ALLOW_UNAUTHENTICATED`, `MCP_KEYS_FILE`, per-key API key management have been removed). `apply` classification: Jellyfin/download/MCP-UI vars are `live` (read from `os.environ` per call); model/paths/`WEB_UI_*` vars are `restart` (baked into the `ScanManager` snapshot). `update_env` validates via `Settings(**merged)`, rewrites `.env` preserving comments, and returns `{appliedLive, needsRecreate}`.
+- `app/services/env_manager.py` — `ENV_SPEC` manifest drives the Settings page. Only `JELLYSORT_MCP_TOKEN` is in `ENV_SPEC` (the old `MCP_ALLOW_UNAUTHENTICATED`, `MCP_KEYS_FILE`, per-key API key management have been removed). `apply` classification: Jellyfin/incomplete-download-detection/MCP-UI vars are `live` (read via `get_settings()` per request, which re-parses `.env`); model/paths/`WEB_UI_*` vars are `restart` (baked into the `ScanManager` snapshot). `update_env` validates via `Settings(**merged)` where `merged = {**_read_dotenv(), **updates}`, rewrites `.env` preserving comments, calls `reload_settings()`, and returns `{appliedLive, needsRecreate}`.
 - `app/ui/server.py` — `/api/admin/env` (Settings page CRUD). **Routes are under `/api/admin/*`, not `/admin/*`**, because the React apiClient prepends `/api`. All admin routes use `require_panel_auth` (the UI login), not a separate token.
 - React: `TopBar.jsx` nav (Scan & Move / Settings), `SettingsPage.jsx`, page switching in `App.jsx` via `state.page`. The standalone `ApiKeysPage.jsx` has been removed — MCP key management is now a single token in Settings.
 
-**Live config reload:** `.env` is bind-mounted into `/app`, so Settings saves take effect on disk instantly. `reload_settings()` patches `os.environ` from `.env`, resets `_settings`, and clears `get_config` — this is what makes `live` vars work without a restart. `restart` vars need `docker compose up -d --force-recreate`.
+**Live config reload:** `.env` is bind-mounted into `/app`, so Settings saves take effect on disk instantly. `reload_settings()` re-parses `.env` via `_read_dotenv()` and resets the `Settings` cache (`reset_settings()`); `.env` is fed as init kwargs to `Settings` (no `os.environ` patching). This makes `live` vars take effect on the next per-request read without a restart. `restart` vars need `docker compose up -d --force-recreate`.
 
-**Verification:** `python3 -m pytest tests/` (415 backend tests incl. `test_mcp_auth.py`, `test_env_manager.py`, admin endpoint tests in `test_ui_api.py`). Frontend: `npm test` in `app/ui/react` (112 tests).
+**Verification:** `python3 -m pytest tests/` (388 backend tests incl. `test_mcp_auth.py`, `test_env_manager.py`, admin endpoint tests in `test_ui_api.py`). Frontend: `npm test` in `app/ui/react` (112 tests).
 
 ### Test suite counts
 
-Backend `python3 -m pytest tests/` runs **415 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **112 tests**. Keep both green after changes.
+Backend `python3 -m pytest tests/` runs **388 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **112 tests**. Keep both green after changes.
 
 ### Browse + retarget (smart correction UI)
 

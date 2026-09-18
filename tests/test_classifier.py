@@ -497,3 +497,47 @@ def test_corpus_underscore_junk_seasons_resolve_to_same_title() -> None:
     assert titles, "expected at least one Nimbus candidate in corpus"
     distinct = {next(iter(s)) for s in titles.values() if s}
     assert len(distinct) == 1, f"Nimbus titles not consistent across folders: {distinct}"
+
+
+def test_complete_collection_folder_with_season_range_is_stripped() -> None:
+    # Regression for KRYPTON (2018-2019) - Complete SUPERMAN Prequel TV Series, Season 1-2 S01-S02
+    # report 8fdd42e115bf472b8bd339bbca566ab8 incorrectly mapped to Psycho-Pass (2012) because
+    # _extract_series_from_source returned the long collection string and _extract_title preferred
+    # it over the clean file title, then find_continuation matched via short numeric alias "01".
+    # Obfuscated equivalent uses EIDOLON as neutral placeholder for the show name.
+    container = "/data/downloads/EIDOLON (2018-2019) - Complete LEGEND Prequel TV Series, Season 1-2 S01-S02 - 720p AMZN Web-DL x264"
+    cases = [
+        ("EIDOLON - S01 E02 - House of EL (720p - AMZN Web-DL).mp4", "Season 1 (2018)/EIDOLON - S01 E02 - House of EL (720p - AMZN Web-DL).mp4", 1, 2, "House of EL"),
+        ("EIDOLON - S02 E01 - Light Years From Home (720p - AMZN Web-DL).mp4", "Season 2 (2019)/EIDOLON - S02 E01 - Light Years From Home (720p - AMZN Web-DL).mp4", 2, 1, "Light Years From Home"),
+        ("EIDOLON - S01 E00 - The Making of a Legend (720p - Proper HDTV).mp4", "Season 1 (2018)/EIDOLON - S01 E00 - The Making of a Legend (720p - Proper HDTV).mp4", 1, 0, "The Making of a Legend"),
+    ]
+    for name, rel, exp_season, exp_episode, exp_ep_title in cases:
+        result = classify_candidate(_candidate(name=name, container_path=container, relative_path=rel))
+        assert result.kind == "series", f"{name} should be series, got {result.kind} ({result.reason})"
+        assert result.title == "EIDOLON", f"{name} title {result.title!r} should be EIDOLON (not long collection string)"
+        assert result.season == exp_season, f"{name} season {result.season} != {exp_season}"
+        assert result.episode == exp_episode, f"{name} episode {result.episode} != {exp_episode}"
+        assert result.episode_title == exp_ep_title, f"{name} episode_title {result.episode_title!r} != {exp_ep_title!r}"
+        # Title must not contain collection/technical junk
+        assert "Complete" not in (result.title or "")
+        assert "LEGEND" not in (result.title or "")
+        assert "Season 1-2" not in (result.title or "")
+        assert "S01-S02" not in (result.title or "")
+        assert "720p" not in (result.title or "")
+
+
+def test_complete_collection_folder_krypton_real_title() -> None:
+    # Same pattern with the real reported title to lock the fix for the current report.
+    # Kept alongside the obfuscated variant above; both must stay green.
+    container = "/data/downloads/KRYPTON (2018-2019) - Complete SUPERMAN Prequel TV Series, Season 1-2 S01-S02 - 720p AMZN Web-DL x264"
+    result = classify_candidate(_candidate(
+        name="KRYPTON - S01 E02 - House of EL (720p - AMZN Web-DL).mp4",
+        container_path=container,
+        relative_path="Season 1 (2018)/KRYPTON - S01 E02 - House of EL (720p - AMZN Web-DL).mp4",
+    ))
+    assert result.kind == "series"
+    assert result.title == "KRYPTON"
+    assert result.season == 1
+    assert result.episode == 2
+    assert "Complete" not in result.title
+    assert "SUPERMAN" not in result.title

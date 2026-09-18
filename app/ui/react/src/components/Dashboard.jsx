@@ -30,21 +30,19 @@ export default function Dashboard() {
   }
 
   if (hasReport) {
-    // Show last report stats as dashboard when idle
+    // Dense one-line status bar when idle
     return (
-      <div className="panel" style={{ background: 'linear-gradient(135deg, rgba(0,164,220,0.08), rgba(62,207,142,0.06))' }}>
-        <h2 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Last scan</h2>
-        <div className="summary-strip" style={{ margin: '0' }}>
-          <div className="summary-pill"><strong>{totalMovies}</strong> Movies</div>
-          <div className="summary-pill"><strong>{totalSeries}</strong> Series</div>
-          <div className="summary-pill" style={{ color: '#9aa4ab' }}><strong>{totalSkipped}</strong> Skipped</div>
-          <div className="summary-pill" style={{ color: actionsNeeded ? '#e8b34b' : '#3ecf8e' }}>
-            <strong>{actionsNeeded}</strong> {actionsNeeded ? 'to move' : 'all tidy'}
-          </div>
+      <div className="panel dash-bar">
+        <span className="dash-title">Last scan</span>
+        <span className="dash-stats">
+          <b>{totalMovies}</b> movies · <b>{totalSeries}</b> series · <b>{totalSkipped}</b> skipped ·{' '}
+          <b className={actionsNeeded ? 'warn-t' : 'ok-t'}>{actionsNeeded}</b> {actionsNeeded ? 'to move' : 'all tidy'}
+        </span>
+        <span className="dash-actions">
           {jellyfinLibraries.length > 0 && (
-            <div className="summary-pill" style={{ marginLeft: 'auto' }}>
+            <span className="hint">
               {jellyfinLibraries.length} libraries
-            </div>
+            </span>
           )}
           {(reportSummary?.moved ?? 0) > 0 && (
             <button
@@ -59,7 +57,7 @@ export default function Dashboard() {
           <button className="small" style={{ marginLeft: '8px' }} onClick={() => actions.setPage('history')}>
             View in History
           </button>
-        </div>
+        </span>
       </div>
     )
   }
@@ -67,18 +65,14 @@ export default function Dashboard() {
   if (history && history.length) {
     const last = history[0]
     return (
-      <div className="panel" style={{ background: 'linear-gradient(135deg, rgba(0,164,220,0.08), rgba(62,207,142,0.06))' }}>
-        <h2 style={{ margin: '0 0 8px 0', fontSize: '0.95rem' }}>Last scan (from history) — still on disk after restart</h2>
-        <div className="summary-strip" style={{ margin: '0' }}>
-          <div className="summary-pill"><strong>{last.movies ?? 0}</strong> Movies</div>
-          <div className="summary-pill"><strong>{last.series ?? 0}</strong> Series</div>
-          <div className="summary-pill" style={{ color: '#9aa4ab' }}><strong>{last.skipped ?? 0}</strong> Skipped</div>
-          <div className="summary-pill" style={{ color: last.action_required ? '#e8b34b' : '#3ecf8e' }}>
-            <strong>{last.action_required ?? 0}</strong> {last.action_required ? 'to move' : 'all tidy'}
-          </div>
-          <div style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--jf-text-muted)' }}>
-            {new Date(last.saved_at).toLocaleString()}
-          </div>
+      <div className="panel dash-bar">
+        <span className="dash-title">Last scan <span className="hint">· history</span></span>
+        <span className="dash-stats">
+          <b>{last.movies ?? 0}</b> movies · <b>{last.series ?? 0}</b> series · <b>{last.skipped ?? 0}</b> skipped ·{' '}
+          <b className={last.action_required ? 'warn-t' : 'ok-t'}>{last.action_required ?? 0}</b> {last.action_required ? 'to move' : 'all tidy'}
+        </span>
+        <span className="dash-actions">
+          <span className="hint">{new Date(last.saved_at).toLocaleString()}</span>
           {(last.moved ?? 0) > 0 && (
             <button
               className="small"
@@ -92,7 +86,7 @@ export default function Dashboard() {
           <button className="small" style={{ marginLeft: '8px' }} onClick={() => actions.setPage('history')}>
             View in History
           </button>
-        </div>
+        </span>
         {history.length > 1 && (
           <div style={{ marginTop: '8px', fontSize: '0.72rem', color: 'var(--jf-text-muted)' }}>
             Recent: {history.slice(1, 4).map(h => `${h.scan_id.slice(0, 6)}… ${h.action_required} to move · ${h.skipped} skipped`).join('  ·  ')}

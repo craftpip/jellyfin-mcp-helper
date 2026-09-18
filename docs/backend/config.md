@@ -23,15 +23,17 @@ apply, description}`; per-var `apply` classification:
 
 | apply | Variables |
 | --- | --- |
-| `live` | Jellyfin (`ENABLE_JELLYFIN_INTEGRATION`, `JELLYFIN_*`), incomplete-download detection (`ENABLE_INCOMPLETE_DOWNLOAD_DETECTION`), `UI_PANEL_PASSWORD`, `JELLYSORT_MCP_TOKEN` — all read from `os.environ` per call/request. |
+| `live` | Jellyfin (`ENABLE_JELLYFIN_INTEGRATION`, `JELLYFIN_*`), incomplete-download detection (`ENABLE_INCOMPLETE_DOWNLOAD_DETECTION`), `UI_PANEL_PASSWORD`, `JELLYSORT_MCP_TOKEN` — read from `get_settings()` (which is re-parsed from `.env` on every `reload_settings()` call) per request/operation. |
 | `restart` | `DOWNLOAD_ROOTS`, `MOVIE_ROOTS`, `SERIES_ROOTS`, `SERIES_TITLE_ALIASES`, `MODEL_CLASSIFY_CONFIDENCE_THRESHOLD`, `MODEL_PATH_CONFIDENCE_THRESHOLD`, `WEB_UI_ENABLED`, `WEB_UI_PORT` — baked into the `ScanManager` snapshot or the startup lifespan. |
 
-`reload_settings()` re-parses `.env`, patches `os.environ`, resets the
-`Settings` cache and clears `get_config()` — this makes `live` vars take effect
-without a restart. `update_env()` validates via `Settings(**merged)`, rewrites
-`.env` preserving comments (atomic `write` + `os.replace`), and returns
-`{appliedLive, needsRecreate}`. The admin API surface is documented in
-[auth.md](auth.md).
+`reload_settings()` re-parses `.env` via `_read_dotenv()` and resets the
+`Settings` cache (`reset_settings()`); `.env` is authoritative and is fed as
+init kwargs to `Settings` (no `os.environ` patching). This makes `live` vars
+take effect on the next per-request read without a restart. `update_env()`
+validates via `Settings(**merged)` where `merged = {**_read_dotenv(),
+**updates}`, rewrites `.env` preserving comments (atomic `write` +
+`os.replace`), calls `reload_settings()`, and returns `{appliedLive,
+needsRecreate}`. The admin API surface is documented in [auth.md](auth.md).
 
 ## MCP auth
 

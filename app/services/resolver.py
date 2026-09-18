@@ -565,7 +565,17 @@ class PathResolver:
                 if ep_title_norm and cheap_gate:
                     for alias in series_aliases(path):
                         alias_norm = normalize_series_text(alias)
-                        if alias_norm and (alias_norm == ep_title_norm or ep_title_norm in alias_norm or alias_norm in ep_title_norm):
+                        if not alias_norm:
+                            continue
+                        # Guard against short numeric aliases like "01" matching substrings in years or S01
+                        if alias_norm.isdigit() and len(alias_norm) <= 2:
+                            if alias_norm == ep_title_norm:
+                                alias_match = True
+                                break
+                            continue
+                        if len(alias_norm) < 3:
+                            continue
+                        if alias_norm == ep_title_norm or ep_title_norm in alias_norm or alias_norm in ep_title_norm:
                             alias_match = True
                             break
             except OSError as exc:

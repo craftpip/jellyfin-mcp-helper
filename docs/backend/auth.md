@@ -32,19 +32,24 @@ The `api_key_manager.py` file still exists but is no longer imported.
 
 The Settings page backend. `ENV_SPEC` is the manifest of every setting
 `{key, section, type, secret, apply, description}` mirroring `.env.example`
-sections; secret keys (`*API_KEY*`, `QBT_WEBUI_PASS`, `JELLYSORT_MCP_TOKEN`) are
+sections; secret keys (`*API_KEY*`, `JELLYSORT_MCP_TOKEN`) are
 masked. `apply` is `"live"` or `"restart"` (see
 [getting-started/configuration](../getting-started/configuration.md)).
 
 - `list_env()` → `{saved, effective, spec}` with secrets masked and
   `saved != effective` flagged (pending restart).
-- `reload_settings()` — re-parses `.env`, patches `os.environ`, resets the
-  cached `Settings`, clears `get_config()`; makes `live` vars take effect
-  without a restart.
-- `update_env(changes)` — validates by constructing `Settings(**os.environ,
-  **changes)` (rejects bad values with a readable message), rewrites `.env`
-  line-wise **preserving comments** (atomic `write` + `os.replace`), reloads
-  changed `live` vars, and returns `{appliedLive: [...], needsRecreate: [...]}`.
+- `reload_settings()` — re-parses `.env` via `_read_dotenv()` and resets the
+  cached `Settings` (so `get_settings()` re-reads the file on next call);
+  `.env` is the authoritative source fed as init kwargs to `Settings`, no
+  `os.environ` patching is involved. `live` vars therefore take effect on the
+  next per-request read without a restart.
+- `update_env(changes, old_passwords)` — validates by constructing
+  `Settings(**merged)` where `merged = {**_read_dotenv(), **updates}` (rejects
+  bad values with a readable message), rewrites `.env` line-wise **preserving
+  comments** (atomic `write` + `os.replace`), calls `reload_settings()`, and
+  returns `{appliedLive: [...], needsRecreate: [...]}` (blank secret fields
+  mean "keep unchanged"; changing `UI_PANEL_PASSWORD` requires the old
+  password).
 
 ## Admin API (`app/ui/server.py`, all behind `require_panel_auth`)
 
