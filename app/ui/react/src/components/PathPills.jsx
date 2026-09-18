@@ -32,10 +32,14 @@ function StatusPill({ icon, label, exists, tip }) {
 }
 
 export default function PathPills({ item }) {
-  if (item.itemType === 'series') {
-    const show = item.pathExists.includes('Show ✓')
-    const season = item.pathExists.includes('Season ✓')
-    const file = item.pathExists.includes('File ✓')
+  // Shared by ReportPanel and HistoryPage. Accept camelCase (report) and
+  // snake_case (history) shapes; missing pathExists means "nothing exists yet".
+  const kind = item.itemType ?? item.item_type ?? ''
+  const existsStr = item.pathExists ?? item.path_exists ?? ''
+  if (kind === 'series') {
+    const show = existsStr.includes('Show ✓')
+    const season = existsStr.includes('Season ✓')
+    const file = existsStr.includes('File ✓')
     return (
       <>
         <StatusPill
@@ -71,9 +75,9 @@ export default function PathPills({ item }) {
       </>
     )
   }
-  const folder = item.pathExists.includes('Folder ✓')
-  const file = item.pathExists.includes('File ✓')
-  const folderName = item.itemType === 'series' ? 'Show folder' : 'Movie folder'
+  const folder = existsStr.includes('Folder ✓')
+  const file = existsStr.includes('File ✓')
+  const folderName = kind === 'series' ? 'Show folder' : 'Movie folder'
   return (
     <>
       <StatusPill

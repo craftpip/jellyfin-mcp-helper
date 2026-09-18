@@ -24,6 +24,12 @@ function pickEpisode(item) {
   return m ? m[0].toUpperCase() : ''
 }
 
+// Single source of truth for the "New"/"Existing" action badge. Accepts both
+// report shapes (camelCase) and history shapes (snake_case).
+export function actionLabelFor(item) {
+  return (item.action || 'move') === 'replace' ? 'Existing' : 'New'
+}
+
 // Single source of truth for the "Type" column. Accepts both report shapes
 // (camelCase from /scans/current/report) and history shapes (snake_case).
 export function typeLabelFor(item) {
@@ -269,10 +275,15 @@ export function defaultSelection(items) {
 // drive roots only; otherwise trust the original backend flag (real device check).
 // Uses originalCrossDrive (preserved from scan) instead of mutated crossDrive to
 // avoid stale true after a revert (media3→media2→media3).
+// Shared by ReportPanel and HistoryPage — accepts camelCase (report) and
+// snake_case (history) shapes so both UIs judge cross-drive identically.
 export function isCrossDriveItem(item) {
-  const live = item._liveTarget || item.targetPath || ''
-  const changed = !!(item._liveTarget && item._liveTarget !== item.originalTarget)
-  if (changed) return isCrossDrive(item.sourcePath, live)
-  const orig = item.originalCrossDrive ?? item.crossDrive
-  return !!(orig || isCrossDrive(item.sourcePath, live))
+  const source = item.sourcePath ?? item.source_path ?? ''
+  const target = item.targetPath ?? item.target_path ?? ''
+  const original = item.originalTarget ?? item.target_path ?? item.targetPath ?? ''
+  const live = item._liveTarget || target
+  const changed = !!(item._liveTarget && item._liveTarget !== original)
+  if (changed) return isCrossDrive(source, live)
+  const orig = item.originalCrossDrive ?? item.crossDrive ?? item.cross_drive
+  return !!(orig || isCrossDrive(source, live))
 }

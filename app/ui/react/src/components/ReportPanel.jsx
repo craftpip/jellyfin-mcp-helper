@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useAppStore } from '../store/AppStore.jsx'
 import { formatBytes } from '../utils/format.js'
-import { matchesFilter, isCrossDriveItem } from '../utils/report.js'
+import { matchesFilter, isCrossDriveItem, actionLabelFor } from '../utils/report.js'
 import PathPills from './PathPills.jsx'
 
 function highlight(text, query) {
@@ -356,7 +356,7 @@ function ReportRow({ item, query, group, isHighlighted }) {
     )
   }
 
-  const actionLabel = item.action === 'replace' ? 'Existing' : 'New'
+  const actionLabel = actionLabelFor(item)
   return (
     <tr data-title={item.title.toLowerCase()} data-action={item.action} data-fileexists={item.fileExists ? 'true' : 'false'} className={isHighlighted ? "row-highlight" : undefined} style={isHighlighted ? { background: 'rgba(201,138,148,0.09)', outline: '1px solid rgba(201,138,148,0.22)', outlineOffset: '-1px' } : undefined}>
       <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={(e) => { if (e.target.tagName.toLowerCase() === 'input') return; actions.selectItem(item.confirmId, !selected) }}>
@@ -422,26 +422,14 @@ function ReportRow({ item, query, group, isHighlighted }) {
                 title={isLinked ? 'Link enabled — edits sync within group (click to unlink)' : 'Link disabled — editing freely (click to link)'}
                 aria-label={isLinked ? 'Unlink this file' : 'Link this file'}
                 aria-pressed={isLinked}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  padding: 0,
-                  width: 28,
-                  height: 29,
-                  minWidth: 28,
-                  lineHeight: 1,
-                  borderColor: isLinked ? 'var(--jf-accent, #00a4dc)' : undefined,
-                  background: isLinked ? 'rgba(0,164,220,0.15)' : undefined,
-                }}
               >
                 {isLinked ? (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
                   </svg>
                 ) : (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
                     <line x1="2" y1="2" x2="22" y2="22" />

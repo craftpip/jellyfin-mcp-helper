@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
@@ -52,6 +52,7 @@ SSE_MAX_SECONDS = 900
 HERE = Path(__file__).resolve().parent
 REACT_INDEX_HTML = HERE / "react-dist" / "index.html"
 REACT_ASSETS_DIR = HERE / "react-dist" / "assets"
+REACT_FAVICON = HERE / "react-dist" / "favicon.png"
 # Static marketing/docs site, also published to GitHub Pages from website/.
 # Served on the same port at /website (repo root website/, i.e. /app/website in container).
 WEBSITE_DIR = HERE.parent.parent / "website"
@@ -174,8 +175,30 @@ def _browse_search_root(root_path: Path, query_norm: str, query_tokens: set[str]
 
 def _browse_entries(dir_path: Path, root: Path) -> dict:
     entries = []
-    for child in sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+    files = []
+    try:
+        children = sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+    except OSError:
+        children = []
+    for child in children:
         if not child.is_dir():
+            name = child.name
+            if name.startswith("."):
+                continue
+            if len(files) >= BROWSE_VIDEO_COUNT_CAP:
+                continue
+            try:
+                if not child.is_file():
+                    continue
+                size = child.stat().st_size
+            except OSError:
+                continue
+            files.append({
+                "name": name,
+                "path": str(child),
+                "isDir": False,
+                "size": size,
+            })
             continue
         name = child.name
         if name.startswith(".") or name.lower() in BROWSE_IGNORED_DIR_NAMES:
@@ -222,11 +245,13 @@ def _browse_entries(dir_path: Path, root: Path) -> dict:
         return (0 if season is not None else 1, season if season is not None else 0, entry["name"].lower())
 
     entries.sort(key=sort_key)
+    files.sort(key=lambda f: f["name"].lower())
     return {
         "path": str(dir_path),
         "parent": str(dir_path.parent) if dir_path != root and _browse_is_within(dir_path.parent, root) else None,
         "root": str(root),
         "entries": entries,
+        "files": files,
     }
 
 
@@ -397,6 +422,13 @@ def create_ui_app(
     @ui_app.get("/react/")
     async def react_index():
         return RedirectResponse(url="/", status_code=308)
+
+    @ui_app.get("/favicon.png")
+    @ui_app.get("/favicon.ico")
+    async def favicon():
+        if not REACT_FAVICON.exists():
+            raise HTTPException(status_code=404, detail="favicon not found")
+        return FileResponse(str(REACT_FAVICON), media_type="image/png")
 
     # ── auth (public) ──────────────────────────────────────────────
     @ui_app.get("/api/status")

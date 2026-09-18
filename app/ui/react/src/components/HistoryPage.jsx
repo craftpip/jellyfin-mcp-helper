@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { apiGet, apiPost } from '../api/apiClient.js'
 import { useAppStore } from '../store/AppStore.jsx'
-import { formatBytes, isCrossDrive } from '../utils/format.js'
-import { computePathSync, compareReportItemsAsc, typeLabelFor } from '../utils/report.js'
+import { formatBytes } from '../utils/format.js'
+import { computePathSync, compareReportItemsAsc, typeLabelFor, actionLabelFor, isCrossDriveItem } from '../utils/report.js'
 import PathPills from './PathPills.jsx'
 import { FolderPicker } from './BrowseModal.jsx'
 
@@ -200,15 +200,21 @@ export default function HistoryPage() {
               return (
               <div style={{ marginTop: '12px' }}>
                 <div style={{ overflowX: 'auto' }}>
-                  <table className="admin-table" style={{ width: '100%', tableLayout: 'fixed' }}>
+                  <table className="report-table" style={{ width: '100%', tableLayout: 'fixed' }}>
+                    <colgroup>
+                      <col style={{ width: 150 }} />
+                      <col />
+                      <col style={{ width: 76 }} />
+                      <col style={{ width: 140 }} />
+                      <col style={{ width: 110 }} />
+                    </colgroup>
                     <thead>
                       <tr>
-                        <th style={{ width: '150px' }}>Action</th>
-                        <th style={{ width: '110px' }}>Type</th>
+                        <th>Action</th>
                         <th style={{ minWidth: 0 }} colSpan={1}>Source → Target Path</th>
-                        <th style={{ width: '90px', textAlign: 'right' }}>Size</th>
-                        <th style={{ width: '140px', textAlign: 'left' }}>Trail</th>
-                        <th style={{ width: '110px' }}>Status</th>
+                        <th style={{ textAlign: 'right' }}>Size</th>
+                        <th style={{ textAlign: 'left' }}>Trail</th>
+                        <th>Status</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -222,11 +228,18 @@ export default function HistoryPage() {
                         const showLink = group.items.length > 1
                         const linked = isLinked(group.history_id, item.confirm_id)
                         const isEdited = edited !== currentTarget
-                        const liveCross = isEdited ? isCrossDrive(item.source_path, edited) : !!(item.cross_drive || isCrossDrive(item.source_path, edited))
+                        // Same cross-drive verdict as the report UI: live target
+                        // wins when edited, backend flag otherwise.
+                        const liveCross = isCrossDriveItem({ ...item, _liveTarget: isEdited ? edited : undefined })
+                        const historyActionLabel = actionLabelFor(item)
                         return (
                           <tr key={item.confirm_id}>
                             <td>
                               <div className="action-cell">
+                                <span className="action-top">
+                                  <span className={'badge action-' + (item.action || 'move')}>{historyActionLabel}</span>
+                                  <span className="action-type">{typeLabelFor(item)}</span>
+                                </span>
                                 {liveCross ? (
                                   <span className="crossdrive-badge" title="Moved between hard drives">
                                     Cross-drive
@@ -243,11 +256,10 @@ export default function HistoryPage() {
                                   </span>
                                 ) : null}
                                 <span className="path-status">
-                                  <PathPills item={{ itemType: item.item_type, pathExists: item.pathExists }} />
+                                  <PathPills item={item} />
                                 </span>
                               </div>
                             </td>
-                            <td style={{ fontSize: '0.8rem', textAlign: 'left' }}>{typeLabelFor(item)}</td>
                             <td>
                               <div className="path-cell">
                                 <div className="source-name" title={item.source_path}>
@@ -269,26 +281,14 @@ export default function HistoryPage() {
                                       title={linked ? 'Link enabled — edits sync within group (click to unlink)' : 'Link disabled — editing freely (click to link)'}
                                       aria-label={linked ? 'Unlink this file' : 'Link this file'}
                                       aria-pressed={linked}
-                                      style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        padding: 0,
-                                        width: 28,
-                                        height: 29,
-                                        minWidth: 28,
-                                        lineHeight: 1,
-                                        borderColor: linked ? 'var(--jf-accent, #00a4dc)' : undefined,
-                                        background: linked ? 'rgba(0,164,220,0.15)' : undefined,
-                                      }}
                                     >
                                       {linked ? (
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block' }}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                           <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                                           <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
                                         </svg>
                                       ) : (
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block' }}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                                           <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                                           <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
                                           <line x1="2" y1="2" x2="22" y2="22" />

@@ -40,6 +40,7 @@ export function FolderPicker({ title, suspectNote, correctionNote, showReclassif
   const [cwd, setCwd] = useState('')
   const [root, setRoot] = useState('')
   const [entries, setEntries] = useState([])
+  const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
@@ -57,6 +58,7 @@ export function FolderPicker({ title, suspectNote, correctionNote, showReclassif
       .then((res) => {
         const list = res.roots || []
         setRoots(list)
+        setFiles([])
         setEntries(
           list.map((r) => ({
             name: r.path,
@@ -79,6 +81,7 @@ export function FolderPicker({ title, suspectNote, correctionNote, showReclassif
       setCwd(res.path)
       setRoot(res.root || '')
       setEntries(res.entries || [])
+      setFiles(res.files || [])
     } catch (e) {
       setError(e.message)
     } finally {
@@ -93,6 +96,7 @@ export function FolderPicker({ title, suspectNote, correctionNote, showReclassif
     }
     setCwd('')
     setRoot('')
+    setFiles([])
     setEntries(
       roots.map((r) => ({
         name: r.path,
@@ -240,7 +244,18 @@ export function FolderPicker({ title, suspectNote, correctionNote, showReclassif
                 <span className="browse-row-sub">{e.path}</span>
               </button>
             ))}
-          {!loading && entries.length === 0 && <div className="hint">No folders here.</div>}
+          {!loading &&
+            files.map((f) => (
+              <div
+                key={f.path}
+                className="browse-row browse-file"
+                aria-disabled="true"
+                title={f.path}
+              >
+                <span className="browse-row-main browse-file-name">{f.name}</span>
+              </div>
+            ))}
+          {!loading && entries.length === 0 && files.length === 0 && <div className="hint">No folders here.</div>}
         </div>
         )}
 
