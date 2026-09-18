@@ -550,6 +550,16 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                     continue
 
             target_exists = target_path.exists()
+            if not target_exists and classification.kind == "movie":
+                # Same movie, different container (library .mp4 vs source .mkv):
+                # target keeps the source ext (.mkv), old file deleted on confirm.
+                from app.services.resolver import find_existing_movie_file
+
+                _sibling = find_existing_movie_file(
+                    target_path.parent, target_path.parent.name
+                )
+                if _sibling is not None and _sibling != target_path:
+                    target_exists = True
             action = "replace" if target_exists else "move"
             planned_action = action if request.replace_existing or not target_exists else "skip"
             cross_drive = is_cross_drive(candidate.source_path, resolved.target_path)

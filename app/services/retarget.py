@@ -96,6 +96,8 @@ def apply_retarget(item: ScannedItem, directory: Path, reclassify_as_movie: bool
     # --- compute target path by effective type ---
     if eff_type == "movie":
         base_name = directory.name or "Movie"
+        # Keep the source container (.mkv stays .mkv); an existing .mp4 with
+        # the same stem counts as replace and is deleted on confirm.
         target_path = directory / f"{base_name}{ext}"
     else:
         season_number = source_tag[0] if source_tag else 1
@@ -140,14 +142,21 @@ def apply_retarget(item: ScannedItem, directory: Path, reclassify_as_movie: bool
 
 def refresh_item_after_target_change(item: ScannedItem, target_path: Path) -> None:
     """Recompute exists/action/flags after any target change."""
-    item.action = "replace" if target_path.exists() else "move"
+    _exists = target_path.exists()
+    if not _exists and item.item_type == "movie":
+        from app.services.resolver import find_existing_movie_file
+
+        _sibling = find_existing_movie_file(target_path.parent, target_path.parent.name)
+        if _sibling is not None and _sibling != target_path:
+            _exists = True
+    item.action = "replace" if _exists else "move"
     parent = target_path.parent
     item.season_folder_exists = parent.exists()
     if item.item_type == "series":
         item.show_folder_exists = parent.parent.exists() if parent.parent else False
     else:
         item.show_folder_exists = parent.exists()
-    item.file_exists = target_path.exists()
+    item.file_exists = _exists
 
 
 def _refresh_item_flags(item: ScannedItem, target_path: Path) -> None:

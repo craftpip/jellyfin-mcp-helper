@@ -162,6 +162,38 @@ def clear_resolver_cache() -> None:
     series_video_count.cache_clear()
 
 
+def find_existing_movie_file(target_dir: Path, folder_name: str) -> Path | None:
+    """Find an existing movie file with a different container in the folder.
+
+    e.g. folder has "Title (2022).mp4", new target is "Title (2022).mkv".
+    Matches by normalized stem; falls back to the single video in the folder.
+    Caller must check the exact target first — this returns the sibling that
+    a replace should delete.
+    """
+    try:
+        if not target_dir.exists() or not target_dir.is_dir():
+            return None
+        videos = sorted(
+            (
+                f
+                for f in target_dir.iterdir()
+                if not f.name.startswith(".") and f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS
+            ),
+            key=lambda p: p.name.lower(),
+        )
+    except OSError:
+        return None
+    if not videos:
+        return None
+    wanted_norm = normalize_text(Path(folder_name).stem)
+    same_stem = next((f for f in videos if normalize_text(f.stem) == wanted_norm), None)
+    if same_stem is not None:
+        return same_stem
+    if len(videos) == 1:
+        return videos[0]
+    return None
+
+
 class PathResolver:
     def __init__(self, config: AppConfig) -> None:
         self._config = config
@@ -313,11 +345,18 @@ class PathResolver:
         ext = Path(candidate.source_path).suffix or ".mkv"
         base_dir = Path(best_match) if best_match else Path(movie_root) / folder_name
         target_dir = base_dir if base_dir.is_dir() or not base_dir.suffix else base_dir.parent
+        # Keep the source container: target is folder + source ext (.mkv stays .mkv).
+        # An existing .mp4 with the same stem marks the item as replace (see
+        # find_existing_movie_file); the old file is deleted on confirm.
         target_path = str(target_dir / f"{folder_name}{ext}")
         if best_match:
             logger.info("  [resolver] matched existing movie folder: %s", best_match)
         else:
             logger.info("  [resolver] new movie folder: %s", folder_name)
+        if not Path(target_path).exists():
+            _sibling = find_existing_movie_file(target_dir, folder_name)
+            if _sibling is not None and _sibling != Path(target_path):
+                logger.info("  [resolver] existing movie file will be replaced: %s", _sibling)
         candidates = self._build_movie_candidates(
             title=classification.title or candidate.name,
             year=classification.year,

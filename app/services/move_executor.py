@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
+from app.core.constants import VIDEO_EXTENSIONS
+
 logger = logging.getLogger(__name__)
 
 # Keep _is_hidden logic local to avoid circular imports
@@ -175,6 +177,28 @@ async def apply_item(scan, item, update_state, copy_fn=None) -> None:
             target_path,
         )
         raise
+
+    # Movie container swap: target kept the source ext (.mkv), so an old
+    # sibling (.mp4, same stem) survives the os.replace above — delete it so
+    # replace really replaces instead of leaving two files behind.
+    if getattr(item, "action", None) == "replace" and getattr(item, "item_type", None) == "movie":
+        try:
+            from app.services.resolver import normalize_text as _norm
+
+            _wanted = _norm(target_path.stem)
+            if target_path.parent.exists():
+                for _candidate in sorted(target_path.parent.iterdir(), key=lambda p: p.name.lower()):
+                    if (
+                        _candidate.is_file()
+                        and _candidate != target_path
+                        and not _candidate.name.startswith(".")
+                        and _candidate.suffix.lower() in VIDEO_EXTENSIONS
+                        and _norm(_candidate.stem) == _wanted
+                    ):
+                        _candidate.unlink()
+                        logger.info("MOVE CLEANUP deleted replaced sibling: %s", _candidate)
+        except OSError:
+            pass
 
     elapsed = time.perf_counter() - started_at
     logger.info(
