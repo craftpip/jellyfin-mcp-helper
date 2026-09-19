@@ -462,6 +462,6 @@ describe('App integration', () => {
     await userEvent.click(screen.getByText('Log in'))
 
     expect(await screen.findByText('Start Scan')).toBeInTheDocument()
-    expect(await screen.findByText('Log out')).toBeInTheDocument()
+    expect(await screen.findByText('Logout')).toBeInTheDocument()
   })
 })

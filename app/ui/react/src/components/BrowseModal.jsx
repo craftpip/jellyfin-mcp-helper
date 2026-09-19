@@ -51,6 +51,20 @@ export function FolderPicker({ title, suspectNote, correctionNote, showReclassif
   const [reclassifyAsMovie, setReclassifyAsMovie] = useState(false)
   const didInit = useRef(false)
 
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onCloseRef.current()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   useEffect(() => {
     if (didInit.current) return
     didInit.current = true

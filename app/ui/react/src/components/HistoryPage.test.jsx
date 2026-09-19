@@ -75,7 +75,6 @@ let posted = []
 
 beforeEach(() => {
   posted = []
-  vi.spyOn(window, 'confirm').mockReturnValue(true)
   vi.stubGlobal(
     'fetch',
     vi.fn((url, opts) => {
@@ -134,6 +133,10 @@ async function expandFirstCard() {
   await screen.findByText('Source → Target Path')
 }
 
+async function confirmDialogOk() {
+  await userEvent.click(document.querySelector('#confirmDialogConfirm'))
+}
+
 describe('HistoryPage', () => {
   it('renders one card per Confirm with count and expand/collapse', async () => {
     await expandFirstCard()
@@ -171,6 +174,7 @@ describe('HistoryPage', () => {
     await expandFirstCard()
     expect(screen.getByText('Delete')).toBeInTheDocument()
     await userEvent.click(screen.getByText('Delete'))
+    await confirmDialogOk()
     await waitFor(() => expect(posted.some((p) => p.kind === 'delete-source' && p.body.confirmId === 'c1')).toBe(true))
   })
 
@@ -190,6 +194,7 @@ describe('HistoryPage', () => {
   it('Undo calls the undo endpoint', async () => {
     await expandFirstCard()
     await userEvent.click(screen.getByText('Undo'))
+    await confirmDialogOk()
     await waitFor(() => expect(posted.some((p) => p.kind === 'undo')).toBe(true))
   })
 

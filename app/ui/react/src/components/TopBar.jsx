@@ -67,7 +67,7 @@ export default function TopBar() {
                 disabled={state.confirmActive}
                 onClick={() => setScanMenuOpen((v) => !v)}
                 title="More scan options"
-                style={{ padding: '0 10px', borderLeft: '1px solid rgba(255,255,255,0.2)' }}
+                style={{ padding: '0 10px' }}
                 aria-label="More scan options"
               >
                 ▾
@@ -131,7 +131,7 @@ export default function TopBar() {
           </button>
           {state.authRequired && state.authed && (
             <button type="button" className="small logout-btn" onClick={actions.logout} title="Log out of this panel">
-              Log out
+              Logout
             </button>
           )}
         </div>

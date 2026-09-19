@@ -17,7 +17,7 @@
       <a class="brand" href="./"><img class="brand-img" src="./logo.png" alt="JellySort logo" />JellySort</a>
       <button class="nav-toggle" aria-label="Menu" aria-expanded="false">☰</button>
       <nav class="nav-links">
-        <a href="#report">Report</a>
+        <a href="#demo">Demo</a>
         <a href="#how">How it works</a>
         <a href="#features">Features</a>
         <a href="#api">API</a>
@@ -30,20 +30,13 @@
     <!-- HERO -->
     <section class="hero">
       <div class="wrap hero-center">
-          <img class="hero-logo" src="./logo.png" alt="JellySort logo" />
-          <p class="badge">Self-hosted · MCP server + Web UI · v0.0.4</p>
-          <h1>Every file in its place.</h1>
-          <p class="lede">JellySort sorts your new media files into your Jellyfin library. You review the plan first — nothing moves until you say so.</p>
-          <div class="cta">
-            <a class="btn primary" href="#quickstart">Get started</a>
-            <a class="btn" href="#how">See how it works</a>
-          </div>
-      </div>
-      <div class="wrap hero-easy">
-        <div class="easy">
-          <div class="easy-row"><span class="easy-n">1</span><div><strong>Drop in your new media files</strong><span>Point JellySort at the folder once. No setup per show.</span></div></div>
-          <div class="easy-row"><span class="easy-n">2</span><div><strong>Glance at the plan</strong><span>Every file listed with its new home. Fix anything in one click.</span></div></div>
-          <div class="easy-row"><span class="easy-n">3</span><div><strong>Done</strong><span>Files move, Jellyfin picks them up. Undo anytime.</span></div></div>
+        <img class="hero-logo" src="./logo.png" alt="JellySort logo" />
+        <p class="badge">Self-hosted · MCP server + Web UI · v0.0.4</p>
+        <h1>Every file in its place.</h1>
+        <p class="lede">JellySort plans where your new movies and episodes belong — then moves them when you say go.</p>
+        <div class="cta">
+          <a class="btn primary" href="#quickstart">Get started</a>
+          <a class="btn" href="#demo">Watch it sort</a>
         </div>
       </div>
       <div class="wrap stats-strip">
@@ -54,25 +47,52 @@
       </div>
     </section>
 
-    <!-- REPORT PREVIEW -->
-    <section id="report" class="wrap section">
-      <p class="kicker">The report</p>
-      <h2>What a plan looks like</h2>
-      <p class="sub">Grouped by source folder, exactly like the Web UI shows it. Badges do the talking — switch tabs to compare.</p>
-      <div class="tab-bar small" role="tablist">
-        <button class="mini-tab active" data-report="series" role="tab">Series</button>
-        <button class="mini-tab" data-report="movies" role="tab">Movies</button>
-      </div>
-      <div class="report-mock" id="report-series">
-        <div class="report-head"><span>Example Show (2021) — Season 02</span><span class="dim">3 items</span></div>
-        <div class="report-row"><span class="src">Example.S02E04.1080p.WEB.mkv</span><span class="arrow">→</span><span class="dst">Example Show/Season 02/Example Show - S02E04.mkv</span><span class="pill move">move</span></div>
-        <div class="report-row"><span class="src">Example.S02E05.v2.1080p.WEB.mkv</span><span class="arrow">→</span><span class="dst">Example Show/Season 02/Example Show - S02E05.mkv</span><span class="pill replace">replace</span></div>
-        <div class="report-row"><span class="src">Example.S02E00.Behind.the.Scenes.mkv</span><span class="arrow">→</span><span class="dst">—</span><span class="pill skip">skip</span> <span class="pill suspect">suspect</span></div>
-      </div>
-      <div class="report-mock" id="report-movies" hidden>
-        <div class="report-head"><span>Example Movie (2024) · Example Classic (1995)</span><span class="dim">2 items</span></div>
-        <div class="report-row"><span class="src">Example.Movie.2024.2160p.WEB.mkv</span><span class="arrow">→</span><span class="dst">Movies 4K/Example Movie (2024)/Example Movie (2024).mkv</span><span class="pill move">move</span></div>
-        <div class="report-row"><span class="src">Example.Classic.1995.REMUX.1080p.mkv</span><span class="arrow">→</span><span class="dst">Movies/Example Classic (1995)/Example Classic (1995).mkv</span><span class="pill replace">replace</span> <span class="pill corrected">corrected</span></div>
+    <!-- DEMO -->
+    <section id="demo" class="wrap section">
+      <p class="kicker">Live demo</p>
+      <h2>A scan plan, playing out</h2>
+      <p class="sub">Real classifier output, animated. Every new file is planned to its library home — nothing moves until you confirm. Click the Downloads tray to feed in another batch.</p>
+      <div class="sorter" id="sorter">
+        <div class="sorter-bar">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="sorter-title">jellysort · scan report</span>
+        </div>
+        <div class="sorter-body">
+          <div class="tray" id="tray" tabindex="0" role="button" aria-label="Downloads tray — click to refill" title="Click to refill the tray">
+            <div class="tray-head"><span class="folder-icon"></span>Downloads</div>
+            <ul class="tray-files" id="trayFiles"></ul>
+          </div>
+          <div class="folders">
+            <div class="folder" data-kind="series">
+              <span class="folder-icon"></span>
+              <div class="folder-meta">
+                <b>Series</b>
+                <span class="folder-target">Example Show — Season 02</span>
+                <u class="count">0</u>
+                <span class="picks"></span>
+              </div>
+            </div>
+            <div class="folder" data-kind="movie">
+              <span class="folder-icon"></span>
+              <div class="folder-meta">
+                <b>Movies</b>
+                <span class="folder-target">Movies — An Example Movie (2024)</span>
+                <u class="count">0</u>
+                <span class="picks"></span>
+              </div>
+            </div>
+            <div class="folder" data-kind="skip">
+              <span class="folder-icon"></span>
+              <div class="folder-meta">
+                <b>Skip</b>
+                <span class="folder-target">in-progress · extras · samples</span>
+                <u class="count">0</u>
+                <span class="picks"></span>
+              </div>
+            </div>
+          </div>
+          <p class="status" id="sorterStatus"></p>
+        </div>
       </div>
     </section>
 
@@ -80,41 +100,31 @@
     <section id="how" class="wrap section">
       <p class="kicker">How it works</p>
       <h2>Scan it. Check it. Move it.</h2>
-      <p class="sub">The whole workflow is built around one rule: the plan is always visible before anything is written to disk.</p>
       <div class="steps">
         <article class="step">
           <span class="step-n">1</span>
-          <h3>Scan your new media files</h3>
-          <p>Runs in the background and reads only. Every video file is classified as <em>movie</em>, <em>series episode</em>, or <em>skip</em> (samples, extras, trailers, files still arriving), and a destination path is resolved for each keeper.</p>
+          <h3>Scan</h3>
+          <p>We list every new file and guess its library home.</p>
           <code>move new downloads scan</code>
         </article>
         <article class="step">
           <span class="step-n">2</span>
-          <h3>Review the report</h3>
-          <p>A grouped report shows source → target for every file, with move / replace / skip actions. Anything the matcher is unsure about is flagged <em>suspect</em> so you look twice. Anything already fixed is marked <em>corrected</em>.</p>
+          <h3>Review</h3>
+          <p>See source → target for everything. Suspects are flagged.</p>
           <code>get move new downloads scan report</code>
         </article>
         <article class="step">
           <span class="step-n">3</span>
-          <h3>Fix what’s wrong</h3>
-          <p>Wrong folder? Hit <strong>Browse…</strong>, search every library at once, pick the right show folder — the server rebuilds the season folder and episode filename for you, even across a series → movie → series round-trip.</p>
+          <h3>Fix</h3>
+          <p>Pick a better folder — the filenames rebuild themselves.</p>
           <code>update move new downloads scan</code>
         </article>
         <article class="step">
           <span class="step-n">4</span>
-          <h3>Confirm the move</h3>
-          <p>Moves run in the background with live progress (phase, speed, file %). Cross-drive copies go through a <code>.partial</code> file so interrupted moves never leave half files. Jellyfin rescans the touched libraries when done.</p>
+          <h3>Confirm</h3>
+          <p>Files move in the background. Jellyfin rescans when done.</p>
           <code>confirm move new downloads scan</code>
         </article>
-      </div>
-      <div class="pipe" aria-label="Media pipeline">
-        <div class="pipe-node"><strong>Your new media files</strong><span>watch folders</span></div>
-        <div class="pipe-node"><strong>Scanner</strong><span>finds videos · skips in-progress</span></div>
-        <div class="pipe-node"><strong>Classifier</strong><span>movie · episode · skip</span></div>
-        <div class="pipe-node"><strong>Resolver</strong><span>library target + SxxEyy</span></div>
-        <div class="pipe-node hot"><strong>You review</strong><span>report · browse · retarget</span></div>
-        <div class="pipe-node"><strong>Confirm</strong><span>queued moves · live progress</span></div>
-        <div class="pipe-node"><strong>Jellyfin</strong><span>rescans touched libraries</span></div>
       </div>
     </section>
 
@@ -124,15 +134,12 @@
       <h2>Built for real libraries</h2>
       <p class="sub">The details that matter when you have thousands of files and zero patience for misplaced episodes.</p>
       <div class="grid">
-        <div class="card"><h3>Review-first moves</h3><p>Every run produces a plan with per-file actions. Confirm the whole plan or just a few items — by ID, exact path, or folder prefix.</p></div>
-        <div class="card"><h3>Suspect &amp; corrected flags</h3><p>Low-confidence matches are badged <em>suspect</em>; every retarget or auto-correction is badged <em>corrected</em> with a note explaining what changed.</p></div>
-        <div class="card"><h3>Browse &amp; retarget</h3><p>One combined “All libraries” browser with instant search. Pick a folder and the server recomputes season dirs, episode tags, and movie names.</p></div>
-        <div class="card"><h3>Queued confirms</h3><p>Hit confirm while a move is running and your batch waits in line instead of being rejected — then starts automatically.</p></div>
-        <div class="card"><h3>History with undo</h3><p>Every confirm is stored as a group with full source → target rows. Move a file again to a better home, or undo a group to put files back.</p></div>
-        <div class="card"><h3>Live move progress</h3><p>Watch phase, bytes copied, speed, and per-batch totals. Multi-batch confirms report per-batch counts, never cumulative mush.</p></div>
-        <div class="card"><h3>Jellyfin integration</h3><p>Lists libraries, triggers whole-library or per-item scans, and notifies Jellyfin about exactly the paths that changed.</p></div>
-        <div class="card"><h3>Release tracker</h3><p>Stores “next episode expected on …” markers for ongoing shows, so you can ask what’s due before re-checking the library.</p></div>
-        <div class="card"><h3>Skips in-progress files</h3><p>Files still being written are detected by on-disk markers (<code>.part</code>, <code>.!qB</code>, …) and skipped — no extra integration needed.</p></div>
+        <div class="card"><h3>Review-first moves</h3><p>Nothing writes to disk until you confirm.</p></div>
+        <div class="card"><h3>Suspect &amp; corrected</h3><p>Low confidence? Flagged. Fixed? Noted with a reason.</p></div>
+        <div class="card"><h3>Browse &amp; retarget</h3><p>Search every library at once, pick a folder, done.</p></div>
+        <div class="card"><h3>Queued confirms</h3><p>Click confirm mid-move — your batch lines up and runs.</p></div>
+        <div class="card"><h3>History + undo</h3><p>Every move stored. Bounce back whenever.</p></div>
+        <div class="card"><h3>Live progress</h3><p>Phase, speed, file %, per-batch totals.</p></div>
       </div>
     </section>
 
@@ -172,7 +179,7 @@ curl -X POST localhost:18328/mcp \
                  "arguments":{"replaceExisting":true}}}'</code></pre>
         </div>
       </div>
-      <p class="sub">The Web UI uses the same native <code>/api/*</code> routes — no MCP round-trip. Set <code>UI_PANEL_PASSWORD</code> to put the panel behind login, <code>JELLYSORT_MCP_TOKEN</code> to gate <code>/mcp</code>.</p>
+      <p class="sub">Set <code>UI_PANEL_PASSWORD</code> to put the panel behind login, <code>JELLYSORT_MCP_TOKEN</code> to gate <code>/mcp</code>.</p>
     </section>
 
     <!-- QUICKSTART + CONFIG -->
@@ -194,7 +201,6 @@ curl localhost:18328/health</code></pre>
             <tr><td><code>MOVIE_ROOTS</code> / <code>SERIES_ROOTS</code></td><td>Libraries, each with an optional <code>::description</code></td></tr>
             <tr><td><code>WEB_UI_ENABLED</code></td><td>Serves the panel at <code>/</code> on the same port</td></tr>
             <tr><td><code>UI_PANEL_PASSWORD</code></td><td>Login for the panel (empty = open)</td></tr>
-            <tr><td><code>JELLYSORT_MCP_TOKEN</code></td><td>Bearer token for <code>/mcp</code> (empty = open)</td></tr>
             <tr><td><code>ENABLE_JELLYFIN_INTEGRATION</code></td><td>Auto-rescan libraries after moves</td></tr>
           </table>
         </div>
@@ -205,18 +211,17 @@ curl localhost:18328/health</code></pre>
     <section id="faq" class="wrap section">
       <p class="kicker">FAQ</p>
       <h2>Fair questions</h2>
-      <details open><summary>Will it move my files without asking?</summary><p>No. Scanning only ever builds a plan. Files move when you confirm — the whole plan or just the items you pick.</p></details>
-      <details><summary>What if a file lands in the wrong show folder?</summary><p>Retarget it from the report with Browse… — the server fixes the season folder and filename. Corrections are badged so you can see what changed.</p></details>
-      <details><summary>My libraries are on different drives. Problem?</summary><p>No — cross-drive copies stream through a <code>.partial</code> file with live progress, so an interrupted move never leaves a half file behind.</p></details>
-      <details><summary>Does it touch files that haven't finished arriving?</summary><p>No. In-progress files are detected by their on-disk markers and skipped automatically.</p></details>
-      <details><summary>Is this page the app?</summary><p>No — this is the static overview. The actual app (scan → review → confirm panel) runs at <code>/</code> on your own host, and this same page is served at <code>/website</code> on the service port.</p></details>
+      <details open><summary>Will it move my files without asking?</summary><p>No. Scanning only builds a plan. Files move when you confirm them.</p></details>
+      <details><summary>What if a file lands in the wrong show folder?</summary><p>Retarget it from the report — the server fixes the season folder and filename.</p></details>
+      <details><summary>My libraries are on different drives. Problem?</summary><p>No. Cross-drive copies stream through a <code>.partial</code> file so an interrupt never leaves half a file behind.</p></details>
+      <details><summary>Does it touch files still arriving?</summary><p>No. In-progress files are spotted by their on-disk markers and skipped.</p></details>
     </section>
   </main>
 
   <footer>
     <div class="wrap foot">
       <span><strong>JellySort</strong> · media sorting for Jellyfin.</span>
-      <span class="dim">Static page — also live at <code>/website</code> · UI at <code>/</code> · API at <code>/mcp</code></span>
+      <span class="dim">Static overview — the app itself runs at <code>/</code> on your host.</span>
     </div>
   </footer>
 

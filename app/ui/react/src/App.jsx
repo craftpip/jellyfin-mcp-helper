@@ -31,6 +31,19 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey)
   }, [paletteOpen])
 
+  if (state.connStatus === 'connecting') {
+    return (
+      <div className="app-splash" role="status" aria-label="Connecting to JellySort">
+        <div className="app-splash-inner">
+          <div className="app-splash-title">JellySort</div>
+          <div className="app-splash-dots" aria-hidden="true">
+            <span /><span /><span />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (state.authRequired && !state.authed) {
     return (
       <>

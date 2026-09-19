@@ -5,6 +5,7 @@ import { formatBytes } from '../utils/format.js'
 import { computePathSync, compareReportItemsAsc, typeLabelFor, actionLabelFor, isCrossDriveItem } from '../utils/report.js'
 import PathPills from './PathPills.jsx'
 import { FolderPicker } from './BrowseModal.jsx'
+import { confirmDialog } from './ConfirmDialog.jsx'
 
 export default function HistoryPage() {
   const { actions } = useAppStore()
@@ -38,7 +39,12 @@ export default function HistoryPage() {
   }
 
   async function handleUndo(group) {
-    if (!window.confirm(`Undo ${group.group_title}? This will move ${group.items.length} file(s) back to their source locations.`)) return
+    const ok = await confirmDialog({
+      title: `Undo ${group.group_title}?`,
+      message: `This will move ${group.items.length} file(s) back to their source locations.`,
+      confirmLabel: 'Undo',
+    })
+    if (!ok) return
     setBusy(group.history_id)
     try {
       const res = await apiPost(`/history/${group.history_id}/undo`)
@@ -113,7 +119,14 @@ export default function HistoryPage() {
   }
 
   async function handleDeleteSource(group, item) {
-    if (!window.confirm(`Delete leftover source file?\n${item.source_path}`)) return
+    const ok = await confirmDialog({
+      title: 'Delete leftover source file?',
+      message: 'This cannot be undone.',
+      detail: item.source_path,
+      confirmLabel: 'Delete',
+      danger: true,
+    })
+    if (!ok) return
     setBusy(group.history_id)
     try {
       const res = await apiPost(`/history/${group.history_id}/delete-source`, { confirmId: item.confirm_id })

@@ -4,6 +4,7 @@ import { computePathSync, defaultSelection, groupItems, isCrossDriveItem, mapRep
 import { isCrossDrive } from '../utils/format.js'
 import { buildTransferQueue, deriveTransferQueue, TRANSFER_DONE_REMOVE_MS } from '../utils/transfer.js'
 import { usePoll } from '../hooks/usePoll.js'
+import { confirmDialog } from '../components/ConfirmDialog.jsx'
 import { reportInitialState, reportReducer, toggleInList } from './slices/reportSlice.js'
 import { scanInitialState, scanReducer } from './slices/scanSlice.js'
 import { adminInitialState, adminReducer } from './slices/adminSlice.js'
@@ -417,7 +418,12 @@ export function AppStoreProvider({ children }) {
   async function startScan(opts = {}) {
     const fullRescan = !!opts.fullRescan
     if (fullRescan) {
-      const ok = window.confirm('Rescan all will overwrite the current report and discard any edits (retargets). New files will still be found with a normal Scan. Continue with full rescan?')
+      const ok = await confirmDialog({
+        title: 'Full rescan',
+        message:
+          'Rescan all will overwrite the current report and discard any edits (retargets). New files will still be found with a normal Scan. Continue with full rescan?',
+        confirmLabel: 'Full Rescan',
+      })
       if (!ok) return
     }
     if (stateRef.current.scanRunning || stateRef.current.confirmActive) return
@@ -868,11 +874,13 @@ export function AppStoreProvider({ children }) {
       return
     }
     const source = item.sourcePath || item.sourceName || ''
-    const ok = window.confirm(
-      'Delete the source file permanently?\n\n' +
-        source +
-        '\n\nThe file will be removed and skipped from the move plan. This cannot be undone.'
-    )
+    const ok = await confirmDialog({
+      title: 'Delete source file?',
+      message: 'The file will be removed and skipped from the move plan. This cannot be undone.',
+      detail: source,
+      confirmLabel: 'Delete',
+      danger: true,
+    })
     if (!ok) return
     try {
       await apiDelete('/scans/current/items', {
@@ -900,7 +908,12 @@ export function AppStoreProvider({ children }) {
       toast('Wait for the current move to finish first', 'info')
       return
     }
-    const ok = window.confirm('Delete ' + ids.length + ' source file(s) permanently? This cannot be undone.')
+    const ok = await confirmDialog({
+      title: 'Delete source files?',
+      message: `Delete ${ids.length} source file(s) permanently? This cannot be undone.`,
+      confirmLabel: 'Delete',
+      danger: true,
+    })
     if (!ok) return
     try {
       await apiDelete('/scans/current/items', {
