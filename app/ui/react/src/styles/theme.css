@@ -775,6 +775,25 @@ button.small.link-toggle svg { display: block; }
   #reportItems td { border: none; padding: 5px 10px; }
 }
 
+/* ── ≤720px: report rows → 2-line cards (action line + path line) ── */
+@media (max-width: 720px) {
+  #reportItems tbody tr {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    gap: 4px 8px;
+    align-items: center;
+  }
+  #reportItems td { width: auto; overflow: visible; }
+  #reportItems td:nth-child(1) { grid-column: 1; grid-row: 1; align-self: center; }
+  #reportItems td:nth-child(2) { grid-column: 2; grid-row: 1; min-width: 0; }
+  #reportItems td:nth-child(3) { grid-column: 1 / -1; grid-row: 2; }
+  #reportItems td:nth-child(4) { grid-column: 3; grid-row: 1; text-align: right; }
+  #reportItems td:nth-child(5) { grid-column: 4; grid-row: 1; text-align: right; }
+  #reportItems .action-cell { flex-direction: row; align-items: center; gap: 6px; flex-wrap: wrap; }
+  #reportItems .action-cell .action-top { flex: none; }
+  #reportItems .action-cell .action-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
 /* ── 641–900px: tablets — tables don't widen, inputs give way ── */
 @media (min-width: 641px) and (max-width: 900px) {
   .env-input { flex: 0 1 260px; }
@@ -820,6 +839,8 @@ button.small.link-toggle svg { display: block; }
   .report-counts { white-space: normal; }
   .report-toolbar { flex-direction: column; align-items: stretch; }
   .filter-chips { flex-wrap: wrap; }
+  .filter-chips button { min-height: 36px; }
+  .report-actions button { min-height: 36px; }
   .group-header { position: static; min-height: 44px; }
   .group-header .g-title { overflow-wrap: anywhere; }
   .group-toolbar { position: static; height: auto; min-height: 36px; flex-wrap: wrap; padding: 5px 8px 5px 10px; }
@@ -839,6 +860,8 @@ button.small.link-toggle svg { display: block; }
   #reportItems td:nth-child(4) { grid-column: 1; grid-row: 3; text-align: left; }
   #reportItems td:nth-child(5) { grid-column: 3; grid-row: 3; text-align: right; }
   #reportItems .path-cell .target-input { min-height: 38px; }
+  #reportItems .browse-btn { min-height: 36px; }
+  #reportItems td .danger.small { min-height: 36px; }
   button.small.link-toggle { width: 36px; height: 36px; min-width: 36px; }
 
   /* history rows → cards */
@@ -855,6 +878,7 @@ button.small.link-toggle svg { display: block; }
   .history-page .report-table td:nth-child(4) { grid-column: 2; grid-row: 3; }
   .history-page .report-table td:nth-child(5) { grid-column: 3; grid-row: 3; text-align: right; }
   .history-page .history-header { flex-wrap: wrap; }
+  .history-page .history-header strong { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
   .trail-paths th:first-child, .trail-paths td:first-child { display: none; }
 
   /* settings */

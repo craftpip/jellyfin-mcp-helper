@@ -183,7 +183,7 @@ export default function HistoryPage() {
   }
 
   return (
-    <div className="admin-page" style={{ maxWidth: 'none' }}>
+    <div className="admin-page history-page" style={{ maxWidth: 'none' }}>
       <div className="admin-header">
         <h2>History</h2>
         <div className="hint">Every confirmed group is saved here. You can review, undo, or rename folders and move again. Full movement trail is kept for every file.</div>
@@ -196,6 +196,7 @@ export default function HistoryPage() {
         return (
           <div key={group.history_id} className="panel" style={{ padding: '12px' }}>
             <div
+              className="history-header"
               style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}
               onClick={() => toggleGroup(group.history_id)}
             >
@@ -428,7 +429,7 @@ export default function HistoryPage() {
               <div style={{ fontSize: '0.75rem', color: 'var(--jf-text-muted)', marginBottom: '12px', wordBreak: 'break-all' }}>{trailPopup.title}</div>
             )}
             <div style={{ overflowX: 'auto', border: '1px solid var(--jf-border, #2E3229)', borderRadius: '8px' }}>
-              <table className="admin-table" style={{ width: '100%', margin: 0 }}>
+              <table className="admin-table trail-paths" style={{ width: '100%', margin: 0 }}>
                 <thead>
                   <tr>
                     <th style={{ width: '44px', textAlign: 'left', fontSize: '0.7rem', color: 'var(--jf-text-muted)', fontWeight: 500, padding: '8px 10px', borderBottom: '1px solid var(--jf-border, #2E3229)' }}>#</th>

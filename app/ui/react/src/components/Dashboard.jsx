@@ -99,7 +99,7 @@ export default function Dashboard() {
   // Fresh install / no report yet
   if (jellyfinLibraries.length === 0) return null
   return (
-    <div className="panel" style={{ background: 'var(--jf-bg-raised)', borderStyle: 'dashed' }}>
+    <div className="panel dash-libs" style={{ background: 'var(--jf-bg-raised)', borderStyle: 'dashed' }}>
       <h2 style={{ margin: '0 0 6px 0', fontSize: '0.95rem' }}>Your libraries</h2>
       <div style={{ color: 'var(--jf-text-muted)', fontSize: '0.85rem' }}>
         {jellyfinLibraries.map(l => l.name).join(' · ')} — ready to scan.
