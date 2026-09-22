@@ -30,7 +30,9 @@ function readTransferSnapshot() {
     const raw = localStorage.getItem(TRANSFER_SNAPSHOT_KEY)
     if (!raw) return null
     const snap = JSON.parse(raw)
-    if (!snap || !Array.isArray(snap.queue) || !snap.queue.length) return null
+    if (!snap || !Array.isArray(snap.queue)) return null
+    // A summary-only snapshot (rows faded) still restores the header/strip.
+    if (!snap.queue.length && !snap.summary) return null
     return snap
   } catch {
     return null
@@ -327,7 +329,9 @@ export function AppStoreProvider({ children }) {
       } catch {}
       return
     }
-    const queue = buildTransferQueueFromGroups(result.queue_groups)
+    const queue = result.queue_groups && result.queue_groups.length
+      ? buildTransferQueueFromGroups(result.queue_groups)
+      : stateRef.current.transferQueue
     confirmStateRef.current = { completed: 0, failed: 0 }
     const derived = deriveTransferQueue(queue, result, confirmStateRef.current)
     confirmStateRef.current = derived.state

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App.jsx'
 import { AppStoreProvider } from './store/AppStore.jsx'
@@ -409,6 +409,48 @@ describe('App integration', () => {
     expect(screen.getByText('3/10')).toBeInTheDocument()
     expect(screen.getByText('/media1/downloads/Show.mkv')).toBeInTheDocument()
     expect(screen.queryByText('Start Scan')).not.toBeInTheDocument()
+  })
+
+  it('keeps a minimized panel collapsed across a reload', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, opts) => {
+        const method = (opts?.method || 'GET').toUpperCase()
+        const path = String(url)
+        let payload = {}
+        if (method === 'GET' && path === '/api/status') {
+          payload = { auth: { required: false } }
+        } else if (method === 'GET' && path === '/api/libraries') {
+          payload = { libraries: [] }
+        } else if (method === 'GET' && path === '/api/scans/current/report') {
+          payload = REPORT
+        } else if (method === 'POST' && path === '/api/scans/current/confirm') {
+          payload = { scan_id: 'scan1', status: 'running', processed: 0, total: 1, queue_length: 0 }
+        } else if (method === 'GET' && path === '/api/scans/current/confirm-progress') {
+          payload = { scan_id: 'scan1', status: 'running', processed: 0, total: 1, queue_length: 0, counts: {} }
+        }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+      })
+    )
+    const first = renderApp()
+    await screen.findAllByText('Movie (2024)')
+
+    await userEvent.click(screen.getAllByText('Confirm')[0])
+    await userEvent.click(await screen.findByText('Start Move'))
+    expect(await screen.findByText('Moving 0 of 1', {}, { timeout: 3000 })).toBeInTheDocument()
+
+    // Collapse the panel and verify the collapsed state hits localStorage.
+    fireEvent.click(screen.getByLabelText('Minimize transfer panel'))
+    expect(await screen.findByLabelText('Expand transfer panel')).toBeInTheDocument()
+    const snap = JSON.parse(localStorage.getItem('jsort_transfer_snapshot'))
+    expect(snap.minimized).toBe(true)
+    expect(snap.queue.length).toBeGreaterThan(0)
+
+    // Reload: fresh provider, same localStorage — the strip must come back.
+    first.unmount()
+    renderApp()
+    expect(await screen.findByLabelText('Expand transfer panel', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.queryByLabelText('Minimize transfer panel')).not.toBeInTheDocument()
   })
 
   it('restores a minimized transfer panel from localStorage after reload', async () => {
