@@ -792,6 +792,18 @@ button.small.link-toggle svg { display: block; }
   #reportItems .action-cell { flex-direction: row; align-items: center; gap: 6px; flex-wrap: wrap; }
   #reportItems .action-cell .action-top { flex: none; }
   #reportItems .action-cell .action-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #reportItems .path-cell .source-name {
+    overflow-x: auto;
+    overflow-y: hidden;
+    text-overflow: clip;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148,163,184,0.25) transparent;
+    padding-bottom: 2px;
+  }
+  #reportItems .path-cell .source-name::-webkit-scrollbar { height: 4px; }
+  #reportItems .path-cell .source-name::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.25); border-radius: 4px; }
 }
 
 /* ── 641–900px: tablets — tables don't widen, inputs give way ── */
@@ -880,6 +892,18 @@ button.small.link-toggle svg { display: block; }
   .history-page .history-header { flex-wrap: wrap; }
   .history-page .history-header strong { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
   .trail-paths th:first-child, .trail-paths td:first-child { display: none; }
+  .history-page .path-cell .source-name {
+    overflow-x: auto;
+    overflow-y: hidden;
+    text-overflow: clip;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148,163,184,0.25) transparent;
+    padding-bottom: 2px;
+  }
+  .history-page .path-cell .source-name::-webkit-scrollbar { height: 4px; }
+  .history-page .path-cell .source-name::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.25); border-radius: 4px; }
 
   /* settings */
   .env-row { flex-direction: column; align-items: stretch; gap: 8px; }
