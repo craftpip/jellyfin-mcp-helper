@@ -541,3 +541,34 @@ def test_complete_collection_folder_krypton_real_title() -> None:
     assert result.episode == 2
     assert "Complete" not in result.title
     assert "SUPERMAN" not in result.title
+
+
+def test_year_in_parens_is_not_a_season() -> None:
+    # "Bright Sky. The Animation - 01 (2021)" — guessit reads "(2021)" as
+    # season 2021. The year must be filtered first so it never becomes
+    # Season 2021 / S2021E01 (resolver defaults season None to 1).
+    container = "/data/downloads/Bright Sky. The Animation (2021) [1080p-HEVC-WEBRip]"
+    for ep in (1, 2):
+        result = classify_candidate(_candidate(
+            name=f"Bright Sky. The Animation - {ep:02d} (2021) [1080p-HEVC-WEBRip][1CD227C7].mkv",
+            container_path=container,
+            relative_path=f"Bright Sky. The Animation (2021) [1080p-HEVC-WEBRip]/Bright Sky. The Animation - {ep:02d} (2021) [1080p-HEVC-WEBRip][1CD227C7].mkv",
+        ))
+        assert result.kind == "series", f"ep {ep} should be series, got {result.kind} ({result.reason})"
+        assert result.year == 2021
+        assert result.episode == ep, f"ep {ep} got episode {result.episode}"
+        assert result.season is None or result.season == 1, f"ep {ep} season must not be 2021, got {result.season}"
+        assert "2021" not in (result.title or "").replace("(2021)", "")
+
+
+def test_year_like_season_and_episode_are_dropped() -> None:
+    # Direct sanitizer checks: year-first filtering plus sane caps, so no
+    # year-like or resolution-like number survives as season/episode.
+    from app.classification.episodes import _sanitize_episode, _sanitize_season
+
+    assert _sanitize_season(2021, 2021) is None
+    assert _sanitize_season(2021, None) is None
+    assert _sanitize_season(1080, None) is None
+    assert _sanitize_season(2, 2021) == 2
+    assert _sanitize_episode(2021, 2021) is None
+    assert _sanitize_episode(1, 2021) == 1

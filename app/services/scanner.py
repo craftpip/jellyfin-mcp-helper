@@ -12,16 +12,54 @@ SKIP_DIR_MARKERS = {".trickplay"}
 
 # Incomplete-file markers (suffixes) that download clients append to a file
 # while a download is still in progress, removed once the file completes.
-# All are matched case-insensitively.
+# All are matched case-insensitively. Most clients RENAME the file itself
+# (file.mkv -> file.mkv.!qB), so the renamed file must be reported as an
+# in-progress candidate — not silently skipped (see _renamed_marker_suffix).
 #   qBittorrent   -> .!qB   (file.mkv -> file.mkv.!qB)
+#   uTorrent      -> .!ut / .utpart
+#   BitTorrent    -> .!bt   (Windows mainline client)
+#   BitComet      -> .bc! / .bc
+#   BitSpirit     -> .bt!
+#   Vuze/Azureus  -> .az! (+ .part)
 #   Transmission  -> .part
 #   rTorrent      -> .part  (split_suffix, default .part), plus .partial for split parts
 #   Vuze/Azureus  -> .part
-#   uTorrent      -> .!ut
-#   BitTorrent    -> .!bt   (Windows mainline client)
 #   Deluge        -> no main-filename marker (keeps libtorrent .parts files
 #                    only), so it cannot be detected via a sibling suffix.
-PARTIAL_FILE_MARKERS = (".!qb", ".!ut", ".!bt", ".part", ".partial", ".parts")
+#   Xunlei/Thunder-> .td / .xltd
+#   aria2         -> .aria2 control sidecar (sibling marker only, never a candidate)
+#   Browsers/managers -> .crdownload (Chrome), .download (Safari),
+#                    .opdownload (Opera), .tmp/.temp (generic temp)
+#   Generic       -> .incomplete, .downloading
+PARTIAL_FILE_MARKERS = (
+    ".!qb",
+    ".!ut",
+    ".!bt",
+    ".utpart",
+    ".part",
+    ".partial",
+    ".parts",
+    ".bc!",
+    ".bc",
+    ".bt!",
+    ".az!",
+    ".td",
+    ".xltd",
+    ".aria2",
+    ".incomplete",
+    ".downloading",
+    ".crdownload",
+    ".download",
+    ".opdownload",
+    ".tmp",
+    ".temp",
+)
+
+# Sidecar control files that are never video data and must stay invisible,
+# even though stripping them would yield a video-looking stem
+# (Show.mkv.aria2 -> Show.mkv). The real (preallocated) video file next to
+# them is flagged in-progress via the sibling check instead.
+HIDDEN_SIDECAR_SUFFIXES = (".aria2",)
 
 # Incomplete-file name prefixes (Tixati appends "incomplete." before the real
 # filename while the file is still downloading: file.mkv -> incomplete.file.mkv).
@@ -162,23 +200,72 @@ def _is_in_progress_by_marker(path: Path) -> bool:
     return False
 
 
-def _is_partial_marker_file(path: Path) -> bool:
-    """True when this candidate's own name is a partial-file marker,
-    so it should never be treated as a real candidate.
+def _renamed_marker_suffix(name_lower: str) -> str | None:
+    """Marker suffix when the file itself was renamed in-progress.
 
-    Suffix markers (`.!qB`, `.part`, ...) already end in non-video extensions
-    and are filtered by the extension check, but Tixati's prefix markers
-    (`incomplete.Show.S01E01.mkv`) still look like a normal video file, so we
-    must skip them explicitly.
+    Most clients rename (file.mkv -> file.mkv.!qB) instead of writing a
+    sibling sidecar, so the renamed file is the only trace on disk. It ends
+    in a non-video extension and would otherwise be silently skipped by the
+    extension filter — invisible in the report. When stripping the marker
+    leaves a video extension, the file is incomplete video data and must be
+    reported as an in-progress candidate. Longer markers match first so
+    `.parts` wins over `.part`-style prefixes. Sidecar control files
+    (HIDDEN_SIDECAR_SUFFIXES, e.g. aria2's `.aria2`) are excluded — they are
+    never video data and stay hidden.
     """
-    name_lower = path.name.lower()
-    for marker in PARTIAL_FILE_MARKERS:
-        if name_lower.endswith(marker):
-            return True
+    for marker in sorted(PARTIAL_FILE_MARKERS, key=len, reverse=True):
+        if marker in HIDDEN_SIDECAR_SUFFIXES:
+            continue
+        if name_lower.endswith(marker) and Path(name_lower[: -len(marker)]).suffix in VIDEO_EXTENSIONS:
+            return marker
+    return None
+
+
+def _renamed_prefix(name_lower: str) -> str | None:
+    """Prefix marker when the file itself was renamed in-progress
+    (Tixati: file.mkv -> incomplete.file.mkv)."""
     for prefix in PARTIAL_FILE_PREFIXES:
-        if name_lower.startswith(prefix):
-            return True
-    return False
+        if name_lower.startswith(prefix) and Path(name_lower[len(prefix):]).suffix in VIDEO_EXTENSIONS:
+            return prefix
+    return None
+
+
+def _is_hidden_sidecar(path: Path) -> bool:
+    """True for control sidecars that must never become candidates
+    (e.g. Show.mkv.aria2 — the preallocated Show.mkv next to it carries
+    the in-progress flag via the sibling check instead)."""
+    return path.name.lower().endswith(HIDDEN_SIDECAR_SUFFIXES)
+
+
+def _candidate_in_progress(path: Path) -> bool:
+    """True when the file itself is a renamed in-progress download
+    (suffix or prefix marker with a video stem left after stripping)."""
+    name_lower = path.name.lower()
+    return _renamed_marker_suffix(name_lower) is not None or _renamed_prefix(name_lower) is not None
+
+
+def _append_candidate(
+    result: ScanCandidatesResult,
+    file_path: Path,
+    root_key: str,
+    root_path: Path,
+    container: Path | None,
+    relative: str,
+    in_progress: bool,
+) -> None:
+    result.candidates.append(
+        CandidateItem(
+            source_root_key=root_key,
+            source_root=str(root_path),
+            source_path=str(file_path),
+            name=file_path.name,
+            extension=file_path.suffix,
+            container_path=str(container) if container is not None else None,
+            relative_path=relative,
+            file_size=file_path.stat().st_size,
+            in_progress=in_progress,
+        )
+    )
 
 
 def scan_candidates(paths_config: PathsConfig) -> ScanCandidatesResult:
@@ -206,9 +293,16 @@ def scan_candidates(paths_config: PathsConfig) -> ScanCandidatesResult:
                 continue
             try:
                 if child.is_file():
-                    if child.suffix.lower() not in VIDEO_EXTENSIONS:
+                    if _is_hidden_sidecar(child):
                         continue
-                    if _is_partial_marker_file(child):
+                    if _candidate_in_progress(child):
+                        # Renamed in-progress file (Show.mkv.!qB,
+                        # incomplete.Show.mkv, Show.mkv.part, ...): the only
+                        # trace on disk. Report it so the scan shows an
+                        # "In-progress download" skip instead of hiding it.
+                        _append_candidate(result, child, root_key, root_path, None, child.name, True)
+                        continue
+                    if child.suffix.lower() not in VIDEO_EXTENSIONS:
                         continue
                     result.candidates.append(
                         CandidateItem(
@@ -232,9 +326,20 @@ def scan_candidates(paths_config: PathsConfig) -> ScanCandidatesResult:
                     if _should_skip_path(file_path):
                         continue
                     try:
-                        if file_path.suffix.lower() not in VIDEO_EXTENSIONS:
+                        if _is_hidden_sidecar(file_path):
                             continue
-                        if _is_partial_marker_file(file_path):
+                        if _candidate_in_progress(file_path):
+                            _append_candidate(
+                                result,
+                                file_path,
+                                root_key,
+                                root_path,
+                                child,
+                                str(file_path.relative_to(child)),
+                                True,
+                            )
+                            continue
+                        if file_path.suffix.lower() not in VIDEO_EXTENSIONS:
                             continue
                         result.candidates.append(
                             CandidateItem(

@@ -23,6 +23,8 @@ from app.classification.episodes import (
     _extract_contained_bare_episode_title,
     _extract_season_episode,
     _extract_season_from_folder,
+    _sanitize_episode,
+    _sanitize_season,
 )
 from app.classification.kinds import (
     _extra_type,
@@ -68,6 +70,8 @@ __all__ = [
     "_extract_contained_bare_episode_title",
     "_extract_season_episode",
     "_extract_season_from_folder",
+    "_sanitize_episode",
+    "_sanitize_season",
     "_extra_type",
     "_infer_kind",
     "_looks_like_extra",

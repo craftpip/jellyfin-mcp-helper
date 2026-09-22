@@ -138,17 +138,53 @@ def test_create_scan_skips_incomplete_download_by_marker(tmp_path, monkeypatch) 
 
     scan = asyncio.run(run_scan())
 
+    # Both the complete file (flagged via its sibling marker) and the
+    # renamed marker file itself are reported as in-progress skips.
+    assert scan.counts.skipped == 2
+    assert scan.counts.total == 0
+    assert len(scan.items) == 2
+    by_path = {item.source_path: item for item in scan.items}
+    assert by_path[str(real_file)].reason == "In-progress download"
+    assert by_path[str(partial_file)].reason == "In-progress download"
+
+
+def test_create_scan_reports_renamed_only_incomplete_file(tmp_path, monkeypatch) -> None:
+    # The real qBittorrent shape: only Show.S01E01.mkv.!qB exists (the client
+    # renamed the file itself). It must still appear in the report as an
+    # in-progress skip instead of being silently invisible.
+    root = tmp_path / "downloads"
+    root.mkdir()
+    partial_file = root / "Show.S01E01.mkv.!qB"
+    partial_file.write_bytes(b"partial")
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)]),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+
+    async def run_scan():
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        return scan
+
+    scan = asyncio.run(run_scan())
+
     assert scan.counts.skipped == 1
     assert scan.counts.total == 0
-    assert scan.items[0].source_path == str(real_file)
+    assert scan.items[0].source_path == str(partial_file)
     assert scan.items[0].reason == "In-progress download"
 
 
 def test_create_scan_skips_none_incomplete_when_toggle_off(tmp_path, monkeypatch) -> None:
     root = tmp_path / "downloads"
     root.mkdir()
-    partial_file = root / "Show.S01E01.mkv.!qB"
-    partial_file.write_bytes(b"partial")
+    # aria2 sidecar stays hidden as a candidate, so toggle-off sees exactly
+    # the one real file scanned normally (a .!qB renamed file would itself be
+    # a second candidate, which would muddy this toggle-only assertion).
+    (root / "Show.S01E01.mkv.aria2").write_bytes(b"control")
     real_file = root / "Show.S01E01.mkv"
     real_file.write_bytes(b"video")
     config = AppConfig(

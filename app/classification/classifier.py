@@ -12,6 +12,8 @@ from app.classification.episodes import (
     _extract_contained_bare_episode,
     _extract_season_episode,
     _extract_season_from_folder,
+    _sanitize_episode,
+    _sanitize_season,
 )
 from app.classification.kinds import (
     _extra_type,
@@ -57,9 +59,14 @@ def classify_candidate(candidate: CandidateItem, series_title_aliases: dict[str,
         episode_title = foreign_episode_title
     series_alias = _extract_series_alias(parsed, title)
     year = _extract_int(parsed.get("year"))
-    season = _extract_int(parsed.get("season"))
-    episode = _extract_int(parsed.get("episode"))
+    # Year-first filtering: strip the year before trusting any season/episode
+    # number. Guessit reads "(2021)" in "Show - 01 (2021)" as season 2021,
+    # which previously flowed straight into Season 2021 / S2021E01 targets.
+    season = _sanitize_season(_extract_int(parsed.get("season")), year)
+    episode = _sanitize_episode(_extract_int(parsed.get("episode")), year)
     fallback_season, fallback_episode = _extract_season_episode(label)
+    fallback_season = _sanitize_season(fallback_season, year)
+    fallback_episode = _sanitize_episode(fallback_episode, year)
     has_explicit_episode = fallback_episode is not None
     # Prefer explicit SxxEyy found by regex over guessit's title-embedded
     # mis-parse (e.g. SAC_2045 → S20E45/2045 vs real S01E10.NET mis-identified as website)
@@ -70,17 +77,20 @@ def classify_candidate(candidate: CandidateItem, series_title_aliases: dict[str,
         has_explicit_episode = True
     season_from_folder = False
     if season is None:
-        season = _extract_season_from_folder(candidate)
+        season = _sanitize_season(_extract_season_from_folder(candidate), year)
         season_from_folder = season is not None
     if episode is None and season_from_folder:
-        episode = _extract_bare_episode_from_name(candidate.name)
+        episode = _sanitize_episode(_extract_bare_episode_from_name(candidate.name), year)
         has_explicit_episode = episode is not None
     if episode is None and _has_container_episode_context(candidate) and not _container_is_movie_folder(candidate):
-        episode = _extract_contained_bare_episode(candidate.name)
+        episode = _sanitize_episode(_extract_contained_bare_episode(candidate.name), year)
         has_explicit_episode = episode is not None
     if episode is None and foreign_episode is not None:
-        episode = foreign_episode
-        has_explicit_episode = True
+        episode = _sanitize_episode(foreign_episode, year)
+        has_explicit_episode = episode is not None
+    # Final guard: no unsanitized number may reach kind inference / resolver.
+    season = _sanitize_season(season, year)
+    episode = _sanitize_episode(episode, year)
 
     kind, confidence, reason = _infer_kind(label, parsed, season, episode, has_explicit_episode)
     if (

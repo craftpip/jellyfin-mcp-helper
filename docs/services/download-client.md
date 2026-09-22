@@ -14,26 +14,42 @@ Detection lives in `app/services/scanner.py`. Two marker families are checked,
 all matched case-insensitively:
 
 1. **Suffix markers** — a sibling file named `<candidate name><marker>`, e.g.
-   `Show.S01E01.mkv.!qB` for candidate `Show.S01E01.mkv`:
+   `Show.S01E01.mkv.!qB` for candidate `Show.S01E01.mkv`, **or the candidate's
+   own name** when the client renamed the file itself (`Show.S01E01.mkv.!qB`
+   with no `Show.S01E01.mkv` next to it — the standard qBittorrent /
+   Transmission / uTorrent shape with "append extension to incomplete files"
+   enabled). Renamed files whose stem after stripping the marker still has a
+   video extension are reported as in-progress candidates so they show in the
+   report as `In-progress download` skips instead of staying invisible:
 
    | Marker | Client that writes it |
    | --- | --- |
    | `.!qB` | qBittorrent |
+   | `.!ut` / `.utpart` | uTorrent |
+   | `.!bt` | BitTorrent (Windows mainline client) |
+   | `.bc!` / `.bc` | BitComet |
+   | `.bt!` | BitSpirit |
+   | `.az!` | Vuze/Azureus |
    | `.part` | Transmission, rTorrent, Vuze/Azureus |
    | `.partial` | rTorrent (split parts) |
    | `.parts` | libtorrent (kept by Deluge) |
-   | `.!ut` | uTorrent |
-   | `.!bt` | BitTorrent (Windows mainline client) |
+   | `.td` / `.xltd` | Xunlei/Thunder |
+   | `.aria2` | aria2 control sidecar (sibling marker only — the sidecar itself stays hidden) |
+   | `.incomplete` / `.downloading` | generic incomplete markers |
+   | `.crdownload` / `.download` / `.opdownload` | Chrome / Safari / Opera partial downloads |
+   | `.tmp` / `.temp` | generic temp downloads |
 
 2. **Prefix markers** — the candidate's own name starts with an
    `incomplete.` / `incomplete$` prefix (Tixati writes `incomplete.Show.S01E01.mkv`
-   while the file is downloading).
+   while the file is downloading). Prefixed files are reported as in-progress
+   candidates themselves.
 
 `_is_in_progress_by_marker(path)` scans the parent directory once and returns
 True when any sibling matches `<name><marker>` or `<prefix><name>`, setting
-`CandidateItem.in_progress`. `_is_partial_marker_file(path)` skips candidates
-whose own name is a marker (the `incomplete.` prefix variants still look like
-normal video files and would otherwise be picked up).
+`CandidateItem.in_progress`. `_candidate_in_progress(path)` reports renamed
+files (own name is `<video><marker>` / `<prefix><video>`) as in-progress
+candidates; `_is_hidden_sidecar(path)` keeps control sidecars (`.aria2`) that
+are never video data invisible.
 
 ## How the scan uses it
 

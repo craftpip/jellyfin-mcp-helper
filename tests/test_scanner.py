@@ -140,7 +140,7 @@ class TestScanCandidates:
         assert len(result.candidates) == 0
         assert len(result.errors) == 0
 
-    @pytest.mark.parametrize("marker", [".!qB", ".!qb", ".!UT", ".!ut", ".!bt", ".!BT", ".PART", ".part", ".PaRt", ".partial", ".PARTIAL", ".parts"])
+    @pytest.mark.parametrize("marker", [".!qB", ".!qb", ".!UT", ".!ut", ".!bt", ".!BT", ".PART", ".part", ".PaRt", ".partial", ".PARTIAL", ".parts", ".utpart", ".bc!", ".bc", ".bt!", ".az!", ".td", ".xltd", ".incomplete", ".downloading", ".crdownload", ".download", ".opdownload", ".tmp", ".temp"])
     def test_flags_in_progress_by_partial_marker(self, tmp_path: Path, marker: str) -> None:
         root = tmp_path / "downloads"
         root.mkdir()
@@ -148,7 +148,39 @@ class TestScanCandidates:
         video.write_bytes(b"video")
         (root / f"Show.S01E01.mkv{marker}").write_bytes(b"partial")
         result = scan_candidates(PathsConfig(downloadRoots=[str(root)]))
+        # Both the complete file (flagged via its sibling marker) and the
+        # renamed marker file itself are reported as in-progress candidates.
+        assert len(result.candidates) == 2
+        by_path = {c.source_path: c for c in result.candidates}
+        assert by_path[str(video)].in_progress is True
+        assert by_path[str(root / f"Show.S01E01.mkv{marker}")].in_progress is True
+
+    def test_renamed_only_marker_file_is_reported_in_progress(self, tmp_path: Path) -> None:
+        # The real qBittorrent shape: "Append .!qB" renames the file itself,
+        # so only Show.S01E01.mkv.!qB exists on disk (no Show.S01E01.mkv
+        # sibling). It must still show up as an in-progress candidate,
+        # not be silently skipped by the extension filter.
+        root = tmp_path / "downloads"
+        root.mkdir()
+        marker_file = root / "Show.S01E01.mkv.!qB"
+        marker_file.write_bytes(b"partial")
+        result = scan_candidates(PathsConfig(downloadRoots=[str(root)]))
         assert len(result.candidates) == 1
+        assert result.candidates[0].source_path == str(marker_file)
+        assert result.candidates[0].in_progress is True
+
+    def test_aria2_sidecar_stays_hidden(self, tmp_path: Path) -> None:
+        # aria2 keeps the preallocated video plus a .aria2 control sidecar.
+        # The sidecar itself must never become a candidate; the video next
+        # to it carries the in-progress flag via the sibling check.
+        root = tmp_path / "downloads"
+        root.mkdir()
+        video = root / "Show.S01E01.mkv"
+        video.write_bytes(b"video")
+        (root / "Show.S01E01.mkv.aria2").write_bytes(b"control")
+        result = scan_candidates(PathsConfig(downloadRoots=[str(root)]))
+        assert len(result.candidates) == 1
+        assert result.candidates[0].source_path == str(video)
         assert result.candidates[0].in_progress is True
 
     @pytest.mark.parametrize("prefix", ["Incomplete.", "incomplete.", "INCOMPLETE$"])
@@ -159,8 +191,10 @@ class TestScanCandidates:
         video.write_bytes(b"video")
         (root / f"{prefix}Show.S01E01.mkv").write_bytes(b"partial")
         result = scan_candidates(PathsConfig(downloadRoots=[str(root)]))
-        assert len(result.candidates) == 1
-        assert result.candidates[0].in_progress is True
+        # Both the complete file (flagged via its prefixed sibling) and the
+        # renamed prefixed file itself are reported as in-progress.
+        assert len(result.candidates) == 2
+        assert all(c.in_progress is True for c in result.candidates)
 
     def test_not_in_progress_without_partial_marker(self, tmp_path: Path) -> None:
         root = tmp_path / "downloads"
@@ -178,8 +212,12 @@ class TestScanCandidates:
         video.write_bytes(b"video")
         (root / "incomplete.Some.Other.Show.mkv").write_bytes(b"partial")
         result = scan_candidates(PathsConfig(downloadRoots=[str(root)]))
-        assert len(result.candidates) == 1
-        assert result.candidates[0].in_progress is False
+        # The unrelated prefixed file is its own in-progress candidate; the
+        # real file next to it is untouched.
+        assert len(result.candidates) == 2
+        by_path = {c.source_path: c for c in result.candidates}
+        assert by_path[str(video)].in_progress is False
+        assert by_path[str(root / "incomplete.Some.Other.Show.mkv")].in_progress is True
 
     def test_os_error_recorded(self, tmp_path: Path) -> None:
         root = tmp_path / "downloads"

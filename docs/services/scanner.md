@@ -10,7 +10,7 @@ stateless; every scan starts from the filesystem.
 | `VIDEO_EXTENSIONS` | `.mkv .mp4 .avi .mov .m4v .wmv .flv` | Extensions treated as media candidates. |
 | `SKIP_DIR_MARKERS` | `{".trickplay"}` | Directory name fragments to skip. |
 | `SAMPLE_SIZE_THRESHOLD` | `150 * 1024 * 1024` (150 MB) | Files smaller than this are treated as possible samples. |
-| `PARTIAL_FILE_MARKERS` | `.!qb .!ut .!bt .part .partial .parts` | Incomplete-file suffix markers written by download clients (matched case-insensitively) — a sibling named `<candidate name><marker>` marks a download as in-progress. |
+| `PARTIAL_FILE_MARKERS` | `.!qb .!ut .!bt .utpart .part .partial .parts .bc! .bc .bt! .az! .td .xltd .aria2 .incomplete .downloading .crdownload .download .opdownload .tmp .temp` | Incomplete-file suffix markers written by download clients (matched case-insensitively) — a sibling named `<candidate name><marker>` marks a download as in-progress; a file whose own name is `<video><marker>` (the rename shape most clients use, e.g. qBittorrent `Show.mkv.!qB`) is itself reported as an in-progress candidate. |
 | `PARTIAL_FILE_PREFIXES` | `incomplete.`, `incomplete$` | Name prefixes some clients prepend to the real filename while downloading (e.g. `incomplete.Show.S01E01.mkv`). |
 
 ## Types
@@ -34,9 +34,12 @@ Full scan used by the scan/plan workflow:
    - A top-level **video file** becomes a candidate with `container_path=None`.
    - A **directory** is walked recursively (`_iter_child_files`) and each video
      file becomes a candidate with `container_path` set to the top-level folder.
-2. Marker files themselves are excluded (`_is_partial_marker_file`), and every
-   candidate gets an `in_progress` flag via `_is_in_progress_by_marker` — True
-   when the parent directory holds a sibling `<name><marker>` or `<prefix><name>`
+2. Control sidecars are hidden (`_is_hidden_sidecar`, e.g. aria2's `.aria2`),
+   renamed in-progress files (`_candidate_in_progress`: own name is
+   `<video><marker>` or `<prefix><video>`) are reported as candidates with
+   `in_progress=True`, and every normal video candidate gets an `in_progress`
+   flag via `_is_in_progress_by_marker` — True when the parent directory
+   holds a sibling `<name><marker>` or `<prefix><name>`
    (see [download-client.md](download-client.md)). The scan skips flagged
    candidates while `ENABLE_INCOMPLETE_DOWNLOAD_DETECTION` is on.
 3. Filesystem errors are recorded as `ScanPathError` and never abort the scan.

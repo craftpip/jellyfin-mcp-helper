@@ -270,6 +270,19 @@ Prefer adding the new case to the existing examples list.
 
 **Verification:** `tests/test_classification_episodes.py` (11 adapted JellyJake cases). Full suite `docker exec jellysort python3 -m pytest tests/` = 418 passed.
 
+### Year-first season/episode filtering (guessit year-as-season hole)
+
+**Problem:** `Kimi ga Suki. The Animation - 01 (2021)` resolved to `Season 2021 / S2021E01`. Guessit reads `(2021)` as `season: 2021` (plus correct `episode: 1`, `year: 2021`), and `classify_candidate` took guessit's season verbatim — `_sane_season` (1..60 cap) was only applied to the custom-regex path, never to guessit/folder values. Any `Show - NN (YYYY)` file without SxxEyy hit this.
+
+**Fix (`app/classification/episodes.py` + `classifier.py`):**
+- New `_sanitize_season(value, year)` / `_sanitize_episode(value, year)`: drop the value when it equals the year (year-first filtering), then apply the sane caps so any other year-like/resolution-like number dies too. `0` (E00/S00 specials) passes through unchanged — the caps must not tighten the pre-existing lower bound.
+- `classify_candidate` sanitizes guessit season/episode immediately after extracting `year`, sanitizes the regex fallback + folder/bare/foreign fallbacks, and re-sanitizes the final pair before kind inference — no unsanitized number reaches the resolver (which defaults `season None` → 1, so the example now lands `Season 01 / S01E01`).
+- Re-exported in `app/classification/__init__.py`.
+
+**Rule:** every season/episode source (guessit, regex fallback, folder, bare, foreign) must go through `_sanitize_*` — never trust a raw number.
+
+**Verification:** `tests/test_classifier.py::test_year_in_parens_is_not_a_season` + `test_year_like_season_and_episode_are_dropped` (neutral placeholder names). Full suite 420 passed. Live check needs `fullRescan: true` — already-persisted report items keep their old `Season 2021` targets until re-classified.
+
 ### Update scan path validation bug
 
 **Problem:** `update move new downloads scan` failed with `tuple expected at most 1 argument, got 7`.
@@ -296,7 +309,7 @@ if not new_target.endswith((".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".fl
 
 **Replacements:**
 - `app/services/download_client.py` (all client classes + `_extract_paths`) is **deleted**. The `QBT_*`/`TRANSMISSION_*`/`DELUGE_*`/`DOWNLOAD_CLIENT`/`ENABLE_DOWNLOAD_CLIENT_CHECK` config fields, ENV_SPEC entries, `ui/server.py` test endpoint, and the seeding-stop path in `move_executor.py` are all removed.
-- In-progress detection is now **filesystem-only**: `app/services/scanner.py` flags a candidate `in_progress=True` when a sibling incomplete-file marker exists, using case-insensitive suffix markers `PARTIAL_FILE_MARKERS = (".!qb", ".!ut", ".!bt", ".part", ".partial", ".parts")` and prefix markers `PARTIAL_FILE_PREFIXES = ("incomplete.", "incomplete$")`. Marker files themselves are excluded via `_is_partial_marker_file`.
+- In-progress detection is now **filesystem-only**: `app/services/scanner.py` flags a candidate `in_progress=True` when a sibling incomplete-file marker exists, using case-insensitive suffix markers `PARTIAL_FILE_MARKERS` (qBittorrent `.!qb`, uTorrent `.!ut`/`.utpart`, BitTorrent `.!bt`, BitComet `.bc!`/`.bc`, BitSpirit `.bt!`, Vuze `.az!`, Transmission/rTorrent `.part`/`.partial`, libtorrent/Deluge `.parts`, Xunlei `.td`/`.xltd`, aria2 `.aria2` sibling-only, generic `.incomplete`/`.downloading`/`.crdownload`/`.download`/`.opdownload`/`.tmp`/`.temp`) and prefix markers `PARTIAL_FILE_PREFIXES = ("incomplete.", "incomplete$")`. Renamed files themselves (`Show.mkv.!qB`, `incomplete.Show.mkv` — the standard client shape, no complete sibling on disk) are reported as in-progress candidates via `_candidate_in_progress` so they show as `In-progress download` skips instead of staying invisible; control sidecars (`.aria2`) stay hidden via `_is_hidden_sidecar`.
 - `scan_orchestrator.py` skips in-progress candidates (reason `"In-progress download"`) only when `ENABLE_INCOMPLETE_DOWNLOAD_DETECTION` is true (read via `_incomplete_detection_enabled()` from `get_settings()`).
 - The `stopping_seeding` confirm phase is removed from `schemas.py`, `types.ts`, and `format.js`.
 - Requires the download client to append an incomplete-file marker (e.g. qBittorrent "Append .!qB extension to incomplete files"). Documented in the Settings page Downloads section.

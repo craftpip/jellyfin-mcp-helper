@@ -48,6 +48,36 @@ def _sane_episode(value: int | None) -> int | None:
     return None
 
 
+def _sanitize_season(value: int | None, year: int | None) -> int | None:
+    """Year-first season filter: a year must never become a season.
+
+    Guessit mistakes "(2021)" for season 2021 on labels like
+    "Show - 01 (2021)". Filter the year before anything else, then
+    apply the sane cap (1..SEASON_MAX) so any other year-like or
+    resolution-like value can never slip through either.
+    """
+    if value is None:
+        return None
+    if year is not None and value == year:
+        return None
+    if value == 0:
+        # E00 / S00 (specials/pilot) are valid pre-existing values —
+        # only year-like numbers are filtered, the lower bound is untouched.
+        return 0
+    return _sane_season(value)
+
+
+def _sanitize_episode(value: int | None, year: int | None) -> int | None:
+    """Year-first episode filter: a year must never become an episode."""
+    if value is None:
+        return None
+    if year is not None and value == year:
+        return None
+    if value == 0:
+        return 0
+    return _sane_episode(value)
+
+
 def _match_season_episode_token_re(label: str) -> tuple[int | None, int | None]:
     season: int | None = None
     episode: int | None = None
