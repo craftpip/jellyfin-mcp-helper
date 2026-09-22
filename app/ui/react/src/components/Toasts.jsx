@@ -3,7 +3,9 @@ import { formatBytes } from '../utils/format.js'
 
 export default function Toasts() {
   const { state } = useAppStore()
-  const showTransfer = state.transferQueue.length > 0
+  // The panel stays mounted on its summary after the rows fade, so a
+  // completed move (and a minimized strip) survives until dismissed.
+  const showTransfer = state.transferQueue.length > 0 || !!state.transferSummary
   const hasAny = showTransfer || state.toasts.length > 0
 
   if (!hasAny) return null

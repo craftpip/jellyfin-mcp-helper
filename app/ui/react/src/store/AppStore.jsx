@@ -13,6 +13,7 @@ const AppStoreContext = createContext(null)
 
 const TRANSFER_ACTIVE_KEY = 'jsort_transfer_active'
 const TRANSFER_MINIMIZED_KEY = 'jsort_transfer_minimized'
+const TRANSFER_SNAPSHOT_KEY = 'jsort_transfer_snapshot'
 
 function getInitialTransferMinimized() {
   if (typeof window !== 'undefined') {
@@ -21,6 +22,32 @@ function getInitialTransferMinimized() {
     } catch {}
   }
   return false
+}
+
+function readTransferSnapshot() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(TRANSFER_SNAPSHOT_KEY)
+    if (!raw) return null
+    const snap = JSON.parse(raw)
+    if (!snap || !Array.isArray(snap.queue) || !snap.queue.length) return null
+    return snap
+  } catch {
+    return null
+  }
+}
+
+// Rows restored from a snapshot: a mid-copy row goes back to queued (its live
+// progress is gone), and done rows get a fresh doneAt so they fade after the
+// usual delay instead of vanishing instantly on stale timestamps.
+function sanitizeRestoredQueue(queue, now = Date.now()) {
+  return queue.map((t) =>
+    t.state === 'copying'
+      ? { ...t, state: 'queued', progress: null }
+      : t.state === 'done'
+        ? { ...t, doneAt: now }
+        : t
+  )
 }
 
 const POLL_INTERVAL_MS = 2000
@@ -166,7 +193,23 @@ function reducer(state, action) {
 let toastSeq = 0
 
 export function AppStoreProvider({ children }) {
-  const [state, dispatch] = useReducer(reducer, initialState, (base) => ({ ...base, page: pageFromPath() }))
+  const [state, dispatch] = useReducer(reducer, initialState, (base) => {
+    // Seed a persisted transfer panel (minimized strip included) so a
+    // refresh brings back the same panel before any effect can clear it.
+    try {
+      const snap = readTransferSnapshot()
+      if (snap) {
+        return {
+          ...base,
+          page: pageFromPath(),
+          transferQueue: sanitizeRestoredQueue(snap.queue),
+          transferSummary: snap.summary || null,
+          transferMinimized: typeof snap.minimized === 'boolean' ? snap.minimized : base.transferMinimized,
+        }
+      }
+    } catch {}
+    return { ...base, page: pageFromPath() }
+  })
   const stateRef = useRef(state)
   stateRef.current = state
   const timers = useRef({ scanPoll: null, confirmPoll: null, paste: null, transferRemoval: {}, search: null })
@@ -255,6 +298,7 @@ export function AppStoreProvider({ children }) {
     dispatch({ type: 'SET_TRANSFER_SUMMARY', summary: null })
     try {
       localStorage.removeItem(TRANSFER_ACTIVE_KEY)
+      localStorage.removeItem(TRANSFER_SNAPSHOT_KEY)
     } catch {}
     fetchReport()
   }
@@ -1215,9 +1259,35 @@ export function AppStoreProvider({ children }) {
     if (state.page === 'settings' && !stateRef.current.adminEnv) loadEnv()
   }, [state.authed, state.page])
 
+  // Persist the transfer panel (rows + summary + minimized) so a refresh —
+  // minimized strip included — brings back the same panel. Cleared on
+  // dismiss and once the queue and summary are both gone.
+  useEffect(() => {
+    try {
+      if (!state.transferQueue.length && !state.transferSummary) {
+        localStorage.removeItem(TRANSFER_SNAPSHOT_KEY)
+        return
+      }
+      localStorage.setItem(
+        TRANSFER_SNAPSHOT_KEY,
+        JSON.stringify({
+          queue: state.transferQueue,
+          summary: state.transferSummary,
+          minimized: !!state.transferMinimized,
+        })
+      )
+    } catch {}
+  }, [state.transferQueue, state.transferSummary, state.transferMinimized])
+
   useEffect(() => {
     if (didInit.current) return
     didInit.current = true
+    // Reschedule fade-out for restored done rows; a backend reconcile for a
+    // still-live move follows in checkConnection via restoreTransfer().
+    try {
+      const snap = readTransferSnapshot()
+      if (snap) scheduleTransferRemovals(sanitizeRestoredQueue(snap.queue))
+    } catch {}
     checkConnection()
     return () => {
       if (timers.current.scanPoll) clearTimeout(timers.current.scanPoll)

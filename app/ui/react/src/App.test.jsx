@@ -44,6 +44,7 @@ beforeEach(() => {
   window.history.pushState({}, '', '/')
   try {
     localStorage.removeItem('jsort_transfer_active')
+    localStorage.removeItem('jsort_transfer_snapshot')
   } catch {}
   vi.stubGlobal(
     'fetch',
@@ -408,6 +409,38 @@ describe('App integration', () => {
     expect(screen.getByText('3/10')).toBeInTheDocument()
     expect(screen.getByText('/media1/downloads/Show.mkv')).toBeInTheDocument()
     expect(screen.queryByText('Start Scan')).not.toBeInTheDocument()
+  })
+
+  it('restores a minimized transfer panel from localStorage after reload', async () => {
+    localStorage.setItem(
+      'jsort_transfer_snapshot',
+      JSON.stringify({
+        queue: [
+          {
+            id: 'transfer-c1',
+            order: 0,
+            confirmId: 'c1',
+            group: 'Show Name',
+            kind: 'series',
+            batch: 'running',
+            sourcePath: '/media1/d/Show.S01E01.mkv',
+            name: 'Show.S01E01.mkv',
+            targetPath: '/media1/series/Show/Season 01/Show S01E01.mkv',
+            state: 'done',
+            progress: null,
+            doneAt: Date.now(),
+          },
+        ],
+        summary: { processed: 1, total: 1, status: 'completed', counts: { moved: 1, replaced: 0, failed: 0 } },
+        minimized: true,
+      })
+    )
+    renderApp()
+
+    expect(await screen.findByLabelText('Expand transfer panel', {}, { timeout: 3000 })).toBeInTheDocument()
+    expect(screen.getByText('Move completed')).toBeInTheDocument()
+    // Minimized strip hides the rows
+    expect(screen.queryByText('Show.S01E01.mkv')).not.toBeInTheDocument()
   })
 
   it('keeps Start Scan visible when logs are shown and no report exists', async () => {

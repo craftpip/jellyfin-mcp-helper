@@ -75,6 +75,20 @@ describe('Toasts transfer panel', () => {
     expect(container.querySelector('.transfer-toasts')).toBeNull()
   })
 
+  it('keeps the completed header mounted after the rows fade', () => {
+    mockStore = {
+      ...mockStore,
+      transferQueue: [],
+      transferSummary: { processed: 3, total: 3, status: 'completed', counts: { moved: 3, replaced: 0, failed: 0 } },
+    }
+    const { container } = render(<Toasts />)
+    expect(screen.getByText('Move completed')).toBeInTheDocument()
+    expect(screen.getByText('Moved: 3 · Replaced: 0 · Failed: 0')).toBeInTheDocument()
+    expect(container.querySelector('.transfer-panel')).toBeTruthy()
+    // Dismiss is still offered with no rows left
+    expect(screen.getByLabelText('Dismiss transfer panel')).toBeInTheDocument()
+  })
+
   it('renders one persistent panel grouped by show/movie with live copy stats', () => {
     mockStore = { ...mockStore, transferQueue: QUEUE, transferSummary: SUMMARY }
     const { container } = render(<Toasts />)
