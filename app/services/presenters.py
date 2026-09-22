@@ -280,6 +280,62 @@ def format_transfer_speed(bytes_per_second: float | None) -> str | None:
     return None
 
 
+def _transfer_group_title(item_type: str, target_path: str, name: str) -> str:
+    """Group label for transfer-panel sections.
+
+    Mirrors the frontend ``mapReportItems`` title rule (``report.js``): series
+    groups by the show folder (third-from-last target part), everything else by
+    the enclosing folder (second-from-last).
+    """
+    parts = [p for p in (target_path or "").split("/") if p]
+    if item_type == "series" and target_path:
+        return parts[-3] if len(parts) >= 3 else (parts[0] if parts else name)
+    if target_path:
+        return parts[-2] if len(parts) >= 2 else (parts[0] if parts else name)
+    return name
+
+
+def _transfer_queue_groups(scan: ScanPlan) -> list[dict]:
+    """Per-file grouped payload for the transfer panel (``queue_groups``).
+
+    Running batch first (from ``confirm_item_ids``), then one section per
+    queued batch (from ``confirm_queue_item_ids``), each sub-grouped by the
+    show/movie title. ``failed`` mirrors ``bool(item.error)`` — failed items
+    keep ``confirmed=False``.
+    """
+    by_id = {item.confirm_id: item for item in scan.items}
+
+    def section(ids: list[str], batch: str) -> list[dict]:
+        groups: dict[str, dict] = {}
+        order: list[str] = []
+        for cid in ids:
+            item = by_id.get(cid)
+            if item is None:
+                continue
+            title = _transfer_group_title(item.item_type, item.target_path, item.name)
+            if title not in groups:
+                groups[title] = {"group": title, "kind": item.item_type, "batch": batch, "items": []}
+                order.append(title)
+            source_name = (item.source_path or "").split("/")[-1] if item.source_path else item.name
+            groups[title]["items"].append(
+                {
+                    "confirm_id": item.confirm_id,
+                    "source_path": item.source_path,
+                    "source_name": source_name or item.name,
+                    "target_path": item.target_path,
+                    "kind": item.item_type,
+                    "confirmed": item.confirmed,
+                    "failed": bool(item.error),
+                }
+            )
+        return [groups[t] for t in order]
+
+    groups = section(list(scan.confirm_item_ids), "running")
+    for batch_ids in scan.confirm_queue_item_ids:
+        groups.extend(section(list(batch_ids), "queued"))
+    return groups
+
+
 def format_confirm_progress(scan: ScanPlan) -> dict:
     now = datetime.now(UTC)
     started_at = scan.confirm_started_at or now
@@ -341,6 +397,7 @@ def format_confirm_progress(scan: ScanPlan) -> dict:
         "note": scan.confirm_note,
         "queue_length": scan.confirm_queue_length,
         "queue_items": scan.confirm_queue_items,
+        "queue_groups": _transfer_queue_groups(scan),
         "last_update_at": scan.confirm_last_update_at.isoformat() if scan.confirm_last_update_at else None,
         "counts": {
             "moved": scan.counts.moved - scan.confirm_start_moved,

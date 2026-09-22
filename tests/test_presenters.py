@@ -291,6 +291,71 @@ class TestFormatConfirmProgress:
         assert result["cross_drive"] is True
         assert result["note"] == "Copying to target drive"
 
+    def test_queue_groups_empty_when_idle(self) -> None:
+        scan = _scan_plan(confirm_status="idle")
+        assert format_confirm_progress(scan)["queue_groups"] == []
+
+    def test_queue_groups_running_batch_grouped_by_title(self) -> None:
+        scan = _scan_plan(
+            confirm_status="running",
+            confirm_total=3,
+            confirm_processed=1,
+            items=[
+                _series_item(confirmId="s1", confirmed=True),
+                _series_item(
+                    confirmId="s2",
+                    sourcePath="/downloads/Show - S01E02.mkv",
+                    name="Show - S01E02.mkv",
+                    target_path="/series/Show/Season 01/Show - S01E02.mkv",
+                ),
+                _movie_item(),
+            ],
+            confirm_item_ids=["s1", "s2", "m1"],
+        )
+        groups = format_confirm_progress(scan)["queue_groups"]
+        assert [(g["group"], g["kind"], g["batch"]) for g in groups] == [
+            ("Show", "series", "running"),
+            ("Movie (2024)", "movie", "running"),
+        ]
+        states = {i["confirm_id"]: (i["confirmed"], i["failed"]) for g in groups for i in g["items"]}
+        assert states == {"s1": (True, False), "s2": (False, False), "m1": (False, False)}
+
+    def test_queue_groups_failed_flag_from_error(self) -> None:
+        scan = _scan_plan(
+            confirm_status="running",
+            items=[_movie_item(error="boom")],
+            confirm_item_ids=["m1"],
+        )
+        (group,) = format_confirm_progress(scan)["queue_groups"]
+        (item,) = group["items"]
+        assert item["failed"] is True
+        assert item["confirmed"] is False
+
+    def test_queue_groups_queued_batches_after_running(self) -> None:
+        scan = _scan_plan(
+            confirm_status="running",
+            items=[
+                _movie_item(),
+                _series_item(),
+            ],
+            confirm_item_ids=["m1"],
+            confirm_queue_item_ids=[["s1"]],
+        )
+        groups = format_confirm_progress(scan)["queue_groups"]
+        assert [(g["group"], g["batch"]) for g in groups] == [
+            ("Movie (2024)", "running"),
+            ("Show", "queued"),
+        ]
+
+    def test_queue_groups_skips_unknown_ids(self) -> None:
+        scan = _scan_plan(
+            confirm_status="running",
+            items=[_movie_item()],
+            confirm_item_ids=["m1", "gone"],
+        )
+        groups = format_confirm_progress(scan)["queue_groups"]
+        assert [i["confirm_id"] for g in groups for i in g["items"]] == ["m1"]
+
     def test_file_eta_when_copying(self) -> None:
         scan = _scan_plan(
             confirm_status="running",

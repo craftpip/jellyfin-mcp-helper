@@ -619,6 +619,50 @@ def test_confirm_queues_batch_behind_running_move(tmp_path, monkeypatch) -> None
     asyncio.run(run_test())
 
 
+def test_confirm_snapshots_item_ids_for_queue_groups(tmp_path, monkeypatch) -> None:
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(downloadRoots=[]),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+
+    async def run_test() -> None:
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        scan.items = [
+            ScannedItem(
+                confirmId=f"c{i}",
+                sourcePath=f"/downloads/file-{i}.mkv",
+                name=f"file-{i}.mkv",
+                item_type="movie",
+                confidence=1.0,
+                reason="test",
+                target_path=f"/movies/Title {i} (2024)/Title {i}.mkv",
+                action="move",
+            )
+            for i in range(1, 4)
+        ]
+
+        async def fake_run_confirm_task(scan_id, *args):
+            return None
+
+        monkeypatch.setattr(manager, "_run_confirm_task", fake_run_confirm_task)
+
+        await manager.confirm_scan(scan.scan_id, item_ids=["c1"])
+        assert scan.confirm_status == "running"
+        assert scan.confirm_item_ids == ["c1"]
+
+        await manager.confirm_scan(scan.scan_id, item_ids=["c2", "c3"])
+        assert scan.confirm_queue_length == 1
+        assert scan.confirm_queue_item_ids == [["c2", "c3"]]
+
+    asyncio.run(run_test())
+
+
 def test_confirm_repersists_history_with_post_confirm_counts(tmp_path, monkeypatch) -> None:
     source = tmp_path / "download.mkv"
     source.write_bytes(b"video")

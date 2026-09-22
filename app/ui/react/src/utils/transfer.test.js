@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildTransferQueue, deriveTransferQueue } from './transfer.js'
+import { buildTransferQueue, buildTransferQueueFromGroups, deriveTransferQueue } from './transfer.js'
 
 const ITEMS = [
   { confirmId: 'a', sourceName: 'alpha.mkv', sourcePath: '/media1/d/alpha.mkv', targetPath: '/media2/s/Alpha/Alpha.mkv' },
@@ -14,6 +14,53 @@ describe('buildTransferQueue', () => {
     expect(queue.map((t) => t.order)).toEqual([0, 1])
     expect(queue.every((t) => t.state === 'queued')).toBe(true)
     expect(queue.every((t) => t.doneAt === null && t.progress === null)).toBe(true)
+  })
+
+  it('carries group, kind and running batch for the panel sections', () => {
+    const items = [{ ...ITEMS[0], title: 'Alpha Show', itemType: 'series' }]
+    const queue = buildTransferQueue(['a'], items)
+    expect(queue[0].group).toBe('Alpha Show')
+    expect(queue[0].kind).toBe('series')
+    expect(queue[0].batch).toBe('running')
+    expect(queue[0].confirmId).toBe('a')
+  })
+})
+
+describe('buildTransferQueueFromGroups', () => {
+  const GROUPS = [
+    {
+      group: 'Show Name',
+      kind: 'series',
+      batch: 'running',
+      items: [
+        { confirm_id: 'a', source_path: '/d/alpha.mkv', source_name: 'alpha.mkv', target_path: '/s/a', kind: 'series', confirmed: true, failed: false },
+        { confirm_id: 'b', source_path: '/d/beta.mkv', source_name: 'beta.mkv', target_path: '/s/b', kind: 'series', confirmed: false, failed: false },
+      ],
+    },
+    {
+      group: 'Movie',
+      kind: 'movie',
+      batch: 'queued',
+      items: [
+        { confirm_id: 'c', source_path: '/d/gamma.mkv', source_name: 'gamma.mkv', target_path: '/m/c', kind: 'movie', confirmed: false, failed: true },
+      ],
+    },
+  ]
+
+  it('flattens groups in order with done/queued/failed states and order indexes', () => {
+    const queue = buildTransferQueueFromGroups(GROUPS, 1000)
+    expect(queue.map((t) => t.id)).toEqual(['transfer-a', 'transfer-b', 'transfer-c'])
+    expect(queue.map((t) => t.order)).toEqual([0, 1, 2])
+    expect(queue.map((t) => t.state)).toEqual(['done', 'queued', 'failed'])
+    expect(queue[0].doneAt).toBe(1000)
+    expect(queue[1].doneAt).toBeNull()
+    expect(queue[2].batch).toBe('queued')
+    expect(queue[2].group).toBe('Movie')
+  })
+
+  it('returns an empty queue for a missing payload', () => {
+    expect(buildTransferQueueFromGroups(undefined)).toEqual([])
+    expect(buildTransferQueueFromGroups(null)).toEqual([])
   })
 })
 

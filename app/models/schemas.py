@@ -119,6 +119,8 @@ class ScanPlan(BaseModel):
     confirm_last_update_at: datetime | None = None
     confirm_queue_length: int = 0
     confirm_queue_items: int = 0
+    confirm_item_ids: list[str] = Field(default_factory=list)
+    confirm_queue_item_ids: list[list[str]] = Field(default_factory=list)
 
 
 class ScanLogEntry(BaseModel):

@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useReducer, useRef, useCallback }
 import { apiDelete, apiGet, apiPatch, apiPost, getAuthToken, setAuthToken } from '../api/apiClient.js'
 import { computePathSync, defaultSelection, groupItems, isCrossDriveItem, mapReportItems } from '../utils/report.js'
 import { isCrossDrive } from '../utils/format.js'
-import { buildTransferQueue, deriveTransferQueue, TRANSFER_DONE_REMOVE_MS } from '../utils/transfer.js'
+import { buildTransferQueue, buildTransferQueueFromGroups, deriveTransferQueue, TRANSFER_DONE_REMOVE_MS } from '../utils/transfer.js'
 import { usePoll } from '../hooks/usePoll.js'
 import { confirmDialog } from '../components/ConfirmDialog.jsx'
 import { reportInitialState, reportReducer, toggleInList } from './slices/reportSlice.js'
@@ -10,6 +10,18 @@ import { scanInitialState, scanReducer } from './slices/scanSlice.js'
 import { adminInitialState, adminReducer } from './slices/adminSlice.js'
 
 const AppStoreContext = createContext(null)
+
+const TRANSFER_ACTIVE_KEY = 'jsort_transfer_active'
+const TRANSFER_MINIMIZED_KEY = 'jsort_transfer_minimized'
+
+function getInitialTransferMinimized() {
+  if (typeof window !== 'undefined') {
+    try {
+      return localStorage.getItem(TRANSFER_MINIMIZED_KEY) === '1'
+    } catch {}
+  }
+  return false
+}
 
 const POLL_INTERVAL_MS = 2000
 const LOG_LIMIT = 1000
@@ -89,6 +101,7 @@ const initialState = {
   toasts: [],
   transferQueue: [],
   transferSummary: null,
+  transferMinimized: getInitialTransferMinimized(),
   browseModal: null,
   // Admin slice
   ...adminInitialState,
@@ -135,6 +148,8 @@ function reducer(state, action) {
       return { ...state, transferQueue: action.queue }
     case 'SET_TRANSFER_SUMMARY':
       return { ...state, transferSummary: action.summary }
+    case 'SET_TRANSFER_MINIMIZED':
+      return { ...state, transferMinimized: action.minimized }
     case 'REMOVE_TRANSFER_ITEM':
       return { ...state, transferQueue: state.transferQueue.filter((t) => t.id !== action.id) }
     case 'SET_BROWSE':
@@ -209,14 +224,91 @@ export function AppStoreProvider({ children }) {
   function scheduleTransferRemovals(queue) {
     const now = Date.now()
     queue.forEach((t) => {
-      if ((t.state !== 'done' && t.state !== 'failed') || !t.doneAt) return
+      if (t.state !== 'done' || !t.doneAt) return
       if (timers.current.transferRemoval[t.id]) return
       const delay = Math.max(0, TRANSFER_DONE_REMOVE_MS - (now - t.doneAt))
       timers.current.transferRemoval[t.id] = setTimeout(() => {
         delete timers.current.transferRemoval[t.id]
+        const stillThere = stateRef.current.transferQueue.find((x) => x.id === t.id)
+        if (!stillThere || stillThere.state !== 'done') return
         dispatch({ type: 'REMOVE_TRANSFER_ITEM', id: t.id })
       }, delay)
     })
+  }
+
+  function setTransferMinimized(minimized) {
+    try {
+      localStorage.setItem(TRANSFER_MINIMIZED_KEY, minimized ? '1' : '0')
+    } catch {}
+    dispatch({ type: 'SET_TRANSFER_MINIMIZED', minimized: !!minimized })
+  }
+
+  function dismissTransfer() {
+    closeConfirmStream()
+    confirmActiveRef.current = false
+    Object.values(timers.current.transferRemoval || {}).forEach(clearTimeout)
+    timers.current.transferRemoval = {}
+    confirmStateRef.current = { completed: 0, failed: 0 }
+    dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
+    dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
+    dispatch({ type: 'SET_TRANSFER_QUEUE', queue: [] })
+    dispatch({ type: 'SET_TRANSFER_SUMMARY', summary: null })
+    try {
+      localStorage.removeItem(TRANSFER_ACTIVE_KEY)
+    } catch {}
+    fetchReport()
+  }
+
+  // Restore a still-active transfer panel after a page reload. Gated behind
+  // the transfer-active flag set by runConfirm, so unrelated page loads never
+  // poll confirm progress. The backend queue_groups payload is the source of
+  // truth for per-file rows.
+  async function restoreTransfer() {
+    let active = false
+    try {
+      active = localStorage.getItem(TRANSFER_ACTIVE_KEY) === '1'
+    } catch {}
+    if (!active || confirmActiveRef.current) return
+    let result
+    try {
+      result = await apiGet('/scans/current/confirm-progress')
+    } catch {
+      return
+    }
+    const status = result && result.status
+    const total = (result && result.total) || 0
+    if ((status !== 'running' && status !== 'completed' && status !== 'failed') || (!total && !(result.queue_length > 0))) {
+      try {
+        localStorage.removeItem(TRANSFER_ACTIVE_KEY)
+      } catch {}
+      return
+    }
+    const queue = buildTransferQueueFromGroups(result.queue_groups)
+    confirmStateRef.current = { completed: 0, failed: 0 }
+    const derived = deriveTransferQueue(queue, result, confirmStateRef.current)
+    confirmStateRef.current = derived.state
+    const running = status === 'running'
+    confirmActiveRef.current = running
+    dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: running })
+    dispatch({ type: 'SET_TRANSFER_QUEUE', queue: derived.queue })
+    dispatch({
+      type: 'SET_TRANSFER_SUMMARY',
+      summary: {
+        processed: result.processed ?? 0,
+        total: total + (result.queue_items || 0),
+        status,
+        counts: result.counts || {},
+        queueLength: result.queue_length || 0,
+        queueItems: result.queue_items || 0,
+      },
+    })
+    dispatch({ type: 'SET_TRANSFER_MINIMIZED', minimized: getInitialTransferMinimized() })
+    log('Transfer progress restored after reload (' + status + ')', 'info')
+    if (running) {
+      dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm running...' })
+      subscribeConfirmProgress()
+    }
+    scheduleTransferRemovals(derived.queue)
   }
 
   // ---- report rendering ----
@@ -379,6 +471,7 @@ export function AppStoreProvider({ children }) {
           dispatch({ type: 'SET_LIBRARIES', libraries: libs.libraries || [] })
           dispatch({ type: 'SET_CONN', status: 'connected', message: 'connected' })
           fetchReport()
+          restoreTransfer()
           return
         } catch (e) {
           if (e.status === 401) {
@@ -395,6 +488,7 @@ export function AppStoreProvider({ children }) {
       dispatch({ type: 'SET_CONN', status: 'connected', message: 'connected' })
       log('Connected to the JellySort API', 'good')
       await loadLibraries()
+      restoreTransfer()
     } catch (e) {
       dispatch({ type: 'SET_CONN', status: 'error', message: 'error: ' + e.message })
       log('Connection failed: ' + e.message, 'err')
@@ -702,6 +796,10 @@ export function AppStoreProvider({ children }) {
         scanId: stateRef.current.scanId,
         itemIds,
       })
+      try {
+        localStorage.setItem(TRANSFER_ACTIVE_KEY, '1')
+      } catch {}
+      setTransferMinimized(false)
       const queued = (result.queue_length || 0) > 0
       if (queued) {
         // A move is running on the backend: this batch is queued and will start
@@ -771,25 +869,64 @@ export function AppStoreProvider({ children }) {
       toast('Queued move started', 'good')
     }
 
-    const derived = deriveTransferQueue(stateRef.current.transferQueue, result, confirmStateRef.current)
-    confirmStateRef.current = derived.state
-    dispatch({ type: 'SET_TRANSFER_QUEUE', queue: derived.queue })
+    // The backend queue_groups payload is the source of truth for per-file
+    // rows: rebuild grouped sections from it, keeping locally-done rows the
+    // payload doesn't know about yet. Falls back to order-aligned derivation
+    // when the payload is absent.
+    const groups = Array.isArray(result.queue_groups) && result.queue_groups.length ? result.queue_groups : null
+    let queue = stateRef.current.transferQueue
+    if (groups) {
+      const rebuilt = buildTransferQueueFromGroups(groups)
+      const rebuiltIds = new Set(rebuilt.map((x) => x.id))
+      const keepDone = queue.filter((x) => x.state === 'done' && !rebuiltIds.has(x.id))
+      queue = rebuilt.concat(keepDone)
+      if (result.status === 'running' && result.current_file) {
+        queue = queue.map((x) =>
+          x.sourcePath === result.current_file
+            ? {
+                ...x,
+                state: 'copying',
+                progress: {
+                  percent: result.current_percent,
+                  speed: result.current_speed,
+                  speed_bytes: result.current_speed_bytes,
+                  eta: result.current_eta,
+                  copied: result.current_copied_bytes,
+                  size: result.current_size_bytes,
+                },
+              }
+            : x
+        )
+      }
+      confirmStateRef.current = {
+        completed: Math.max(confirmStateRef.current.completed, p),
+        failed: result.counts?.failed ?? 0,
+      }
+    } else if (queue.length) {
+      const derived = deriveTransferQueue(queue, result, confirmStateRef.current)
+      confirmStateRef.current = derived.state
+      queue = derived.queue
+    }
+    dispatch({ type: 'SET_TRANSFER_QUEUE', queue })
+    const panelTotal = t + (result.queue_items || 0)
     dispatch({
       type: 'SET_TRANSFER_SUMMARY',
       summary: {
-        processed: result.processed ?? 0,
-        total: result.total ?? 0,
+        processed: p,
+        total: panelTotal,
         status: result.status,
         counts: result.counts || {},
         queueLength,
         queueItems: result.queue_items || 0,
       },
     })
-    scheduleTransferRemovals(derived.queue)
+    scheduleTransferRemovals(queue)
 
     if (result.status === 'completed' || result.status === 'idle') {
       if (queueLength === 0) {
         closeConfirmStream()
+        Object.values(timers.current.transferRemoval || {}).forEach(clearTimeout)
+        timers.current.transferRemoval = {}
         confirmActiveRef.current = false
         dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
         dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
@@ -798,6 +935,9 @@ export function AppStoreProvider({ children }) {
         const failed = result.counts?.failed || 0
         log('Confirm completed. Moved: ' + moved + ', Replaced: ' + replaced + ', Failed: ' + failed, 'good')
         toast('Confirm completed! Moved: ' + moved + ', Replaced: ' + replaced + ', Failed: ' + failed, 'good')
+        try {
+          localStorage.removeItem(TRANSFER_ACTIVE_KEY)
+        } catch {}
         setTimeout(fetchReport, 800)
         return true
       }
@@ -807,16 +947,21 @@ export function AppStoreProvider({ children }) {
     if (result.status === 'failed') {
       if (queueLength === 0) {
         closeConfirmStream()
+        Object.values(timers.current.transferRemoval || {}).forEach(clearTimeout)
+        timers.current.transferRemoval = {}
         confirmActiveRef.current = false
         dispatch({ type: 'SET_CONFIRM_ACTIVE', confirmActive: false })
         dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label: 'Confirm Selected' })
+        try {
+          localStorage.removeItem(TRANSFER_ACTIVE_KEY)
+        } catch {}
         return true
       }
       // Defensive: queued batches remain and the backend starts the next one
       // right after the failure, so keep confirmActive and keep listening.
     }
     if (result.status === 'running') {
-      const label = 'Moving ' + p + '/' + t + '...' + (queueLength > 0 ? ' · ' + queueLength + ' queued' : '')
+      const label = 'Moving ' + p + '/' + panelTotal + '...' + (queueLength > 0 ? ' · ' + queueLength + ' queued' : '')
       dispatch({ type: 'SET_CONFIRM_BUTTON_LABEL', label })
     }
     return false
@@ -1118,6 +1263,8 @@ export function AppStoreProvider({ children }) {
     closeConfirmModal,
     runConfirm,
     pollConfirmProgress,
+    setTransferMinimized,
+    dismissTransfer,
     deleteSourceItem,
     deleteSelectedSkipped,
     openBrowse,

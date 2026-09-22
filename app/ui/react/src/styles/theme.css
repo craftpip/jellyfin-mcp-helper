@@ -278,6 +278,7 @@ tbody tr:nth-child(odd) { background: transparent; }
 tbody tr.row-skipped:hover { background: rgba(251, 191, 36, 0.05); }
 td input[type="text"] { font-size: 0.8rem; padding: 7px 10px; border-radius: 9px; font-family: ui-monospace, monospace; }
 td input[type="checkbox"] { accent-color: var(--jf-primary); }
+#reportItems .report-table td input[type="checkbox"] { transform: translate(3px, 3px); }
 input[type="checkbox"] { accent-color: var(--jf-primary); color-scheme: dark; margin: 0; cursor: pointer; }
 
 .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--jf-border); margin-bottom: 12px; }
@@ -317,35 +318,42 @@ input[type="checkbox"] { accent-color: var(--jf-primary); color-scheme: dark; ma
 .toast.err { background: rgba(46,27,32,0.95); border: 1px solid var(--jf-danger); color: var(--jf-danger); }
 @keyframes fadein { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 
-/* transfer toasts */
+/* transfer panel — one persistent box for confirm progress */
 .transfer-toasts { position: fixed; right: 20px; bottom: 20px; z-index: 300; display: flex; flex-direction: column; gap: 8px; width: 380px; max-width: calc(100vw - 40px); }
-.transfer-header { background: rgba(22,29,42,0.95); border: 1px solid var(--jf-border); border-radius: 14px; padding: 12px 14px; backdrop-filter: blur(12px); }
-.transfer-title { font-size: 0.85rem; font-weight: 650; overflow-wrap: anywhere; word-break: break-word; }
+.transfer-panel { background: rgba(22,29,42,0.95); border: 1px solid var(--jf-border); border-radius: 14px; padding: 12px 14px; backdrop-filter: blur(12px); box-shadow: 0 12px 32px rgba(0,0,0,0.4); animation: fadein .2s; }
+.transfer-header { display: flex; align-items: center; gap: 8px; }
+.transfer-title { font-size: 0.85rem; font-weight: 650; overflow-wrap: anywhere; word-break: break-word; display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+.transfer-header-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.transfer-min-toggle, .transfer-dismiss { background: none; border: none; cursor: pointer; color: var(--jf-text-muted); font-size: 0.85rem; line-height: 1; padding: 4px 6px; border-radius: 8px; }
+.transfer-min-toggle:hover, .transfer-dismiss:hover { color: var(--jf-text); background: rgba(255,255,255,0.06); }
+.transfer-panel.minimized { display: flex; align-items: center; gap: 8px; padding: 9px 12px; }
+.transfer-panel.minimized .transfer-title { font-size: 0.8rem; }
 .transfer-queued { color: var(--jf-text-muted); font-weight: 500; }
 .transfer-progress { height: 6px; background: rgba(255,255,255,0.08); border-radius: 999px; margin-top: 8px; overflow: hidden; }
 .transfer-progress .fill { height: 100%; background: linear-gradient(90deg, var(--jf-primary-deep), var(--jf-primary)); border-radius: 999px; transition: width .3s; }
 .transfer-progress .fill.file { background: var(--jf-primary-hover); }
 .transfer-counts { font-size: 0.72rem; color: var(--jf-text-muted); margin-top: 4px; overflow-wrap: anywhere; word-break: break-word; }
-.transfer-queue { display: flex; flex-direction: column; gap: 8px; }
-.transfer-toast { background: rgba(22,29,42,0.95); border: 1px solid var(--jf-border); border-radius: 12px; padding: 9px 12px; animation: fadein .2s; font-size: 0.82rem; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
-.transfer-toast.done { border-color: rgba(52,211,153,0.4); }
-.transfer-toast.failed { border-color: rgba(251,113,133,0.45); }
-.transfer-toast.queued { opacity: .75; }
-.transfer-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.transfer-groups { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; max-height: 40vh; overflow-y: auto; }
+.transfer-group-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.transfer-group-name { font-size: 0.78rem; font-weight: 650; color: var(--jf-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.transfer-group-count { font-size: 0.7rem; color: var(--jf-text-faint); background: rgba(255,255,255,0.05); border: 1px solid var(--jf-border-soft); padding: 1px 8px; border-radius: 999px; flex: none; }
+.transfer-queued-badge { font-size: 0.68rem; color: var(--jf-primary-hover); background: var(--jf-primary-dim); border: 1px solid var(--jf-border); padding: 1px 8px; border-radius: 999px; flex: none; margin-left: auto; }
+.transfer-group-rows { display: flex; flex-direction: column; gap: 2px; }
+.transfer-row { padding: 3px 0; font-size: 0.82rem; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
+.transfer-row-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.transfer-row.done .transfer-name { color: var(--jf-text-muted); }
+.transfer-row.failed .transfer-name { color: var(--jf-danger); }
+.transfer-row.queued .transfer-name { color: var(--jf-text-muted); }
 .transfer-name { font-size: 0.78rem; color: var(--jf-text); min-width: 0; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.35; }
-.transfer-toast.queued .transfer-name { color: var(--jf-text-muted); }
+.transfer-toast { background: rgba(22,29,42,0.95); border: 1px solid var(--jf-border); border-radius: 12px; padding: 9px 12px; animation: fadein .2s; font-size: 0.82rem; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
 .transfer-tick { color: var(--jf-success); font-weight: 700; flex-shrink: 0; }
 .transfer-fail { color: var(--jf-danger); font-weight: 700; flex-shrink: 0; }
 .transfer-spinner { width: 12px; height: 12px; flex-shrink: 0; border: 2px solid rgba(255,255,255,0.15); border-top-color: var(--jf-primary); border-radius: 50%; animation: spin .6s linear infinite; }
 .transfer-wait { color: var(--jf-text-faint); flex-shrink: 0; }
-.transfer-file { margin-top: 6px; }
+.transfer-file { margin-top: 6px; padding-left: 20px; }
 .transfer-file-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.72rem; color: var(--jf-text-muted); margin-top: 4px; }
 .transfer-extra { font-size: 0.72rem; color: var(--jf-text-muted); text-align: center; padding: 2px; }
-.transfer-waiting { font-size: 0.72rem; color: var(--jf-text-muted); text-align: center; padding: 2px; }
 .transfer-upnext { font-size: 0.68rem; color: var(--jf-text-muted); margin-bottom: 2px; }
-.transfer-details-toggle { background: none; border: none; cursor: pointer; font-size: 0.72rem; color: var(--jf-primary-hover); text-align: center; padding: 2px; }
-.transfer-details-toggle:hover { text-decoration: underline; }
-.transfer-queue.expanded { max-height: 40vh; overflow-y: auto; }
 .transfer-toast.toast-info { border-color: var(--jf-primary); color: var(--jf-primary-hover); }
 .transfer-toast.toast-good { border-color: var(--jf-success); color: var(--jf-success); }
 .transfer-toast.toast-err { border-color: var(--jf-danger); color: var(--jf-danger); }
@@ -754,17 +762,25 @@ button.small.link-toggle { display: inline-flex; align-items: center; justify-co
 button.small.link-toggle.active { border-color: var(--jf-accent, #00a4dc); background: rgba(0,164,220,0.15); }
 button.small.link-toggle svg { display: block; }
 
-.empty-celebration {
-  display: flex; align-items: center; gap: 14px;
-  background: linear-gradient(180deg, rgba(255,255,255,0.025), transparent), rgba(52,211,153,0.06);
-  border: 1px solid rgba(52,211,153,0.22);
-  border-radius: 16px; padding: 16px; margin: 12px 0;
-  color: var(--jf-text); font-size: 0.86rem; line-height: 1.45;
+/* empty report state — organized panel shown when there is nothing to move */
+.empty-report {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent), var(--jf-bg-raised, #101624);
+  border: 1px dashed rgba(148,163,184,0.32);
+  border-radius: 14px; padding: 20px 24px; margin-top: 10px;
   animation: fadein .25s ease;
 }
-.empty-celebration.has-skipped { border-color: var(--jf-border); background: rgba(255,255,255,0.02); }
-.empty-icon { width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 12px; background: rgba(52,211,153,0.14); color: var(--jf-success); font-weight: 700; font-size: 1rem; }
-.empty-celebration:not(.has-skipped) .empty-icon { background: rgba(255,255,255,0.06); color: var(--jf-text-muted); }
+.empty-report.has-skipped { border-color: var(--jf-border); background: rgba(255,255,255,0.02); }
+.empty-report-icon {
+  width: 46px; height: 46px; flex: none; display: grid; place-items: center;
+  border-radius: 14px; background: rgba(52,211,153,0.12); color: var(--jf-success);
+  font-weight: 700; font-size: 1.15rem;
+}
+.empty-report:not(.has-skipped) .empty-report-icon { background: rgba(255,255,255,0.06); color: var(--jf-text-muted); }
+.empty-report-copy { flex: 1 1 240px; min-width: 0; font-size: 0.88rem; line-height: 1.5; color: var(--jf-text); }
+.empty-report-copy strong { font-size: 0.95rem; color: #fff; }
+.empty-report-sub { color: var(--jf-text-muted); font-size: 0.82rem; margin-top: 3px; }
+.empty-report-actions { display: flex; align-items: center; gap: 8px; }
 
 .filter-chips button { transition: background .15s ease, color .15s ease; }
 .filter-chips button:active { transform: scale(0.96); }
@@ -777,7 +793,7 @@ button.small.link-toggle svg { display: block; }
 ::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.22); border-radius: 8px; border: 2px solid var(--jf-bg); }
 ::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.35); }
 
-@media (max-width: 720px) {
+@media (max-width: 730px) {
   body { padding: 0 12px 32px; }
   .top-bar { top: 8px; padding: 10px 12px; border-radius: 16px; }
   .panel, .report-hero { padding: 16px; border-radius: 16px; }
@@ -788,12 +804,12 @@ button.small.link-toggle svg { display: block; }
   #reportItems td { border: none; padding: 5px 10px; }
 }
 
-/* ── ≤720px: report rows → 2-line cards (action line + path line) ── */
-@media (max-width: 720px) {
+/* ── ≤730px: report rows → 2-line cards (action line + path line) ── */
+@media (max-width: 730px) {
   #reportItems tbody tr {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto auto;
-    gap: 4px 8px;
+    gap: 4px 4px;
     align-items: center;
   }
   #reportItems td { width: auto; overflow: visible; }
@@ -817,6 +833,67 @@ button.small.link-toggle svg { display: block; }
   }
   #reportItems .path-cell .source-name::-webkit-scrollbar { height: 4px; }
   #reportItems .path-cell .source-name::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.25); border-radius: 4px; }
+
+  /* report toolbar: stack clean, chips lose the pill container so wrapped
+     rows don't stretch its rounded background */
+  .report-toolbar { flex-direction: column; align-items: stretch; gap: 10px; width: 100%; }
+  .report-search { flex: 1 1 100%; max-width: none; min-width: 0; margin-left: 0; }
+  .filter-chips { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; background: transparent; border: none; border-radius: 0; padding: 0; }
+  .filter-chips button { flex: 1 1 auto; min-height: 36px; }
+  .report-actions { margin-left: 0; width: 100%; }
+  .report-actions button { width: 100%; min-height: 36px; }
+}
+
+/* ── ≤730px: history rows → 2-line cards + sticky stack (port of the report treatment) ── */
+@media (max-width: 730px) {
+  /* card conversion */
+  .history-page .report-table thead { display: none; }
+  .history-page .report-table, .history-page .report-table tbody,
+  .history-page .report-table tr, .history-page .report-table td { display: block; width: 100%; }
+  .history-page .report-table tbody tr {
+    border: 1px solid var(--jf-border-soft); border-radius: 12px;
+    margin-bottom: 8px; padding: 4px 6px; background: rgba(255,255,255,0.015);
+  }
+  .history-page .report-table td { border: none; padding: 5px 10px; width: auto; overflow: visible; }
+
+  /* 2-line + 1 card: line 1 = Action + Status (Status right-aligned), line 2 =
+     full-width path, line 3 = Size + Trail. Flex-wrap keeps every chip at its
+     natural width — grid auto tracks either overflowed the 390px card
+     (5-col line 1) or blew out max-content (4 autos), so nothing truncates. */
+  .history-page .report-table tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    align-items: center;
+  }
+  .history-page .report-table td { flex: 0 1 auto; min-width: 0; }
+  .history-page .report-table td:nth-child(1) { order: 1; flex: 1 1 48%; }           /* Action — fills, wraps badges */
+  .history-page .report-table td:nth-child(2) { order: 3; flex: 1 1 100%; }          /* Source→Target */
+  .history-page .report-table td:nth-child(3) { order: 4; }                          /* Size */
+  .history-page .report-table td:nth-child(4) { order: 4; }                          /* Trail */
+  .history-page .report-table td:nth-child(5) { order: 1; margin-left: auto; text-align: right; } /* Status */
+
+  /* flatten action-cell */
+  .history-page .action-cell { flex-direction: row; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .history-page .action-cell .action-top { flex: none; }
+  .history-page .action-cell .action-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .history-page .path-cell .source-name {
+    overflow-x: auto;
+    overflow-y: hidden;
+    text-overflow: clip;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148,163,184,0.25) transparent;
+    padding-bottom: 2px;
+  }
+  .history-page .path-cell .source-name::-webkit-scrollbar { height: 4px; }
+  .history-page .path-cell .source-name::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.25); border-radius: 4px; }
+
+  /* sticky stack on mobile (sticky is wanted — no position:static override) */
+  .history-page .history-header { position: sticky; top: 64px; z-index: 20; background: var(--jf-surface-solid); }
+  .history-page .report-table thead th { position: sticky; top: 103px; z-index: 19; background: #141b2d; }
+  .history-page .table-scroll { overflow: visible; }
 }
 
 /* ── <930px: top-bar subtitle hides before the bar starts wrapping ── */
@@ -835,6 +912,11 @@ button.small.link-toggle svg { display: block; }
   img { max-width: 100%; height: auto; }
   table { display: block; overflow-x: auto; }
   input, select, textarea { font-size: 16px !important; }
+
+  /* report/history path inputs + search keep their design size instead of jumping to 16px */
+  .report-search input,
+  #reportItems .target-input,
+  .history-page .target-input { font-size: 0.78rem !important; }
 
   .panel, .report-hero { padding: 12px; }
 

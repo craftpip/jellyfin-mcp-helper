@@ -188,6 +188,26 @@ Verification:
 3. Confirm real episodes with codec decimals remain series.
 4. Confirm numbered anime extras are skipped.
 
+### Bundle containers that declare extras (anime batches)
+
+**Problem:** A batch container like `[Seto_Otaku]_Show!_Ep1-12_+_Extras_&_OST_[1080p...]` held root episodes plus nested subfolders (OST/, NCOP/, Extras/). Nested OST files (`OST/01 - Theme.mkv`) classified as `kind=series episode 1`; nested files that were caught as extras still got a garbage title (`_Show!_Ep1-12_+_Extras_&_OST`), and the resolved show title was stolen from the junk container.
+
+**Affected file:** `app/classification/titles.py`, `app/classification/classifier.py`.
+
+**Fix:**
+
+- `app/classification/titles.py`: `_BUNDLE_EXTRA_SIGNALS_RE` (extras/ova/ona/specials/bonus/ost/soundtrack words), `_BUNDLE_EP_RANGE_RE` (`Ep1-12` tail), `_BUNDLE_DECL_WORDS`, `_container_declares_extras(container_name)`, `_extract_bundle_show_title(raw_name)` (base show title, stopping at the ep-range / extras tail), `_bundle_show_title_from_container(candidate)`.
+- `app/classification/classifier.py`: after the extra_type + folder-title hierarchy blocks, if the container declares extras (`_bundle_show_title_from_container` non-None) the title becomes the bundle show title; when the file is nested in a subfolder (`"/" in candidate.relative_path`) and kind is series/movie, reclassify as `kind=extra` with `reason="Bundle container extras"`, filling `extra_type="special"` when unset. No `episode is None` guard — guessit sets a bare number on `01 - Theme.mkv`, and the block must run after `extra_type` is computed so the extra_type result isn't overwritten.
+
+**Correct behavior:**
+
+- Root episode `Show! - 05.mkv` in bundle → kind=series, title `Show!`, episode 5.
+- `OST/01 - Theme.mkv` → kind=extra, title `Show!`, extra_type special.
+- `NCOP/NCOP01.mkv` / `Extras/...` → kind=extra, title `Show!`.
+- Container without an extras/OST signal → no bundle override.
+
+**Verification:** `tests/test_classifier.py` (`test_bundle_nested_ost_is_extra_of_bundle_show`, `test_bundle_root_episode_keeps_series_with_bundle_title`, `test_bundle_declares_extras_only_when_signal_present`). Full suite 440 passed.
+
 ### Decimal-style titles and numeric junk in classifier
 
 **Problem:** Series with a decimal in the title (e.g., `2.5`-prefixed titles) and folders with underscore numeric junk (e.g., `Nimbus 7_9 (2020)`) were mangled.
@@ -529,7 +549,23 @@ The store's `onTargetInputChange` (AppStore.jsx) already skips revert when `comp
 
 The scan report still uses the cumulative `scan.counts` (unchanged), so the post-confirm report summary stays correct.
 
+**Panel total spans queued batches:** the transfer panel shows `total = confirm_total + queue_items`, so "Moving 1 of 5" covers the running batch plus files queued behind it. `processed`/`counts` stay per-confirm (above).
+
 **Verification:** `python3 -m pytest tests/` (the confirm-progress test in `tests/test_scan_errors.py` now asserts `processed`/`total` and per-confirm `counts`). Live: after several one-by-one confirms, each modal shows `Overall: N/N (100%)` with per-batch counts, never `5/1`.
+
+### Transfer panel (persistent single box, grouped, minimizable)
+
+**Design:** one persistent `.transfer-panel` bottom-right (`Toasts.jsx`: `TransferPanel`/`TransferGroup`/`TransferRow`), not one toast per file. Rows are grouped by show/movie title with per-group counts; queued batches get a `Queued` badge. Recovered from the lost `02adad0` bundle (plan 15); the drive-style collapsed toasts it replaced are gone (tests in `Toasts.test.jsx` rewritten for the panel).
+
+- Minimize (▾/▴, terminal-agnostic) persists in `localStorage jsort_transfer_minimized` via `setTransferMinimized`; dismiss (✕, terminal states only) clears queue+summary and refreshes the report.
+- Done rows fade after 5s (`TRANSFER_DONE_REMOVE_MS=5000`, done-only — failed rows stay); a terminal panel persists until dismissed (no auto-dismiss). Terminal states clear the transfer-active flag and the removal timers so rows don't vanish under the completed header.
+- Queue items carry `group`/`kind`/`batch` (`buildTransferQueue` from report `title`/`itemType`, batch `running`; `buildTransferQueueFromGroups` ports backend `queue_groups` for reload restore, preserving payload order as `order` so progress polls keep aligning rows).
+- Live polls rebuild sections from `queue_groups` (keeping locally-done rows the payload doesn't know yet) and mark `current_file` copying; without the payload they fall back to order-aligned `deriveTransferQueue`.
+- Reload restore is gated behind `localStorage jsort_transfer_active` (set on every confirm start incl. queued starts, cleared on dismiss/terminal/empty restore) so unrelated page loads never poll confirm-progress. `restoreTransfer()` runs after `checkConnection` auth success, rebuilds rows from `queue_groups`, resumes polling, restores minimized state.
+
+**Backend (`queue_groups`):** `format_confirm_progress` (`presenters.py`) adds `queue_groups` — running batch from `ScanPlan.confirm_item_ids`, then one section per queued batch from `confirm_queue_item_ids` (both snapshotted in `scan_manager`: `_start_confirm` / `_update_confirm_state` via `_match_confirm_items`). Grouping rule mirrors frontend `mapReportItems` title logic (`_transfer_group_title`: series → third-from-last target part, else second-from-last). Items carry `failed: bool(item.error)` (failed keeps `confirmed=False`).
+
+**Verification:** `docker exec jellysort python3 -m pytest tests/` (`test_presenters.py` queue-group tests, `test_scan_errors.py` snapshot test) + `npm test` in `app/ui/react`. Live: confirm a series then queue another confirm — panel shows both groups under their names; reload mid-move — panel restores; minimize, reload — still minimized; dismiss a completed panel — report refreshes.
 
 ### Auto-load report on scan complete and page load
 

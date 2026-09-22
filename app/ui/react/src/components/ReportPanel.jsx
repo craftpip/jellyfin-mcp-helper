@@ -136,19 +136,25 @@ export default function ReportPanel() {
       })()}
 
       {!hasItems && (
-        <div className={'empty-celebration' + (hasSkippedOnly ? ' has-skipped' : '')}>
-          {hasSkippedOnly ? (
-            <>
-              <div className="empty-icon">✓</div>
-              <div>
+        <div className={'empty-report' + (hasSkippedOnly ? ' has-skipped' : '')}>
+          <div className="empty-report-icon">{hasSkippedOnly ? '✓' : '○'}</div>
+          <div className="empty-report-copy">
+            {hasSkippedOnly ? (
+              <>
                 <strong>All caught up</strong> — nothing to move. {skipped.length} file(s) skipped {skippedSize ? '(' + formatBytes(skippedSize) + ')' : ''}{skipped.every((i) => (i.reason || '').toLowerCase().includes('in-progress')) ? ' — in-progress downloads will appear after they finish' : ''}.
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="empty-icon">○</div>
-              <div>No items to review. Run a scan to see what can be organized.</div>
-            </>
+              </>
+            ) : (
+              <>
+                <strong>Nothing to organize</strong>
+                <div className="empty-report-sub">Your last scan found no new files to move — everything is already in its library folder.</div>
+              </>
+            )}
+          </div>
+          {!hasSkippedOnly && (
+            <div className="empty-report-actions">
+              <button className="primary small" onClick={() => actions.startScan()}>Run a scan</button>
+              <button className="small" onClick={() => actions.setPage('history')}>View history</button>
+            </div>
           )}
         </div>
       )}

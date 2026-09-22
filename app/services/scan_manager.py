@@ -220,8 +220,10 @@ class ScanManager:
     def _apply_retarget(self, item: ScannedItem, directory: Path, reclassify_as_movie: bool) -> None:
         retarget.apply_retarget(item, directory, reclassify_as_movie, self._resolver)
 
-    def _get_confirm_total(self, scan: ScanPlan, item_ids, source_paths, source_prefixes) -> int:
-        total = 0
+    def _match_confirm_items(
+        self, scan: ScanPlan, item_ids, source_paths, source_prefixes
+    ) -> list[ScannedItem]:
+        matched = []
         for item in scan.items:
             if item.action == "skip":
                 continue
@@ -235,14 +237,23 @@ class ScanManager:
                 item.source_path.startswith(prefix) for prefix in source_prefixes
             ):
                 continue
-            total += 1
-        return total
+            matched.append(item)
+        return matched
+
+    def _get_confirm_total(self, scan: ScanPlan, item_ids, source_paths, source_prefixes) -> int:
+        return len(self._match_confirm_items(scan, item_ids, source_paths, source_prefixes))
 
     def _update_confirm_state(self, scan: ScanPlan, **fields) -> None:
         for key, value in fields.items():
             setattr(scan, key, value)
         scan.confirm_queue_length = len(self._confirm_queue)
         scan.confirm_queue_items = sum(entry["total"] for entry in self._confirm_queue)
+        scan.confirm_queue_item_ids = [
+            [item.confirm_id for item in self._match_confirm_items(
+                scan, entry.get("item_ids"), entry.get("source_paths"), entry.get("source_prefixes")
+            )]
+            for entry in self._confirm_queue
+        ]
         scan.confirm_last_update_at = datetime.now(UTC)
 
     async def confirm_scan(
@@ -314,6 +325,10 @@ class ScanManager:
         scan.confirm_start_moved = scan.counts.moved
         scan.confirm_start_replaced = scan.counts.replaced
         scan.confirm_start_failed = scan.counts.failed
+        scan.confirm_item_ids = [
+            item.confirm_id
+            for item in self._match_confirm_items(scan, item_ids, source_paths, source_prefixes)
+        ]
         self._update_confirm_state(
             scan,
             confirm_phase="preparing",

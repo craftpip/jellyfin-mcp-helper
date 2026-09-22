@@ -3,15 +3,20 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import Toasts from './Toasts.jsx'
 
 let mockStore
+let mockActions
 
 vi.mock('../store/AppStore.jsx', () => ({
-  useAppStore: () => ({ state: mockStore }),
+  useAppStore: () => ({ state: mockStore, actions: mockActions }),
 }))
 
 const QUEUE = [
   {
     id: 'transfer-a',
     order: 0,
+    confirmId: 'a',
+    group: 'Show Name',
+    kind: 'series',
+    batch: 'running',
     sourcePath: '/media1/d/alpha.mkv',
     name: 'alpha.mkv',
     state: 'done',
@@ -21,6 +26,10 @@ const QUEUE = [
   {
     id: 'transfer-b',
     order: 1,
+    confirmId: 'b',
+    group: 'Show Name',
+    kind: 'series',
+    batch: 'running',
     sourcePath: '/media1/d/beta.mkv',
     name: 'beta.mkv',
     state: 'copying',
@@ -36,6 +45,10 @@ const QUEUE = [
   {
     id: 'transfer-c',
     order: 2,
+    confirmId: 'c',
+    group: 'Movie',
+    kind: 'movie',
+    batch: 'queued',
     sourcePath: '/media1/d/gamma.mkv',
     name: 'gamma.mkv',
     state: 'queued',
@@ -52,102 +65,42 @@ const SUMMARY = {
 }
 
 beforeEach(() => {
-  mockStore = { toasts: [], transferQueue: [], transferSummary: null }
+  mockActions = { setTransferMinimized: vi.fn(), dismissTransfer: vi.fn() }
+  mockStore = { toasts: [], transferQueue: [], transferSummary: null, transferMinimized: false }
 })
 
-describe('Toasts transfer queue', () => {
+describe('Toasts transfer panel', () => {
   it('renders nothing when the queue is empty', () => {
     const { container } = render(<Toasts />)
     expect(container.querySelector('.transfer-toasts')).toBeNull()
   })
 
-  it('collapses to the active file with live copy stats and a queue count', () => {
+  it('renders one persistent panel grouped by show/movie with live copy stats', () => {
     mockStore = { ...mockStore, transferQueue: QUEUE, transferSummary: SUMMARY }
     const { container } = render(<Toasts />)
 
     expect(screen.getByText('Moving 1 of 3')).toBeInTheDocument()
-    // Only the copying file is shown; done + queued rows stay hidden
+    // Single panel, sections carry the group names + counts
+    expect(container.querySelectorAll('.transfer-panel')).toHaveLength(1)
+    expect(screen.getByText('Show Name')).toBeInTheDocument()
+    expect(screen.getByText('Movie')).toBeInTheDocument()
+    // Queued batch section is badged
+    expect(screen.getByText('Queued')).toBeInTheDocument()
+    // Every row is listed (scrollable list, no cap)
+    expect(screen.getByText('alpha.mkv')).toBeInTheDocument()
     expect(screen.getByText('beta.mkv')).toBeInTheDocument()
-    expect(screen.queryByText('alpha.mkv')).not.toBeInTheDocument()
-    expect(screen.queryByText('gamma.mkv')).not.toBeInTheDocument()
-    expect(screen.getByText('1 file in queue')).toBeInTheDocument()
+    expect(screen.getByText('gamma.mkv')).toBeInTheDocument()
 
     expect(screen.getByText('Moved: 1 · Replaced: 0 · Failed: 0')).toBeInTheDocument()
     expect(screen.getByText('2.3 GB / 4.1 GB')).toBeInTheDocument()
     expect(screen.getByText('21.5 MB/s')).toBeInTheDocument()
     expect(screen.getByText('ETA 1m 17s')).toBeInTheDocument()
 
-    const copyingRow = container.querySelector('.transfer-toast.copying')
+    const copyingRow = container.querySelector('.transfer-row.copying')
     expect(copyingRow.querySelector('.transfer-spinner')).toBeTruthy()
     expect(copyingRow.querySelector('.transfer-progress .fill.file').style.width).toBe('60%')
-  })
-
-  it('expands to the full list and collapses again', () => {
-    mockStore = { ...mockStore, transferQueue: QUEUE, transferSummary: SUMMARY }
-    const { container } = render(<Toasts />)
-
-    fireEvent.click(screen.getByText('Show all 3'))
-    expect(screen.getByText('alpha.mkv')).toBeInTheDocument()
-    expect(screen.getByText('beta.mkv')).toBeInTheDocument()
-    expect(screen.getByText('gamma.mkv')).toBeInTheDocument()
-    expect(container.querySelector('.transfer-queue.expanded')).toBeTruthy()
-    const doneRow = container.querySelector('.transfer-toast.done')
+    const doneRow = container.querySelector('.transfer-row.done')
     expect(doneRow.querySelector('.transfer-tick')).toBeTruthy()
-
-    fireEvent.click(screen.getByText('Show less'))
-    expect(screen.queryByText('alpha.mkv')).not.toBeInTheDocument()
-    expect(screen.getByText('beta.mkv')).toBeInTheDocument()
-  })
-
-  it('shows the next queued file before the copy starts', () => {
-    const queuedOnly = QUEUE.map((t) => ({ ...t, state: 'queued', progress: null }))
-    mockStore = {
-      ...mockStore,
-      transferQueue: queuedOnly,
-      transferSummary: { ...SUMMARY, processed: 0 },
-    }
-    render(<Toasts />)
-    expect(screen.getByText('Up next')).toBeInTheDocument()
-    expect(screen.getByText('alpha.mkv')).toBeInTheDocument()
-    expect(screen.queryByText('beta.mkv')).not.toBeInTheDocument()
-    expect(screen.getByText('2 files in queue')).toBeInTheDocument()
-  })
-
-  it('hides the queue count when nothing is waiting', () => {
-    const solo = [QUEUE[1]]
-    mockStore = {
-      ...mockStore,
-      transferQueue: solo,
-      transferSummary: { processed: 0, total: 1, status: 'running', counts: {} },
-    }
-    render(<Toasts />)
-    expect(screen.getByText('beta.mkv')).toBeInTheDocument()
-    expect(screen.queryByText(/in queue/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/Show all/)).not.toBeInTheDocument()
-  })
-
-  it('shows a completed header when the move is done', () => {
-    mockStore = {
-      ...mockStore,
-      transferQueue: QUEUE,
-      transferSummary: { ...SUMMARY, status: 'completed', processed: 3 },
-    }
-    const { container } = render(<Toasts />)
-    expect(screen.getByText('Move completed')).toBeInTheDocument()
-    // No live row in terminal states — details stay behind the expander
-    expect(container.querySelector('.transfer-queue .transfer-toast')).toBeNull()
-    fireEvent.click(screen.getByText('Show all 3'))
-    expect(screen.getByText('alpha.mkv')).toBeInTheDocument()
-  })
-
-  it('shows a failed header when the confirm failed', () => {
-    mockStore = {
-      ...mockStore,
-      transferQueue: QUEUE,
-      transferSummary: { ...SUMMARY, status: 'failed' },
-    }
-    render(<Toasts />)
-    expect(screen.getByText('Confirm failed')).toBeInTheDocument()
   })
 
   it('shows the queued-batch count while a move is running', () => {
@@ -169,6 +122,64 @@ describe('Toasts transfer queue', () => {
     }
     render(<Toasts />)
     expect(screen.getByText(/1 batch queued/)).toBeInTheDocument()
+  })
+
+  it('shows the next queued file as up next before the copy starts', () => {
+    const queuedOnly = QUEUE.map((t) => ({ ...t, state: 'queued', progress: null }))
+    mockStore = {
+      ...mockStore,
+      transferQueue: queuedOnly,
+      transferSummary: { ...SUMMARY, processed: 0 },
+    }
+    render(<Toasts />)
+    expect(screen.getByText('Up next')).toBeInTheDocument()
+    expect(screen.getByText('alpha.mkv')).toBeInTheDocument()
+  })
+
+  it('minimizes to a strip and expands again', () => {
+    mockStore = { ...mockStore, transferQueue: QUEUE, transferSummary: SUMMARY }
+    const { rerender } = render(<Toasts />)
+
+    fireEvent.click(screen.getByLabelText('Minimize transfer panel'))
+    expect(mockActions.setTransferMinimized).toHaveBeenCalledWith(true)
+
+    mockStore = { ...mockStore, transferMinimized: true }
+    rerender(<Toasts />)
+    expect(screen.getByLabelText('Expand transfer panel')).toBeInTheDocument()
+    // Minimized strip keeps the title but hides the rows
+    expect(screen.getByText('Moving 1 of 3')).toBeInTheDocument()
+    expect(screen.queryByText('beta.mkv')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('Expand transfer panel'))
+    expect(mockActions.setTransferMinimized).toHaveBeenCalledWith(false)
+  })
+
+  it('shows a completed header with dismiss and no minimize-only exit', () => {
+    mockStore = {
+      ...mockStore,
+      transferQueue: QUEUE,
+      transferSummary: { ...SUMMARY, status: 'completed', processed: 3 },
+    }
+    render(<Toasts />)
+    expect(screen.getByText('Move completed')).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Dismiss transfer panel'))
+    expect(mockActions.dismissTransfer).toHaveBeenCalled()
+  })
+
+  it('shows a failed header when the confirm failed', () => {
+    mockStore = {
+      ...mockStore,
+      transferQueue: QUEUE,
+      transferSummary: { ...SUMMARY, status: 'failed' },
+    }
+    render(<Toasts />)
+    expect(screen.getByText('Confirm failed')).toBeInTheDocument()
+  })
+
+  it('offers no dismiss while the move is still running', () => {
+    mockStore = { ...mockStore, transferQueue: QUEUE, transferSummary: SUMMARY }
+    render(<Toasts />)
+    expect(screen.queryByLabelText('Dismiss transfer panel')).not.toBeInTheDocument()
   })
 })
 

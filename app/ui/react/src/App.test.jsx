@@ -42,6 +42,9 @@ const REPORT = {
 
 beforeEach(() => {
   window.history.pushState({}, '', '/')
+  try {
+    localStorage.removeItem('jsort_transfer_active')
+  } catch {}
   vi.stubGlobal(
     'fetch',
     vi.fn((url, opts) => {
