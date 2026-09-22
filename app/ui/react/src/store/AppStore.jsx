@@ -62,6 +62,7 @@ const initialState = {
   authed: false,
   rootsConfigured: true,
   page: 'scan',
+  navMenuOpen: false,
   jellyfinLibraries: [],
   libraryScanning: null,
   // Scan slice
@@ -140,6 +141,8 @@ function reducer(state, action) {
       return { ...state, browseModal: action.browse }
     case 'SET_PAGE':
       return { ...state, page: action.page }
+    case 'SET_NAV_MENU':
+      return { ...state, navMenuOpen: action.open }
     default:
       return state
   }
@@ -976,6 +979,10 @@ export function AppStoreProvider({ children }) {
     if (page === 'settings' && !stateRef.current.adminEnv) loadEnv()
   }
 
+  function setNavMenu(open) {
+    dispatch({ type: 'SET_NAV_MENU', open: !!open })
+  }
+
   function setFilter(filter) {
     const valid = ['all', 'move', 'replace', 'extra', 'suspect'].includes(filter) ? filter : 'all'
     dispatch({ type: 'SET_FILTER', filter: valid })
@@ -1117,6 +1124,7 @@ export function AppStoreProvider({ children }) {
     closeBrowse,
     retargetItem,
     setPage,
+    setNavMenu,
     setFilter,
     setSearchQuery,
     loadEnv,

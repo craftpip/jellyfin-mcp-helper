@@ -101,7 +101,7 @@ export default function ReportPanel() {
 
   return (
     <>
-      <div id="reportPanel" className="report-bar">
+      <div id="reportPanel" className={`report-bar${state.navMenuOpen ? ' mobile' : ''}`}>
         <h2 className="report-title">Scan Report</h2>
         <span className="report-counts">
           <b>{summary.movies ?? 0}</b> <span>Movies</span> · <b>{summary.series ?? 0}</b> <span>Series</span> ·{' '}
@@ -227,7 +227,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, matchedIds, query
     <div className="report-group">
       <div className={'group-header' + (expanded ? ' expanded' : ' collapsed')} onClick={() => actions.toggleGroup(gid)}>
         <span className={'arrow' + (expanded ? '' : ' collapsed')}>▾</span>
-        <span className="g-title">{highlight(group.title, query)}</span>
+        <span className="g-title" title={group.title}>{highlight(group.title, query)}</span>
         <span className="g-count">{group.items.length} item(s)</span>
         {group.totalSize > 0 && <span className="g-size">{formatBytes(group.totalSize)}</span>}
       </div>
@@ -241,7 +241,7 @@ function ReportGroup({ gid, gi, group, expanded, visibleItems, matchedIds, query
               onChange={(e) => actions.toggleGroupSelect(gi, e.target.checked)}
               style={{ cursor: 'pointer' }}
             />
-            <span className="chk-text" style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>{group.title}</span>
+            <span className="chk-text" title={group.title} style={{ userSelect: 'none', WebkitUserSelect: 'none' }}>{group.title}</span>
           </label>
           {!skipOnly && (
             <a

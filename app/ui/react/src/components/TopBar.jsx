@@ -6,16 +6,18 @@ import logoUrl from '../assets/jellysort-logo.png'
 export default function TopBar() {
   const { state, actions } = useAppStore()
   const [scanMenuOpen, setScanMenuOpen] = useState(false)
+  const navMenuOpen = state.navMenuOpen
   const scanMenuRef = useRef(null)
+  const navWrapRef = useRef(null)
   const barRef = useRef(null)
   useEffect(() => {
     const el = barRef.current
     if (!el) return
-    const onScroll = () => { el.classList.toggle('stuck', window.scrollY > 8) }
+    const onScroll = () => { el.classList.toggle('stuck', state.page === 'scan' && window.scrollY > 8) }
     onScroll()
     window.addEventListener('scroll', onScroll, { passive: true })
     return () => window.removeEventListener('scroll', onScroll)
-  }, [])
+  }, [state.page])
   useEffect(() => {
     if (!scanMenuOpen) return
     const onDocClick = (e) => {
@@ -24,6 +26,14 @@ export default function TopBar() {
     document.addEventListener('click', onDocClick)
     return () => document.removeEventListener('click', onDocClick)
   }, [scanMenuOpen])
+  useEffect(() => {
+    if (!navMenuOpen) return
+    const onDocClick = (e) => {
+      if (navWrapRef.current && !navWrapRef.current.contains(e.target)) actions.setNavMenu(false)
+    }
+    document.addEventListener('click', onDocClick)
+    return () => document.removeEventListener('click', onDocClick)
+  }, [navMenuOpen, actions])
   return (
     <>
       <div className="top-bar" ref={barRef}>
@@ -112,28 +122,42 @@ export default function TopBar() {
               Report
             </button>
           )}
-          {state.jellyfinLibraries.length > 0 && <LibraryScanDropdown />}
-          <button
-            type="button"
-            className={`small ${state.page === 'history' ? 'active' : ''}`}
-            onClick={() => actions.setPage('history')}
-            title="View confirm history"
-          >
-            History
-          </button>
-          <button
-            type="button"
-            className={`small ${state.page === 'settings' ? 'active' : ''}`}
-            onClick={() => actions.setPage('settings')}
-            title="Open settings"
-          >
-            Settings
-          </button>
-          {state.authRequired && state.authed && (
-            <button type="button" className="small logout-btn" onClick={actions.logout} title="Log out of this panel">
-              Logout
+          <div className="nav-wrap" ref={navWrapRef}>
+            <div className={`top-nav${navMenuOpen ? ' open' : ''}`}>
+              {state.jellyfinLibraries.length > 0 && <LibraryScanDropdown />}
+              <button
+                type="button"
+                className={`small ${state.page === 'history' ? 'active' : ''}`}
+                onClick={() => { actions.setNavMenu(false); actions.setPage('history') }}
+                title="View confirm history"
+              >
+                History
+              </button>
+              <button
+                type="button"
+                className={`small ${state.page === 'settings' ? 'active' : ''}`}
+                onClick={() => { actions.setNavMenu(false); actions.setPage('settings') }}
+                title="Open settings"
+              >
+                Settings
+              </button>
+              {state.authRequired && state.authed && (
+                <button type="button" className="small logout-btn" onClick={() => { actions.setNavMenu(false); actions.logout() }} title="Log out of this panel">
+                  Logout
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              className="small nav-burger"
+              onClick={() => actions.setNavMenu(!navMenuOpen)}
+              aria-label="Menu"
+              aria-expanded={navMenuOpen}
+              title="Menu"
+            >
+              ☰
             </button>
-          )}
+          </div>
         </div>
       </div>
     </>
