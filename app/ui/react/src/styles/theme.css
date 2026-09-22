@@ -888,8 +888,9 @@ button.small.link-toggle svg { display: block; }
   .report-search { flex: 1 1 100%; max-width: none; min-width: 0; margin-left: 0; }
   .report-counts { white-space: normal; }
   .report-toolbar { flex-direction: column; align-items: stretch; }
-  .filter-chips { flex-wrap: wrap; }
-  .filter-chips button { min-height: 36px; }
+  /* chips lose the pill container so wrapped rows don't stretch its rounded background */
+  .filter-chips { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; background: transparent; border: none; border-radius: 0; padding: 0; }
+  .filter-chips button { flex: 1 1 auto; min-height: 36px; }
   .report-actions button { min-height: 36px; }
   .group-header { position: static; min-height: 44px; flex-wrap: nowrap; }
   .group-toolbar .chk-label { flex: 1 1 auto; min-width: 0; }
