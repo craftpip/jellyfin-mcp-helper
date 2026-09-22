@@ -411,7 +411,7 @@ input[type="checkbox"] { accent-color: var(--jf-primary); color-scheme: dark; ma
 .report-hero-sub { color: var(--jf-text-muted); font-size: 0.78rem; }
 .report-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .report-toolbar .hint { display: flex; align-items: center; min-height: 28px; }
-.report-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.report-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-left: auto; }
 
 /* modern search */
 .search-bar { display: flex; gap: 8px; align-items: center; }
