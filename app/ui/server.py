@@ -77,6 +77,28 @@ def _browse_root_configs(config) -> list[dict]:
     return roots
 
 
+def _browse_resolve_target(target: str, config) -> str | None:
+    """Nearest existing ancestor dir of a planned target path (read-only).
+
+    Starts at ``dirname(target)`` — the folder the file would land in — and
+    walks up to the closest existing ancestor. Never creates directories.
+    Returns ``None`` when the target is outside all configured roots or
+    nothing in the chain (incl. the root) exists.
+    """
+    target_path = Path(target)
+    root = _browse_root_for(target_path, config)
+    if not root:
+        return None
+    candidate = target_path.parent
+    while True:
+        if candidate.is_dir():
+            return str(candidate)
+        if candidate == root or root not in candidate.parents:
+            break
+        candidate = candidate.parent
+    return str(root) if root.is_dir() else None
+
+
 def _browse_root_for(path: Path, config) -> Path | None:
     for root in list(config.paths.movie_roots.values()) + list(config.paths.series_roots.values()):
         root_path = Path(root).resolve(strict=False)
@@ -969,6 +991,14 @@ def create_ui_app(
         if not dir_path.is_dir():
             raise HTTPException(status_code=400, detail=f"Path '{path}' is not a directory")
         return _browse_entries(dir_path, root)
+
+    @ui_app.get("/api/browse/resolve", dependencies=[Depends(require_panel_auth)])
+    async def api_browse_resolve(request: Request, target: str = ""):
+        manager: ScanManager = request.app.state.scan_manager
+        config = manager._config
+        if not target or not Path(target).is_absolute():
+            raise HTTPException(status_code=400, detail="target must be an absolute path")
+        return {"path": _browse_resolve_target(target, config), "target": target}
 
     @ui_app.get("/api/browse/search", dependencies=[Depends(require_panel_auth)])
     async def api_browse_search(request: Request, q: str = ""):

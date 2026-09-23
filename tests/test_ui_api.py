@@ -347,6 +347,61 @@ class TestBrowseAndRetarget:
             missing = client.get("/api/browse", params={"path": str(tmp_path / "series" / "nope")})
             assert missing.status_code == 400
 
+    def test_browse_resolve_returns_existing_target_dir(self, tmp_path, monkeypatch):
+        season = tmp_path / "series" / "Show" / "Season 01"
+        season.mkdir(parents=True)
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            res = client.get("/api/browse/resolve", params={"target": str(season / "Show - S01E01.mkv")})
+            assert res.status_code == 200
+            body = res.json()
+            assert body["path"] == str(season)
+            assert body["target"] == str(season / "Show - S01E01.mkv")
+
+    def test_browse_resolve_walks_up_to_nearest_existing_ancestor(self, tmp_path, monkeypatch):
+        show = tmp_path / "series" / "Show"
+        show.mkdir(parents=True)
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            # Season missing -> show dir.
+            res = client.get(
+                "/api/browse/resolve",
+                params={"target": str(show / "Season 01" / "Show - S01E01.mkv")},
+            )
+            assert res.status_code == 200
+            assert res.json()["path"] == str(show)
+
+    def test_browse_resolve_falls_back_to_root_then_null(self, tmp_path, monkeypatch):
+        (tmp_path / "series").mkdir(parents=True)
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            # Show missing -> series root.
+            res = client.get(
+                "/api/browse/resolve",
+                params={"target": str(tmp_path / "series" / "Missing" / "Season 01" / "x.mkv")},
+            )
+            assert res.status_code == 200
+            assert res.json()["path"] == str(tmp_path / "series")
+
+            # Target outside every root -> null.
+            outside = client.get("/api/browse/resolve", params={"target": "/tmp/x.mkv"})
+            assert outside.status_code == 200
+            assert outside.json()["path"] is None
+
+            # Relative target -> 400.
+            bad = client.get("/api/browse/resolve", params={"target": "relative/x.mkv"})
+            assert bad.status_code == 400
+
+    def test_browse_resolve_null_when_root_missing(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            res = client.get(
+                "/api/browse/resolve",
+                params={"target": str(tmp_path / "series" / "Show" / "Season 01" / "x.mkv")},
+            )
+            assert res.status_code == 200
+            assert res.json()["path"] is None
+
     def test_browse_search(self, tmp_path, monkeypatch):
         (tmp_path / "series" / "Crumpled Staircase" / "Season 01").mkdir(parents=True)
         (tmp_path / "series" / "Other Show" / "Season 01").mkdir(parents=True)

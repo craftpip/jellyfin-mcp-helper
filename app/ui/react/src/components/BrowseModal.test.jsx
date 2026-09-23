@@ -31,9 +31,11 @@ const ROOTS = {
 }
 
 let posted = []
+let resolvePath = '/media1/series/New Show (2025)'
 
 beforeEach(() => {
   posted = []
+  resolvePath = '/media1/series/New Show (2025)'
   window.history.pushState({}, '', '/')
   vi.stubGlobal(
     'fetch',
@@ -52,6 +54,8 @@ beforeEach(() => {
         payload = REPORT
       } else if (method === 'GET' && path === '/api/browse/roots') {
         payload = ROOTS
+      } else if (method === 'GET' && path.startsWith('/api/browse/resolve?target=')) {
+        payload = { path: resolvePath, target: decodeURIComponent(path.split('target=')[1]) }
       } else if (method === 'GET' && path.startsWith('/api/browse/search?q=')) {
         const q = decodeURIComponent(path.split('q=')[1])
         payload = {
@@ -82,6 +86,13 @@ beforeEach(() => {
               { name: 'Season 05', path: '/media1/series/Existing Show/Season 05', isDir: true, videoCount: 12, seasonNumber: 5 },
             ],
           }
+        } else if (dir === '/media1/series/New Show (2025)') {
+          payload = {
+            path: '/media1/series/New Show (2025)',
+            parent: '/media1/series',
+            root: '/media1/series',
+            entries: [],
+          }
         } else {
           payload = { path: dir, parent: null, root: '/media1/series', entries: [] }
         }
@@ -105,7 +116,7 @@ function renderApp() {
 }
 
 describe('BrowseModal', () => {
-  it('opens on all libraries, browses into a folder and retargets the item', async () => {
+  it('opens at the resolved target folder, climbs back to all libraries, then retargets', async () => {
     renderApp()
 
     expect(await screen.findAllByText('New Show (2025)')).toBeTruthy()
@@ -114,9 +125,13 @@ describe('BrowseModal', () => {
     await userEvent.click(screen.getByRole('button', { name: /Browse/ }))
 
     expect(await screen.findByText('Choose target folder')).toBeInTheDocument()
+    // Resolved open path (the existing show folder), not the roots list.
+    expect(await screen.findByText(/Target: .*New Show \(2025\)/)).toBeInTheDocument()
+    expect(screen.queryByText('/media1/movies')).not.toBeInTheDocument()
+    // The All libraries crumb is present so climbing back works.
+    await userEvent.click(screen.getByText('All libraries'))
     expect(screen.getAllByText('/media1/series').length).toBeGreaterThan(0)
     expect(screen.getAllByText('/media1/movies').length).toBeGreaterThan(0)
-    expect(screen.queryByText('All libraries')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getAllByText('/media1/series')[0])
     expect(await screen.findByText('Existing Show')).toBeInTheDocument()
@@ -135,6 +150,19 @@ describe('BrowseModal', () => {
     expect(posted[0].directory).toBe('/media1/series/Existing Show/Season 05')
     expect(posted[0].applyToGroup).toBe(false)
     expect(posted[0].reclassifyAsMovie).toBe(false)
+  })
+
+  it('falls back to all libraries when the target does not resolve', async () => {
+    resolvePath = null
+    renderApp()
+
+    expect(await screen.findAllByText('New Show (2025)')).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: /Browse/ }))
+
+    expect(await screen.findByText('Choose target folder')).toBeInTheDocument()
+    expect(screen.getAllByText('/media1/series').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('/media1/movies').length).toBeGreaterThan(0)
+    expect(screen.queryByText('All libraries')).not.toBeInTheDocument()
   })
 
   it('searches across all libraries and retargets to a hit root', async () => {

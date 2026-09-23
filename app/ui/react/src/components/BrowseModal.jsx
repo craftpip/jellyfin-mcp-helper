@@ -14,10 +14,15 @@ function BrowseView({ confirmId }) {
   const { state, actions } = useAppStore()
   const item = state.currentItems.find((i) => i.confirmId === confirmId)
   const isSeries = item?.itemType === 'series'
+  // Open the picker at the folder the file is actually headed for (its
+  // target's directory); the picker resolves it to the nearest existing
+  // ancestor and falls back to the roots list when unresolvable.
+  const initialPath = item?.targetPath ? item.targetPath.split('/').slice(0, -1).join('/') : null
 
   return (
     <FolderPicker
       title={item ? item.title : null}
+      initialPath={initialPath}
       suspectNote={item?.suspect ? ' — flagged as suspicious' : ''}
       correctionNote={item?.correctionNote ? ' — ' + item.correctionNote : ''}
       showReclassifyOption={isSeries}
@@ -35,7 +40,7 @@ function BrowseView({ confirmId }) {
   )
 }
 
-export function FolderPicker({ title, suspectNote, correctionNote, showReclassifyOption, showApplyToGroupOption, onPick, onClose }) {
+export function FolderPicker({ title, initialPath, suspectNote, correctionNote, showReclassifyOption, showApplyToGroupOption, onPick, onClose }) {
   const [roots, setRoots] = useState([])
   const [cwd, setCwd] = useState('')
   const [root, setRoot] = useState('')
@@ -68,24 +73,47 @@ export function FolderPicker({ title, suspectNote, correctionNote, showReclassif
   useEffect(() => {
     if (didInit.current) return
     didInit.current = true
-    apiGet('/browse/roots')
-      .then((res) => {
-        const list = res.roots || []
-        setRoots(list)
-        setFiles([])
-        setEntries(
-          list.map((r) => ({
-            name: r.path,
-            path: r.path,
-            isDir: true,
-            videoCount: 0,
-            seasonNumber: null,
-          }))
-        )
-      })
-      .catch((e) => setError('Failed to load libraries: ' + e.message))
+    loadRoots(initialPath)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  async function loadRoots(startPath) {
+    // With an intended folder, resolve it to the nearest existing ancestor
+    // first (read-only — browsing never creates directories). Without one
+    // (history/settings callers) or when unresolvable, start at the roots.
+    if (startPath) {
+      try {
+        const resolved = await apiGet('/browse/resolve?target=' + encodeURIComponent(startPath))
+        if (resolved && resolved.path) {
+          await load(resolved.path)
+          // Still fetch the roots so climbing back to "All libraries" works.
+          apiGet('/browse/roots')
+            .then((res) => setRoots(res.roots || []))
+            .catch(() => {})
+          return
+        }
+      } catch {
+        /* fall through to the roots list below */
+      }
+    }
+    try {
+      const res = await apiGet('/browse/roots')
+      const list = res.roots || []
+      setRoots(list)
+      setFiles([])
+      setEntries(
+        list.map((r) => ({
+          name: r.path,
+          path: r.path,
+          isDir: true,
+          videoCount: 0,
+          seasonNumber: null,
+        }))
+      )
+    } catch (e) {
+      setError('Failed to load libraries: ' + e.message)
+    }
+  }
 
   async function load(path) {
     setLoading(true)
