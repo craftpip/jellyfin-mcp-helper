@@ -14,6 +14,18 @@ const AppStoreContext = createContext(null)
 const TRANSFER_ACTIVE_KEY = 'jsort_transfer_active'
 const TRANSFER_MINIMIZED_KEY = 'jsort_transfer_minimized'
 const TRANSFER_SNAPSHOT_KEY = 'jsort_transfer_snapshot'
+const EXPANDED_GROUPS_KEY = 'jsort_expanded_groups'
+
+function getInitialExpandedGroups() {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(EXPANDED_GROUPS_KEY)
+    if (raw === null) return null
+    const parsed = JSON.parse(raw)
+    if (parsed !== null && Array.isArray(parsed)) return parsed
+  } catch {}
+  return null
+}
 
 function getInitialTransferMinimized() {
   if (typeof window !== 'undefined') {
@@ -116,7 +128,7 @@ const initialState = {
   currentItems: [],
   reportGroups: [],
   selectedIds: [],
-  expandedGroups: [],
+  expandedGroups: getInitialExpandedGroups() ?? [],
   currentFilter: getInitialFilter(),
   searchQuery: getInitialQuery(),
   reportServiceErrors: null,
@@ -365,6 +377,12 @@ export function AppStoreProvider({ children }) {
     const s = report.summary || {}
     const withLive = all.map((i) => ({ ...i, _liveTarget: i.targetPath, _linked: true }))
     const groups = groupItems(withLive)
+    const allIds = groups.map((g, gi) => 'group-' + gi)
+    // A stored collapse wins over the default-expand-all, so a refresh (or a
+    // reloaded report) brings back the same open/closed groups. Unknown ids
+    // from an older report shape are dropped.
+    const stored = getInitialExpandedGroups()
+    const expanded = stored === null ? allIds : stored.filter((gid) => allIds.includes(gid))
     dispatch({
       type: 'SET_REPORT',
       payload: {
@@ -375,7 +393,7 @@ export function AppStoreProvider({ children }) {
         currentItems: withLive,
         reportGroups: groups,
         selectedIds: defaultSelection(withLive),
-        expandedGroups: groups.map((g, gi) => 'group-' + gi),
+        expandedGroups: expanded,
         scanId: s.scan_id || stateRef.current.scanId,
       },
     })
@@ -1262,6 +1280,15 @@ export function AppStoreProvider({ children }) {
     if (!state.authed) return
     if (state.page === 'settings' && !stateRef.current.adminEnv) loadEnv()
   }, [state.authed, state.page])
+
+  // Persist group collapse so a refresh brings back the same open/closed
+  // groups. Guarded: with no report loaded there is nothing worth storing.
+  useEffect(() => {
+    if (!state.reportVisible || state.reportGroups.length === 0) return
+    try {
+      localStorage.setItem(EXPANDED_GROUPS_KEY, JSON.stringify(state.expandedGroups))
+    } catch {}
+  }, [state.expandedGroups, state.reportVisible, state.reportGroups.length])
 
   // Persist the transfer panel (rows + summary + minimized) so a refresh —
   // minimized strip included — brings back the same panel. Cleared on

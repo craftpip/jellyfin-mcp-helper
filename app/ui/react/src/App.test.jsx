@@ -45,6 +45,7 @@ beforeEach(() => {
   try {
     localStorage.removeItem('jsort_transfer_active')
     localStorage.removeItem('jsort_transfer_snapshot')
+    localStorage.removeItem('jsort_expanded_groups')
   } catch {}
   vi.stubGlobal(
     'fetch',
@@ -409,6 +410,25 @@ describe('App integration', () => {
     expect(screen.getByText('3/10')).toBeInTheDocument()
     expect(screen.getByText('/media1/downloads/Show.mkv')).toBeInTheDocument()
     expect(screen.queryByText('Start Scan')).not.toBeInTheDocument()
+  })
+
+  it('keeps collapsed report groups collapsed across a reload', async () => {
+    const first = renderApp()
+    await screen.findAllByText('Movie (2024)')
+
+    const headers = document.querySelectorAll('.group-header')
+    expect(headers.length).toBeGreaterThan(0)
+    expect(document.querySelectorAll('.group-header.collapsed').length).toBe(0)
+    fireEvent.click(headers[0])
+    expect(document.querySelectorAll('.group-header.collapsed').length).toBe(1)
+    const stored = JSON.parse(localStorage.getItem('jsort_expanded_groups'))
+    expect(stored.length).toBe(headers.length - 1)
+
+    // Reload: fresh provider, same localStorage — the group stays collapsed.
+    first.unmount()
+    renderApp()
+    await screen.findAllByText('Movie (2024)')
+    expect(document.querySelectorAll('.group-header.collapsed').length).toBe(1)
   })
 
   it('keeps a minimized panel collapsed across a reload', async () => {
