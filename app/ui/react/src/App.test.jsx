@@ -473,6 +473,50 @@ describe('App integration', () => {
     expect(screen.queryByLabelText('Minimize transfer panel')).not.toBeInTheDocument()
   })
 
+  it('sends only one confirm POST on a double-click of Start Move', async () => {
+    let resolveConfirm
+    const gate = new Promise((resolve) => {
+      resolveConfirm = resolve
+    })
+    let confirmPosts = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url, opts) => {
+        const method = (opts?.method || 'GET').toUpperCase()
+        const path = String(url)
+        let payload = {}
+        if (method === 'GET' && path === '/api/status') {
+          payload = { auth: { required: false } }
+        } else if (method === 'GET' && path === '/api/libraries') {
+          payload = { libraries: [] }
+        } else if (method === 'GET' && path === '/api/scans/current/report') {
+          payload = REPORT
+        } else if (method === 'POST' && path === '/api/scans/current/confirm') {
+          confirmPosts += 1
+          return gate.then(() =>
+            Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) })
+          )
+        } else if (method === 'GET' && path === '/api/scans/current/confirm-progress') {
+          payload = { scan_id: 'scan1', status: 'running', processed: 0, total: 1, queue_length: 0, counts: {} }
+        }
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+      })
+    )
+    renderApp()
+    await screen.findAllByText('Movie (2024)')
+
+    await userEvent.click(screen.getAllByText('Confirm')[0])
+    const startBtn = await screen.findByText('Start Move')
+    // Two clicks while the POST is in flight: only one request may go out,
+    // and the button shows the posting state.
+    fireEvent.click(startBtn)
+    fireEvent.click(startBtn)
+    expect(confirmPosts).toBe(1)
+    expect(screen.getByText('Starting…')).toBeInTheDocument()
+
+    resolveConfirm()
+  })
+
   it('restores a minimized transfer panel from localStorage after reload', async () => {
     localStorage.setItem(
       'jsort_transfer_snapshot',

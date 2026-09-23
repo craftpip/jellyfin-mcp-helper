@@ -279,6 +279,28 @@ class ScanManager:
 
         confirm_total = self._get_confirm_total(scan, item_ids, source_paths, source_prefixes)
         if confirm_total == 0 and selective:
+            matched = [
+                item
+                for item in scan.items
+                if (item_ids is None or item.confirm_id in item_ids)
+                and (source_paths is None or item.source_path in source_paths)
+                and (
+                    source_prefixes is None
+                    or any(item.source_path.startswith(prefix) for prefix in source_prefixes)
+                )
+            ]
+            if matched:
+                # Duplicate submission: the items exist but are already
+                # confirmed/skipped (e.g. Start Move double-clicked — the first
+                # request already moved them). Not a stale report.
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Those items were already confirmed — the move likely already "
+                        "went through (e.g. Start Move was sent twice). Check the "
+                        "report/history instead of retrying."
+                    ),
+                )
             raise HTTPException(
                 status_code=400,
                 detail="No matching unconfirmed items found for the given itemIds/sourcePaths/sourcePrefixes.",

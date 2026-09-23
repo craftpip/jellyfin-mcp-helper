@@ -103,8 +103,13 @@ function PreflightView({ itemIds, label }) {
           <button id="confirmModalCancel" onClick={actions.closeConfirmModal}>
             Cancel
           </button>
-          <button className="primary" id="confirmModalStart" onClick={() => actions.runConfirm(itemIds)}>
-            Start Move
+          <button
+            className="primary"
+            id="confirmModalStart"
+            disabled={state.confirmPosting}
+            onClick={() => actions.runConfirm(itemIds)}
+          >
+            {state.confirmPosting ? 'Starting…' : 'Start Move'}
           </button>
         </div>
       </div>

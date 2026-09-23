@@ -135,6 +135,7 @@ const initialState = {
   undoTick: 0,
   // Confirm & transfer
   confirmActive: false,
+  confirmPosting: false,
   confirmButtonLabel: 'Confirm Selected',
   confirmModal: { open: false, itemIds: [], label: '', progress: null },
   logEntries: [],
@@ -173,6 +174,8 @@ function reducer(state, action) {
       return { ...state, reportLoading: action.reportLoading }
     case 'SET_CONFIRM_ACTIVE':
       return { ...state, confirmActive: action.confirmActive }
+    case 'SET_CONFIRM_POSTING':
+      return { ...state, confirmPosting: action.posting }
     case 'SET_CONFIRM_BUTTON_LABEL':
       return { ...state, confirmButtonLabel: action.label }
     case 'SET_CONFIRM_MODAL':
@@ -229,6 +232,7 @@ export function AppStoreProvider({ children }) {
   const timers = useRef({ scanPoll: null, confirmPoll: null, paste: null, transferRemoval: {}, search: null })
   const confirmStateRef = useRef({ completed: 0, failed: 0 })
   const confirmActiveRef = useRef(false)
+  const confirmPostRef = useRef(false)
   const pendingBatchesRef = useRef([])
   const didInit = useRef(false)
 
@@ -864,6 +868,14 @@ export function AppStoreProvider({ children }) {
   }
 
   async function runConfirm(itemIds) {
+    // Double-submit guard: the modal stays open for ~2s while the POST is in
+    // flight, and a second identical POST would 400 (items already confirmed
+    // by the first). The ref covers the gap before the re-render disables
+    // the button. Queued-batch confirms are unaffected — they happen after
+    // this POST resolves.
+    if (confirmPostRef.current) return
+    confirmPostRef.current = true
+    dispatch({ type: 'SET_CONFIRM_POSTING', posting: true })
     log('Confirming ' + itemIds.length + ' item(s)...', 'info')
     try {
       const result = await apiPost('/scans/current/confirm', {
@@ -917,6 +929,9 @@ export function AppStoreProvider({ children }) {
       dispatch({ type: 'SET_TRANSFER_QUEUE', queue: [] })
       dispatch({ type: 'SET_TRANSFER_SUMMARY', summary: null })
       closeConfirmModal()
+    } finally {
+      confirmPostRef.current = false
+      dispatch({ type: 'SET_CONFIRM_POSTING', posting: false })
     }
   }
 

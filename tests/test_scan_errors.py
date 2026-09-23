@@ -1201,3 +1201,42 @@ def test_reconfirm_already_moved_item_is_skipped_not_failed(tmp_path, monkeypatc
     assert scan.items[0].confirmed
     assert scan.items[0].error is None
     assert calls == []
+
+
+def test_confirm_duplicate_ids_reports_already_confirmed(tmp_path) -> None:
+    """A double-submitted confirm (same ids, everything already confirmed)
+    must say so explicitly instead of the generic no-match error."""
+    from fastapi import HTTPException
+
+    manager = ScanManager(
+        AppConfig(
+            paths=PathsConfig(downloadRoots=[]),
+            model=ModelConfig(),
+            log_dir=tmp_path,
+            report_dir=tmp_path,
+        )
+    )
+
+    async def run_test():
+        scan = await manager.create_scan(ScanRequest())
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        scan.items = [
+            ScannedItem(
+                confirmId="c1",
+                sourcePath="/downloads/a.mkv",
+                name="a.mkv",
+                item_type="movie",
+                confidence=1.0,
+                reason="test",
+                target_path="/movies/a.mkv",
+                action="move",
+                confirmed=True,
+            )
+        ]
+        with pytest.raises(HTTPException) as exc_info:
+            await manager.confirm_scan(scan.scan_id, item_ids=["c1"])
+        assert exc_info.value.status_code == 400
+        assert "already confirmed" in exc_info.value.detail
+
+    asyncio.run(run_test())
