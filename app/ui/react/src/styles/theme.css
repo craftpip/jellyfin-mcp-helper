@@ -345,7 +345,7 @@ input[type="checkbox"] { accent-color: var(--jf-primary); color-scheme: dark; ma
 .transfer-row.failed .transfer-name { color: var(--jf-danger); }
 .transfer-row.queued .transfer-name { color: var(--jf-text-muted); }
 .transfer-name { font-size: 0.78rem; color: var(--jf-text); min-width: 0; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.35; }
-.transfer-toast { background: rgba(22,29,42,0.95); border: 1px solid var(--jf-border); border-radius: 12px; padding: 9px 12px; animation: fadein .2s; font-size: 0.82rem; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
+.transfer-toast { background: rgba(22,29,42,0.95); border: 1px solid var(--jf-border); border-radius: 14px; padding: 12px 14px; backdrop-filter: blur(12px); box-shadow: 0 12px 32px rgba(0,0,0,0.4); animation: fadein .2s; font-size: 0.82rem; color: var(--jf-text); overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
 .transfer-tick { color: var(--jf-success); font-weight: 700; flex-shrink: 0; }
 .transfer-fail { color: var(--jf-danger); font-weight: 700; flex-shrink: 0; }
 .transfer-spinner { width: 12px; height: 12px; flex-shrink: 0; border: 2px solid rgba(255,255,255,0.15); border-top-color: var(--jf-primary); border-radius: 50%; animation: spin .6s linear infinite; }
@@ -354,12 +354,12 @@ input[type="checkbox"] { accent-color: var(--jf-primary); color-scheme: dark; ma
 .transfer-file-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.72rem; color: var(--jf-text-muted); margin-top: 4px; }
 .transfer-extra { font-size: 0.72rem; color: var(--jf-text-muted); text-align: center; padding: 2px; }
 .transfer-upnext { font-size: 0.68rem; color: var(--jf-text-muted); margin-bottom: 2px; }
-.transfer-toast.toast-info { border-color: var(--jf-primary); color: var(--jf-primary-hover); }
-.transfer-toast.toast-good { border-color: var(--jf-success); color: var(--jf-success); }
-.transfer-toast.toast-err { border-color: var(--jf-danger); color: var(--jf-danger); display: flex; align-items: flex-start; gap: 8px; }
+.transfer-toast.toast-info { border-color: var(--jf-primary); }
+.transfer-toast.toast-good { border-color: var(--jf-success); }
+.transfer-toast.toast-err { border-color: var(--jf-danger); display: flex; align-items: flex-start; gap: 8px; }
 .toast-dismiss { margin-left: auto; flex: none; background: none; border: none; cursor: pointer; color: inherit; opacity: 0.7; font-size: 0.8rem; line-height: 1.4; padding: 0 2px; border-radius: 6px; }
 .toast-dismiss:hover { opacity: 1; background: rgba(255,255,255,0.06); }
-.transfer-toast.toast-warn { border-color: var(--jf-warn); color: var(--jf-warn); }
+.transfer-toast.toast-warn { border-color: var(--jf-warn); }
 
 .modal-overlay { position: fixed; inset: 0; background: rgba(4,6,10,0.7); display: flex; align-items: center; justify-content: center; z-index: 200; backdrop-filter: blur(6px); animation: fadein .15s; }
 .modal { background: rgba(22,29,42,0.98); border: 1px solid var(--jf-border-strong); border-radius: 20px; padding: 24px; max-width: 640px; width: 92%; max-height: 82vh; overflow-y: auto; box-shadow: 0 24px 80px rgba(0,0,0,0.6); }

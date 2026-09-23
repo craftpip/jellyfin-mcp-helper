@@ -389,3 +389,55 @@ def _should_use_folder_title(folder_title: str, file_title: str | None) -> bool:
         if not file_title or not re.search(r"\b\d+_\d+\b", file_title):
             return False
     return True
+
+
+# Batch bundle containers that declare extra content: "Show Ep1-12 + Extras & OST".
+# Files nested in a subfolder of such a container are extras/specials of the
+# container's show, not a separate series.
+_BUNDLE_EXTRA_SIGNALS_RE = re.compile(
+    r"(?:^|[^a-z0-9])(?:extras?|ova|ona|specials?|bonus|ost|soundtrack)(?:[^a-z0-9]|$)",
+    re.IGNORECASE,
+)
+_BUNDLE_EP_RANGE_RE = re.compile(r"^ep?\d+(?:\s*[–—\-]?\s*\d+)?$", re.IGNORECASE)
+_BUNDLE_DECL_WORDS = frozenset({
+    "extras", "extra", "ova", "ona", "specials", "special", "bonus", "ost", "soundtrack",
+})
+
+
+def _container_declares_extras(container_name: str) -> bool:
+    return bool(_BUNDLE_EXTRA_SIGNALS_RE.search(container_name))
+
+
+def _extract_bundle_show_title(raw_name: str) -> str | None:
+    """Base show title of a bundle container, stopping at the extras declaration.
+
+    "[Seto_Otaku]_Princess_Lover!_Ep1-12_+_Extras_&_OST_[1080p_Blu-ray_FLAC]"
+    -> "Princess Lover!" (stop at the Ep1-12 range / "+ Extras & OST" tail).
+    """
+    cleaned = _LEADING_BRACKET_RE.sub("", raw_name)
+    while _TRAILING_BRACKET_RE.search(cleaned):
+        cleaned = _TRAILING_BRACKET_RE.sub("", cleaned)
+    if not cleaned:
+        return None
+    tokens = [t for t in re.split(r"[\s_&+]+", cleaned) if t]
+    parts: list[str] = []
+    for token in tokens:
+        low = token.lower()
+        if _BUNDLE_EP_RANGE_RE.match(low):
+            break
+        if re.sub(r"[^a-z]", "", low) in _BUNDLE_DECL_WORDS:
+            break
+        parts.append(token.strip(" -._"))
+    title = " ".join(parts).strip(" -._")
+    if not title or not re.search(r"[a-z]", title, re.IGNORECASE):
+        return None
+    return title
+
+
+def _bundle_show_title_from_container(candidate) -> str | None:
+    if not candidate.container_path:
+        return None
+    name = Path(candidate.container_path).name
+    if not _container_declares_extras(name):
+        return None
+    return _extract_bundle_show_title(name)

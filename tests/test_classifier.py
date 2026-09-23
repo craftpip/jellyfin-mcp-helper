@@ -309,6 +309,46 @@ def test_episode_prefers_fuller_container_title() -> None:
     assert result.title == "Stray Cat of the Ruins (Wandering Star)"
 
 
+def test_bundle_nested_ost_is_extra_of_bundle_show() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="01 - Theme.mkv",
+            container_path="/data/torrents/[Seto_Otaku]_Princess_Lover!_Ep1-12_+_Extras_&_OST_[1080p_Blu-ray_FLAC]",
+            relative_path="OST/01 - Theme.mkv",
+        )
+    )
+    assert result.kind == "extra"
+    assert result.title == "Princess Lover!"
+    assert result.extra_type == "special"
+
+
+def test_bundle_root_episode_keeps_series_with_bundle_title() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="Princess Lover! - 05.mkv",
+            container_path="/data/torrents/[Seto_Otaku]_Princess_Lover!_Ep1-12_+_Extras_&_OST_[1080p_Blu-ray_FLAC]",
+            relative_path="Princess Lover! - 05.mkv",
+        )
+    )
+    assert result.kind == "series"
+    assert result.title == "Princess Lover!"
+    assert result.season is None
+    assert result.episode == 5
+
+
+def test_bundle_declares_extras_only_when_signal_present() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="01 - Theme.mkv",
+            container_path="/data/torrents/[RlsGrp] Princess Lover! Ep1-12 [1080p_Blu-ray_FLAC]",
+            relative_path="01 - Theme.mkv",
+        )
+    )
+    # no extras/OST signal in the container name, no bundle override
+    assert result.kind == "series"
+    assert result.episode == 1
+
+
 def test_sample_by_keyword_is_skipped() -> None:
     result = classify_candidate(_candidate(name="[Group] Show - sample.mkv"))
     assert result.kind == "skip"
@@ -324,6 +364,34 @@ def test_sample_by_small_size_is_skipped() -> None:
 def test_sample_small_file_movie_is_skipped() -> None:
     result = classify_candidate(_candidate(name="Show Name.mkv", file_size=1024))
     assert result.kind == "skip"
+
+
+def test_series_number_marker_is_episode_not_sample() -> None:
+    # "Neutral Show Series 1" is episode 1, not a sample — the Series N
+    # marker feeds the foreign-episode path, so the size-based sample
+    # skip (movies only) never fires even under the 150MB threshold.
+    result = classify_candidate(
+        _candidate(
+            name="Neutral Show Series 1 Subbed [RlsGrp].mp4",
+            container_path="/data/downloads/Neutral Show Series",
+            relative_path="Neutral Show Series/Neutral Show Series 1 Subbed [RlsGrp].mp4",
+            file_size=145 * 1024 * 1024,
+        )
+    )
+    assert result.kind == "series"
+    assert result.title == "Neutral Show Series"
+    assert result.episode == 1
+
+
+def test_series_marker_ignores_four_digit_year() -> None:
+    result = classify_candidate(
+        _candidate(
+            name="Neutral Show Series 2020.mkv",
+            container_path="/data/downloads/Neutral Show Series",
+            relative_path="Neutral Show Series/Neutral Show Series 2020.mkv",
+        )
+    )
+    assert result.episode is None
 
 
 def test_series_defaults_to_title_from_guessit() -> None:

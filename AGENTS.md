@@ -303,6 +303,18 @@ Prefer adding the new case to the existing examples list.
 
 **Verification:** `tests/test_classifier.py::test_year_in_parens_is_not_a_season` + `test_year_like_season_and_episode_are_dropped` (neutral placeholder names). Full suite 420 passed. Live check needs `fullRescan: true` — already-persisted report items keep their old `Season 2021` targets until re-classified.
 
+### Series N episode marker (foreign-episode word list)
+
+**Problem:** `Neutral Show Series/Neutral Show Series 1 Subbed [RlsGrp].mp4` (119–145MB, 4 files numbered 1–4) classified as `skip` with `Detected sample file`. Guessit reads the title as movie `Neutral Show Series 1` with no season/episode, so `kind=movie`, and the size heuristic (`file_size < 150MB` → sample) fired.
+
+**Old behavior:** `FOREIGN_EPISODE_RE` covered `episode/episodio/capitulo/...` but not `series` — `Series 1` yielded no episode, kind stayed movie, sub-150MB files skipped as samples.
+
+**Correct behavior:** `Series N` feeds the foreign-episode path like `Episode N`: title splits to the show part, `episode=N`, `kind=series` (size skip is movies-only). Folder hierarchy then promotes the title to the container folder (`Neutral Show Series`), episode 1–4. Bare `Series` without a number still yields no episode; 4-digit `Series 2020` never matches (`\d{1,3}` + non-alnum boundary backtracks out on year tails).
+
+**Code change (`app/classification/patterns.py`):** added `series` to the `FOREIGN_EPISODE_RE` alternation (`series|episodio|episode|capitulo|...`). No classifier change — `_split_foreign_episode_title` + folder-title promotion handle the rest.
+
+**Verification:** `tests/test_classifier.py::test_series_number_marker_is_episode_not_sample` (145MB in-folder file → series E1) + `test_series_marker_ignores_four_digit_year`. Full suite `docker exec jellysort python3 -m pytest tests/` = 453 passed. Live check needs `fullRescan: true` — already-persisted `skip` items keep their old reason until re-classified.
+
 ### Update scan path validation bug
 
 **Problem:** `update move new downloads scan` failed with `tuple expected at most 1 argument, got 7`.

@@ -201,7 +201,7 @@ export default function HistoryPage() {
               onClick={() => toggleGroup(group.history_id)}
             >
               <span style={{ fontSize: '0.8rem', color: 'var(--jf-text-muted)' }}>{isExpanded ? '▼' : '▶'}</span>
-              <strong style={{ flex: 1 }}>{group.group_title}</strong>
+              <strong style={{ flex: 1, minWidth: 0 }} title={group.group_title}>{group.group_title}</strong>
               <span className="badge" style={{ background: 'var(--jf-bg-raised)', color: 'var(--jf-text-muted)' }}>
                 {group.items.length} file{group.items.length === 1 ? '' : 's'}
               </span>

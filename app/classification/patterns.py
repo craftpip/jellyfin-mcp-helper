@@ -41,7 +41,7 @@ MOVIE_MARKER_RE = re.compile(r"\bmovie[\s_.-]*\d{1,3}\b", re.IGNORECASE)
 FRANCHISE_MOVIE_MARKER_RE = re.compile(r"\bs\d{1,2}m\d{1,2}\b", re.IGNORECASE)
 
 FOREIGN_EPISODE_RE = re.compile(
-    r"(?:^|[^a-z0-9])(?:episodio|episode|capitulo|capitolo|capítulo|chapitre|épisode|kapitel)\s*(\d{1,3})(?:v\d+)?(?:[^a-z0-9]|$)",
+    r"(?:^|[^a-z0-9])(?:series|episodio|episode|capitulo|capitolo|capítulo|chapitre|épisode|kapitel)\s*(\d{1,3})(?:v\d+)?(?:[^a-z0-9]|$)",
     re.IGNORECASE,
 )
 

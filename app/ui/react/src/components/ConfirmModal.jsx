@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { useAppStore } from '../store/AppStore.jsx'
 import { fileName, formatBytes, splitDrive } from '../utils/format.js'
 import { isCrossDriveItem } from '../utils/report.js'
@@ -15,6 +16,36 @@ function PreflightView({ itemIds, label }) {
   const items = itemIds
     .map((id) => state.currentItems.find((i) => i.confirmId === id))
     .filter(Boolean)
+
+  const startRef = useRef(null)
+  const closeRef = useRef(actions.closeConfirmModal)
+  const runRef = useRef(actions.runConfirm)
+  closeRef.current = actions.closeConfirmModal
+  runRef.current = actions.runConfirm
+  const postingRef = useRef(state.confirmPosting)
+  postingRef.current = state.confirmPosting
+  const idsRef = useRef(itemIds)
+  idsRef.current = itemIds
+
+  useEffect(() => {
+    startRef.current?.focus()
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        closeRef.current?.()
+      } else if (e.key === 'Enter') {
+        // Let a focused Cancel button activate natively to avoid double-handling.
+        if (document.activeElement?.id === 'confirmModalCancel') return
+        const tag = e.target?.tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+        if (postingRef.current) return
+        e.preventDefault()
+        runRef.current?.(idsRef.current)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const totalSize = items.reduce((s, i) => s + (Number(i.fileSize) || 0), 0)
   const moveCount = items.filter((i) => i.action === 'move').length
@@ -106,6 +137,7 @@ function PreflightView({ itemIds, label }) {
           <button
             className="primary"
             id="confirmModalStart"
+            ref={startRef}
             disabled={state.confirmPosting}
             onClick={() => actions.runConfirm(itemIds)}
           >

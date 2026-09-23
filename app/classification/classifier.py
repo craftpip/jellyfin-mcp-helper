@@ -29,6 +29,7 @@ from app.classification.patterns import (
 )
 from app.classification.titles import (
     _apply_title_alias,
+    _bundle_show_title_from_container,
     _extract_container_series_for_bare_episode,
     _extract_episode_title,
     _extract_series_alias,
@@ -145,6 +146,16 @@ def classify_candidate(candidate: CandidateItem, series_title_aliases: dict[str,
                             pass
     # movie collections: keep file title, do not override with collection folder
     # (no action for kind=="movie" — file-derived title stays)
+
+    bundle_title = _bundle_show_title_from_container(candidate)
+    if bundle_title:
+        title = bundle_title
+        if kind in ("series", "movie") and "/" in (candidate.relative_path or ""):
+            kind = "extra"
+            confidence = max(confidence, 0.85)
+            reason = "Bundle container extras"
+        if kind == "extra" and not extra_type:
+            extra_type = "special"
 
     if kind == "movie" and _looks_like_sample(label, parsed, candidate.file_size):
         kind = "skip"
