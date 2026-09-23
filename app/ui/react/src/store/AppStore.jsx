@@ -236,7 +236,15 @@ export function AppStoreProvider({ children }) {
   function toast(msg, type = 'info') {
     const id = ++toastSeq
     dispatch({ type: 'ADD_TOAST', toast: { id, msg, type } })
-    setTimeout(() => dispatch({ type: 'REMOVE_TOAST', id }), 3500)
+    // Error toasts persist until dismissed — a 3.5s flash is not enough to
+    // read a move failure. All other types still auto-dismiss.
+    if (type !== 'err') {
+      setTimeout(() => dispatch({ type: 'REMOVE_TOAST', id }), 3500)
+    }
+  }
+
+  function dismissToast(id) {
+    dispatch({ type: 'REMOVE_TOAST', id })
   }
 
   function log(msg, type = 'info') {
@@ -1337,6 +1345,7 @@ export function AppStoreProvider({ children }) {
 
   const actions = {
     toast,
+    dismissToast,
     log,
     toggleLogs,
     copyText,

@@ -65,7 +65,7 @@ const SUMMARY = {
 }
 
 beforeEach(() => {
-  mockActions = { setTransferMinimized: vi.fn(), dismissTransfer: vi.fn() }
+  mockActions = { setTransferMinimized: vi.fn(), dismissTransfer: vi.fn(), dismissToast: vi.fn() }
   mockStore = { toasts: [], transferQueue: [], transferSummary: null, transferMinimized: false }
 })
 
@@ -209,7 +209,22 @@ describe('Toasts bottom-right consolidation', () => {
     const { container } = render(<Toasts />)
     expect(container.querySelector('.transfer-toasts')).toBeTruthy()
     expect(container.querySelector('.transfer-toast.toast-good').textContent).toBe('Deleted: alpha.mkv')
-    expect(container.querySelector('.transfer-toast.toast-err').textContent).toBe('Delete error: no such file')
+    expect(container.querySelector('.transfer-toast.toast-err').textContent).toContain('Delete error: no such file')
+  })
+
+  it('offers dismiss only on error toasts, and dismisses them via the action', () => {
+    mockStore = {
+      ...mockStore,
+      toasts: [
+        { id: 't1', type: 'info', msg: 'Just info' },
+        { id: 't2', type: 'err', msg: 'Move failed: disk full' },
+      ],
+    }
+    render(<Toasts />)
+    // Only the error toast gets a dismiss button (errors persist; info auto-dismisses).
+    expect(screen.queryByLabelText('Dismiss error')).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('Dismiss error'))
+    expect(mockActions.dismissToast).toHaveBeenCalledWith('t2')
   })
 
   it('renders nothing when there are no toasts and no activity', () => {

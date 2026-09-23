@@ -356,7 +356,9 @@ input[type="checkbox"] { accent-color: var(--jf-primary); color-scheme: dark; ma
 .transfer-upnext { font-size: 0.68rem; color: var(--jf-text-muted); margin-bottom: 2px; }
 .transfer-toast.toast-info { border-color: var(--jf-primary); color: var(--jf-primary-hover); }
 .transfer-toast.toast-good { border-color: var(--jf-success); color: var(--jf-success); }
-.transfer-toast.toast-err { border-color: var(--jf-danger); color: var(--jf-danger); }
+.transfer-toast.toast-err { border-color: var(--jf-danger); color: var(--jf-danger); display: flex; align-items: flex-start; gap: 8px; }
+.toast-dismiss { margin-left: auto; flex: none; background: none; border: none; cursor: pointer; color: inherit; opacity: 0.7; font-size: 0.8rem; line-height: 1.4; padding: 0 2px; border-radius: 6px; }
+.toast-dismiss:hover { opacity: 1; background: rgba(255,255,255,0.06); }
 .transfer-toast.toast-warn { border-color: var(--jf-warn); color: var(--jf-warn); }
 
 .modal-overlay { position: fixed; inset: 0; background: rgba(4,6,10,0.7); display: flex; align-items: center; justify-content: center; z-index: 200; backdrop-filter: blur(6px); animation: fadein .15s; }

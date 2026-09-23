@@ -2,7 +2,7 @@ import { useAppStore } from '../store/AppStore.jsx'
 import { formatBytes } from '../utils/format.js'
 
 export default function Toasts() {
-  const { state } = useAppStore()
+  const { state, actions } = useAppStore()
   // The panel stays mounted on its summary after the rows fade, so a
   // completed move (and a minimized strip) survives until dismissed.
   const showTransfer = state.transferQueue.length > 0 || !!state.transferSummary
@@ -14,7 +14,17 @@ export default function Toasts() {
     <div className="transfer-toasts" id="transferToasts" role="status" aria-live="polite">
       {state.toasts.map((t) => (
         <div key={t.id} className={'transfer-toast toast-' + t.type} role="status">
-          {t.msg}
+          <span style={{ minWidth: 0 }}>{t.msg}</span>
+          {t.type === 'err' && (
+            <button
+              type="button"
+              className="toast-dismiss"
+              aria-label="Dismiss error"
+              onClick={() => actions.dismissToast(t.id)}
+            >
+              ✕
+            </button>
+          )}
         </div>
       ))}
       {showTransfer && (
