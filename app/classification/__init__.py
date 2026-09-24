@@ -31,6 +31,7 @@ from app.classification.kinds import (
     _infer_kind,
     _looks_like_extra,
     _looks_like_sample,
+    _sample_marker_hit,
 )
 from app.classification.titles import (
     _apply_title_alias,
@@ -76,6 +77,7 @@ __all__ = [
     "_infer_kind",
     "_looks_like_extra",
     "_looks_like_sample",
+    "_sample_marker_hit",
     "_apply_title_alias",
     "_container_is_movie_folder",
     "_extract_container_series_for_bare_episode",

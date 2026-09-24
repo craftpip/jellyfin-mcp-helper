@@ -252,3 +252,42 @@ class TestDeleteSourceEndpoint:
         assert item["cross_drive"] == 1
         assert item["target_exists"] is True
         assert "File \u2713" in item["pathExists"]
+
+
+class TestHistoryUndo:
+    def test_undo_appends_trail_and_marks_only_restored(self, tmp_path, monkeypatch):
+        client = _make_client(tmp_path, monkeypatch)
+        _seed_scan(None, "scan1")
+        restorable = _series_item(tmp_path)
+        ghost_target = str(tmp_path / "library" / "Missing" / "Missing S01E01.mkv")
+        skipped = {
+            "confirmId": "c2",
+            "sourcePath": str(tmp_path / "downloads" / "Missing.S01E01.mkv"),
+            "sourceFolder": "downloads",
+            "targetPath": ghost_target,
+            "pathHistory": [str(tmp_path / "downloads" / "Missing.S01E01.mkv"), ghost_target],
+            "action": "move",
+            "item_type": "series",
+            "fileSize": 10,
+            "status": "moved",
+        }
+        created = append_history_group(
+            scan_id="scan1", group_title="Show", group_key="k", items=[restorable, skipped]
+        )
+        with client:
+            res = client.post(f"/api/history/{created['history_id']}/undo")
+        assert res.status_code == 200
+        assert res.json()["restored"] == 1
+        with client:
+            group = client.get(f"/api/history/{created['history_id']}").json()
+        by_id = {it["confirm_id"]: it for it in group["items"]}
+        # Restored item is marked undone with the undo hop appended to the trail
+        assert by_id["c1"]["status"] == "undone"
+        assert by_id["c1"]["pathHistory"] == [
+            restorable["sourcePath"],
+            restorable["targetPath"],
+            restorable["sourcePath"],
+        ]
+        # Skipped item (target missing) keeps its status and trail untouched
+        assert by_id["c2"]["status"] == "moved"
+        assert by_id["c2"]["pathHistory"] == [skipped["sourcePath"], ghost_target]

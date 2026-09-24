@@ -7,8 +7,17 @@ from __future__ import annotations
 
 import re
 
-EXTRA_MARKERS = re.compile(r"\b(ncop\d*|nced\d*|op\d*|ed\d*|sp\d*|ova|ona|special|extras?|featurettes?|bonus|recap|trailer)\b", re.IGNORECASE)
-SAMPLE_MARKERS = re.compile(r"\bsample\b", re.IGNORECASE)
+# Zero-width "word" boundaries that ALSO split on "_" (regex \b treats "_"
+# as a word char, so r"\bNCED\b" misses "NCED_DVD" and r"\bsample\b" misses
+# "file_sample" — the standard fansub underscore-joined shape). Zero-width, so
+# group(0)/group(1) semantics of existing patterns don't change; behavior
+# differs from \b only for underscore-adjacent markers ("spider"/"space" still
+# never match since the next char is alphanumeric).
+MARKER_LOOKBEHIND = r"(?<![a-z0-9])"
+MARKER_LOOKAHEAD = r"(?![a-z0-9])"
+
+EXTRA_MARKERS = re.compile(MARKER_LOOKBEHIND + r"(ncop\d*|nced\d*|op\d*|ed\d*|sp\d*|ova|ona|special|extras?|featurettes?|bonus|recap|trailer)" + MARKER_LOOKAHEAD, re.IGNORECASE)
+SAMPLE_MARKERS = re.compile(MARKER_LOOKBEHIND + r"sample" + MARKER_LOOKAHEAD, re.IGNORECASE)
 _GENERIC_EXTRA_SET = {
     "ed", "op", "nc", "nced", "ncop", "ova", "ona", "sp", "special", "extras", "extra",
     "featurette", "featurettes", "bonus", "recap", "trailer", "short", "interview", "deleted",

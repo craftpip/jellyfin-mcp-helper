@@ -3,6 +3,7 @@ import { useAppStore } from '../store/AppStore.jsx'
 import { formatBytes } from '../utils/format.js'
 import { matchesFilter, isCrossDriveItem, actionLabelFor } from '../utils/report.js'
 import PathPills from './PathPills.jsx'
+import TargetPathEditor from './TargetPathEditor.jsx'
 
 function highlight(text, query) {
   if (!query || !text) return text
@@ -221,7 +222,9 @@ export default function ReportPanel() {
 
 function ReportGroup({ gid, gi, group, expanded, visibleItems, matchedIds, query, filter }) {
   const { state, actions } = useAppStore()
-  const skipOnly = group.items.every((i) => i.action === 'skip')
+  // Plan 17: only fully-locked groups are Delete-only. Groups with editable
+  // skips (proposed target, re-pointable) get Update Paths / Confirm.
+  const skipOnly = group.items.every((i) => i.action === 'skip' && (i.locked ?? true))
   const hasPathEdits = group.items.some(
     (i) => ((i._liveTarget || i.targetPath) || '').trim() !== ((i.originalTarget || i.targetPath) || '').trim()
   )
@@ -316,9 +319,9 @@ function ReportRow({ item, query, group, isHighlighted }) {
   const showLink = groupSize > 1
   const isLinked = item._linked !== false
 
-  if (item.action === 'skip') {
+  if (item.action === 'skip' && (item.locked ?? true)) {
     return (
-      <tr className={"row-skipped" + (isHighlighted ? " row-highlight" : "")} style={isHighlighted ? { background: 'rgba(201,138,148,0.09)', outline: '1px solid rgba(201,138,148,0.22)', outlineOffset: '-1px' } : undefined}>
+      <tr className={"row-skipped" + (isHighlighted ? " row-highlight" : "")}   style={isHighlighted ? { background: 'rgba(0,164,220,0.08)', outline: '1px solid rgba(0,164,220,0.35)', outlineOffset: '-1px' } : undefined}>
         <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={(e) => { if (e.target.tagName.toLowerCase() === 'input') return; actions.selectItem(item.confirmId, !selected) }}>
           <input
             type="checkbox"
@@ -362,9 +365,11 @@ function ReportRow({ item, query, group, isHighlighted }) {
     )
   }
 
-  const actionLabel = actionLabelFor(item)
+  // Plan 17: editable skips keep their Skipped badge until an edit promotes
+  // them to move/replace server-side (then a report reload re-renders).
+  const actionLabel = item.action === 'skip' ? 'Skipped' : actionLabelFor(item)
   return (
-    <tr data-title={item.title.toLowerCase()} data-action={item.action} data-fileexists={item.fileExists ? 'true' : 'false'} className={isHighlighted ? "row-highlight" : undefined} style={isHighlighted ? { background: 'rgba(201,138,148,0.09)', outline: '1px solid rgba(201,138,148,0.22)', outlineOffset: '-1px' } : undefined}>
+    <tr data-title={item.title.toLowerCase()} data-action={item.action} data-fileexists={item.fileExists ? 'true' : 'false'} className={isHighlighted ? "row-highlight" : undefined}   style={isHighlighted ? { background: 'rgba(0,164,220,0.08)', outline: '1px solid rgba(0,164,220,0.35)', outlineOffset: '-1px' } : undefined}>
       <td style={{ cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }} onClick={(e) => { if (e.target.tagName.toLowerCase() === 'input') return; actions.selectItem(item.confirmId, !selected) }}>
         <input
           type="checkbox"
@@ -391,11 +396,6 @@ function ReportRow({ item, query, group, isHighlighted }) {
               Suspect
             </span>
           )}
-          {item.corrected && (
-            <span className="corrected-badge" title={item.correctionNote || 'Reclassified after review'}>
-              Corrected
-            </span>
-          )}
           <span className="path-status">
             <PathPills item={item} />
           </span>
@@ -407,19 +407,18 @@ function ReportRow({ item, query, group, isHighlighted }) {
             {highlight(item.sourcePath || item.sourceName || '', query)}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input
-              type="text"
-              className="target-input"
+            <TargetPathEditor
               value={liveTarget}
-              onChange={(e) =>
-                actions.onTargetInputChange(item._idx, e.target.value, e.nativeEvent.inputType === 'insertFromPaste')
+              roots={state.libraryRoots}
+              onChange={(v) =>
+                actions.onTargetInputChange(item._idx, v)
               }
+              onCommit={() => actions.refreshPathStatus(item._idx)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.currentTarget.closest('.group-body')?.querySelector('.primary.small')?.focus()
                 }
               }}
-              style={{ flex: 1, minWidth: 0 }}
             />
             {showLink && (
               <button

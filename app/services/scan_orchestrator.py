@@ -166,6 +166,36 @@ def is_cross_drive(source_path: str, target_path: str) -> bool:
         return False
 
 
+def _completed_path_for_marker_rename(source_path: str) -> str | None:
+    """Completed path when *source_path* is itself a renamed in-progress file.
+
+    Mirrors ``scanner._renamed_marker_suffix`` / ``_renamed_prefix`` but
+    returns the stripped filesystem path (original case preserved) instead of
+    a boolean. Returns None when the name is not a marker rename, when
+    stripping leaves a non-video extension, or for hidden sidecars (.aria2)
+    which never become report items.
+    """
+    from app.services.scanner import (
+        HIDDEN_SIDECAR_SUFFIXES,
+        PARTIAL_FILE_MARKERS,
+        PARTIAL_FILE_PREFIXES,
+    )
+
+    path = Path(source_path)
+    name_lower = path.name.lower()
+    for marker in sorted(PARTIAL_FILE_MARKERS, key=len, reverse=True):
+        if marker in HIDDEN_SIDECAR_SUFFIXES:
+            continue
+        if name_lower.endswith(marker):
+            stripped = path.name[: -len(marker)]
+            if Path(stripped).suffix.lower() in VIDEO_EXTENSIONS:
+                return str(path.parent / stripped)
+    for prefix in PARTIAL_FILE_PREFIXES:
+        if name_lower.startswith(prefix) and Path(name_lower[len(prefix):]).suffix in VIDEO_EXTENSIONS:
+            return str(path.parent / path.name[len(prefix):])
+    return None
+
+
 def record_scan_errors(manager, scan, errors) -> None:
     if not errors:
         return
@@ -246,6 +276,11 @@ def group_retarget_pass(manager, scan, planned_targets: dict[str, tuple[int, int
             found,
             len(items),
         )
+        group_tags_all = [target_episode_tag(i.target_path) for i in items]
+        group_tags_all = [t for t in group_tags_all if t]
+        group_seasons = {t[0] for t in group_tags_all}
+        group_episodes = set(group_tags_all)
+        existing_seasons = manager._resolver._existing_seasons(new_show_dir)
         for item in items:
             tag = target_episode_tag(item.target_path)
             if not tag:
@@ -270,8 +305,21 @@ def group_retarget_pass(manager, scan, planned_targets: dict[str, tuple[int, int
             item.season_folder_exists = season_dir.exists()
             item.file_exists = new_target.exists()
             item.action = "replace" if item.file_exists else "move"
-            item.suspect = False
-            item.flags = []
+            # The retarget resolves the phantom show, but continuity gaps at
+            # the new location still count (e.g. S05E12 with no S04 on disk
+            # and no E11). Recompute instead of blindly clearing suspect.
+            regrouped_flags: list[str] = []
+            if season_number > 1 and (season_number - 1) not in existing_seasons and (season_number - 1) not in group_seasons:
+                regrouped_flags.append("season_gap")
+            existing_episodes = manager._resolver._existing_episodes_in_season(season_dir)
+            if (
+                episode_number > 1
+                and (episode_number - 1) not in existing_episodes
+                and (season_number, episode_number - 1) not in group_episodes
+            ):
+                regrouped_flags.append("episode_gap")
+            item.suspect = bool(regrouped_flags)
+            item.flags = regrouped_flags
             item.corrected = True
             item.correction_note = f"Re-targeted to existing show folder '{new_show_dir.name}'"
             if old_target in planned_targets:
@@ -352,6 +400,51 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
     # Incremental: seed from existing items present at scan start
     initial_source_paths: set[str] = set()
     initial_items_snapshot: list = []
+    # Undo revival: a confirmed item whose source file exists on disk again
+    # (history undo moved target->source) must become actionable, otherwise
+    # its stale planned_targets entry blocks the restored file as
+    # "Lower revision v0 skipped; keeping v0 for same episode" and the item
+    # only reappears normally on a full rescan.
+    if not getattr(request, "full_rescan", False) and scan.items:
+        revived_sources: set[str] = set()
+        for it in scan.items:
+            if it.confirmed and it.action in ("move", "replace") and it.source_path:
+                try:
+                    if Path(it.source_path).is_file():
+                        it.confirmed = False
+                        it.error = None
+                        revived_sources.add(it.source_path)
+                        if it.action == "move":
+                            scan.counts.moved = max(scan.counts.moved - 1, 0)
+                        elif it.action == "replace":
+                            scan.counts.replaced = max(scan.counts.replaced - 1, 0)
+                        logger.info(
+                            "Scan %s revived undone item %s (source restored on disk)",
+                            scan.scan_id,
+                            it.source_path,
+                        )
+                except OSError:
+                    pass
+        if revived_sources:
+            # Drop stale revision-dedup skips shadowing a revived source so the
+            # report shows the actionable item, not a duplicate skip row.
+            kept = []
+            for it in scan.items:
+                reason = it.reason or ""
+                if (
+                    it.action == "skip"
+                    and it.source_path in revived_sources
+                    and ("Lower revision" in reason or "Superseded by higher revision" in reason)
+                ):
+                    scan.counts.skipped = max(scan.counts.skipped - 1, 0)
+                    logger.info(
+                        "Scan %s dropped stale dedup skip for revived %s",
+                        scan.scan_id,
+                        it.source_path,
+                    )
+                    continue
+                kept.append(it)
+            scan.items[:] = kept
     if not getattr(request, "full_rescan", False) and scan.items:
         initial_source_paths = {it.source_path for it in scan.items if not it.confirmed}
         initial_items_snapshot = list(scan.items)
@@ -419,6 +512,7 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                     reason="In-progress download",
                     target_path="",
                     action="skip",
+                    locked=True,
                     file_size=candidate.file_size,
                     container_path=_cp,
                     source_folder=_sf,
@@ -446,6 +540,7 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                     reason="Zero-byte file; download is incomplete or invalid",
                     target_path="",
                     action="skip",
+                    locked=True,
                     file_size=candidate.file_size,
                     container_path=_cp2,
                     source_folder=_sf2,
@@ -481,6 +576,27 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                 )
                 _cp3 = candidate.container_path
                 _sf3 = Path(_cp3).name if _cp3 else Path(candidate.source_path).parent.name or candidate.name
+                # Plan 17: unlocked skip — still resolve a proposed target so the
+                # row is editable (Update Paths / Browse) instead of Delete-only.
+                # Only in-progress / missing / error rows stay locked.
+                _resolved_target = ""
+                _resolved_candidates: list = []
+                _show_exists = False
+                _season_exists = False
+                if classification.kind in ("movie", "series", "extra"):
+                    try:
+                        _resolved = manager._resolve_sync(candidate, classification)
+                        _resolved_target = _resolved.target_path
+                        _resolved_candidates = _resolved.candidate_targets
+                        _show_exists = _resolved.show_folder_exists
+                        _season_exists = _resolved.season_folder_exists
+                    except Exception as resolve_exc:
+                        logger.warning(
+                            "Scan %s could not resolve editable skip target for %s: %s",
+                            scan.scan_id,
+                            candidate.source_path,
+                            resolve_exc,
+                        )
                 scan.items.append(
                     ScannedItem(
                         confirm_id=manager._next_confirm_id(scan),
@@ -489,11 +605,16 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                         item_type=classification.kind,
                         confidence=classification.confidence,
                         reason=classification.reason,
-                        target_path="",
+                        target_path=_resolved_target,
                         action="skip",
+                        locked=False,
+                        show_folder_exists=_show_exists,
+                        season_folder_exists=_season_exists,
                         file_size=candidate.file_size,
                         container_path=_cp3,
                         source_folder=_sf3,
+                        candidate_targets=_resolved_candidates,
+                        extra_type=classification.extra_type,
                     )
                 )
                 scan.processed_candidates = index
@@ -520,7 +641,9 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
 
                     previous_item.action = "skip"
                     previous_item.reason = f"Superseded by higher revision v{revision} for same episode"
-                    previous_item.target_path = ""
+                    # Plan 17: keep the proposed target so the row stays editable
+                    # (re-point and confirm) instead of Delete-only.
+                    previous_item.locked = False
                     planned_targets.pop(resolved.target_path, None)
                 else:
                     scan.counts.skipped += 1
@@ -536,14 +659,19 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                             confirm_id=manager._next_confirm_id(scan),
                             source_path=candidate.source_path,
                             name=candidate.name,
-                            item_type="skip",
+                            item_type=classification.kind,
                             confidence=classification.confidence,
                             reason=f"Lower revision v{revision} skipped; keeping v{existing_revision} for same episode",
-                            target_path="",
+                            target_path=resolved.target_path,
                             action="skip",
+                            locked=False,
+                            show_folder_exists=resolved.show_folder_exists,
+                            season_folder_exists=resolved.season_folder_exists,
                             file_size=candidate.file_size,
                             container_path=_cp4,
                             source_folder=_sf4,
+                            candidate_targets=resolved.candidate_targets,
+                            extra_type=classification.extra_type,
                         )
                     )
                     scan.processed_candidates = index
@@ -570,6 +698,22 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                 scan.counts.series += 1
 
             flags: list[str] = list(hint_flags)
+            if classification.kind == "movie":
+                # Plan 17: size-only sample guess (no `sample` marker) stays an
+                # editable movie, flagged suspect so the user double-checks it.
+                try:
+                    from app.classification.patterns import SAMPLE_MARKERS
+                    from app.core.constants import SAMPLE_SIZE_THRESHOLD
+
+                    _label = candidate.relative_path or candidate.name or ""
+                    if (
+                        candidate.file_size is not None
+                        and candidate.file_size < SAMPLE_SIZE_THRESHOLD
+                        and not SAMPLE_MARKERS.search(_label)
+                    ):
+                        flags.append("small-file-sample-suspect")
+                except Exception:
+                    pass
             if classification.kind == "series" and resolved.season_number and resolved.episode_number:
                 series_key = resolved.series_key or ""
                 base_key = series_key.split("::")[0] if "::" in series_key else series_key
@@ -663,16 +807,17 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
             _cp5 = candidate.container_path
             _sf5 = Path(_cp5).name if _cp5 else Path(candidate.source_path).parent.name or candidate.name
             scan.items.append(
-                ScannedItem(
-                    confirm_id=manager._next_confirm_id(scan),
-                    source_path=candidate.source_path,
-                    name=candidate.name,
-                    item_type="skip",
-                    confidence=0.0,
-                    reason=f"Error: {exc}",
-                    target_path="",
-                    action="skip",
-                    error=str(exc),
+                    ScannedItem(
+                        confirm_id=manager._next_confirm_id(scan),
+                        source_path=candidate.source_path,
+                        name=candidate.name,
+                        item_type="skip",
+                        confidence=0.0,
+                        reason=f"Error: {exc}",
+                        target_path="",
+                        action="skip",
+                        locked=True,
+                        error=str(exc),
                     file_size=candidate.file_size,
                     container_path=_cp5,
                     source_folder=_sf5,
@@ -680,9 +825,16 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
             )
             scan.processed_candidates = index
 
-    # Incremental: mark initial items whose source vanished as missing (preserve but flag)
+    # Incremental: mark initial items whose source vanished as missing (preserve but flag).
+    # Exception: a renamed in-progress marker (Show.mkv.!qB, incomplete.Show.mkv)
+    # whose download has since completed. The client renames marker -> video, so
+    # the old marker path is gone and the completed file is a new candidate.
+    # Keeping the stale marker as "Source missing" duplicates every finished
+    # episode (ready + missing). Drop it instead when the completed file exists
+    # on disk or arrived as a new candidate.
     if initial_items_snapshot:
         existing_paths_now = {c.source_path for c in candidates}
+        drop_confirm_ids: set[str] = set()
         for old_item in initial_items_snapshot:
             if old_item.confirmed:
                 continue
@@ -690,18 +842,36 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                 # Verify on disk (candidates may have missed due to filter, but path may still exist as skip)
                 # Only mark missing if the file truly no longer exists
                 if not Path(old_item.source_path).exists():
+                    completed = _completed_path_for_marker_rename(old_item.source_path)
+                    if completed is not None and (
+                        completed in existing_paths_now or Path(completed).is_file()
+                    ):
+                        drop_confirm_ids.add(old_item.confirm_id)
+                        logger.info(
+                            "Scan %s dropped completed in-progress marker %s (now %s)",
+                            scan.scan_id,
+                            old_item.source_path,
+                            completed,
+                        )
+                        continue
                     if old_item.action != "skip" or "Source missing" not in old_item.reason:
                         was_actionable = old_item.action in ("move", "replace")
                         old_item.action = "skip"
                         old_item.reason = "Source missing on disk"
                         old_item.target_path = ""
                         old_item.error = "missing"
+                        old_item.locked = True
                         if was_actionable:
                             if old_item.item_type == "movie":
                                 scan.counts.movies = max(scan.counts.movies - 1, 0)
                             elif old_item.item_type == "series":
                                 scan.counts.series = max(scan.counts.series - 1, 0)
                             scan.counts.skipped += 1
+        if drop_confirm_ids:
+            kept = [it for it in scan.items if it.confirm_id not in drop_confirm_ids]
+            dropped = len(scan.items) - len(kept)
+            scan.items[:] = kept
+            scan.counts.skipped = max(scan.counts.skipped - dropped, 0)
 
     group_retarget_pass(manager, scan, planned_targets)
     manager._resolver.reset_runtime_state()
@@ -750,6 +920,7 @@ async def delete_items(manager, scan_id: str, item_ids: list[str]):
         item.reason = "Source file deleted by user"
         item.target_path = ""
         item.confirmed = True
+        item.locked = True
         if was_actionable:
             if item.item_type == "movie":
                 scan.counts.movies = max(scan.counts.movies - 1, 0)

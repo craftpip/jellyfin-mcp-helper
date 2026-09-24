@@ -349,9 +349,30 @@ def test_bundle_declares_extras_only_when_signal_present() -> None:
     assert result.episode == 1
 
 
-def test_sample_by_keyword_is_skipped() -> None:
+def test_underscore_joined_extra_markers_are_extra() -> None:
+    # Regex \b treats "_" as a word char, so marker matching uses
+    # underscore-tolerant boundaries: "NCED_DVD" and "_Extras_" must hit.
+    for name in ("Show - NCED_DVD_Version.mkv", "Show - NCOP_1080p.mkv", "Show_Extras_Bonus.mkv"):
+        result = classify_candidate(_candidate(name=name, file_size=75 * 1024 * 1024))
+        assert result.kind == "extra", name
+
+
+def test_underscore_joined_sample_is_sample_extra() -> None:
+    result = classify_candidate(_candidate(name="Show - file_sample.mkv", file_size=75 * 1024 * 1024))
+    assert result.kind == "extra"
+    assert result.extra_type == "sample"
+
+
+def test_short_marker_inside_word_is_not_extra() -> None:
+    for name in ("spider.mkv", "space.mkv"):
+        result = classify_candidate(_candidate(name=name, file_size=75 * 1024 * 1024))
+        assert result.kind != "extra", name
+
+
+def test_sample_by_keyword_is_extra_sample() -> None:
     result = classify_candidate(_candidate(name="[Group] Show - sample.mkv"))
-    assert result.kind == "skip"
+    assert result.kind == "extra"
+    assert result.extra_type == "sample"
 
 
 def test_sample_by_small_size_is_skipped() -> None:
@@ -361,9 +382,13 @@ def test_sample_by_small_size_is_skipped() -> None:
     assert result.kind == "series"
 
 
-def test_sample_small_file_movie_is_skipped() -> None:
+def test_sample_small_file_movie_stays_movie() -> None:
+    # Plan 17: size-only guess with no `sample` marker stays an editable movie
+    # (the orchestrator flags it small-file-sample-suspect); only marker-named
+    # files route to samples/.
     result = classify_candidate(_candidate(name="Show Name.mkv", file_size=1024))
-    assert result.kind == "skip"
+    assert result.kind == "movie"
+    assert "sample-size suspect" in result.reason
 
 
 def test_series_number_marker_is_episode_not_sample() -> None:

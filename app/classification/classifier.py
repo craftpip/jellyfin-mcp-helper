@@ -20,6 +20,7 @@ from app.classification.kinds import (
     _infer_kind,
     _looks_like_extra,
     _looks_like_sample,
+    _sample_marker_hit,
 )
 from app.classification.patterns import (
     EXTRA_MARKERS,
@@ -157,10 +158,16 @@ def classify_candidate(candidate: CandidateItem, series_title_aliases: dict[str,
         if kind == "extra" and not extra_type:
             extra_type = "special"
 
-    if kind == "movie" and _looks_like_sample(label, parsed, candidate.file_size):
-        kind = "skip"
-        confidence = max(confidence, 0.75)
-        reason = "Detected sample file"
+    if kind == "movie" and _sample_marker_hit(label, parsed):
+        # Marker-named sample (Jellyfin `samples/` extra): routable, editable.
+        kind = "extra"
+        extra_type = "sample"
+        confidence = max(confidence, 0.85)
+        reason = "Detected sample extra"
+    elif kind == "movie" and _looks_like_sample(label, parsed, candidate.file_size):
+        # Size-only guess with no `sample` marker: keep the inferred movie kind
+        # so the file stays editable — the orchestrator flags it suspect.
+        reason = f"{reason} (small file; sample-size suspect)"
 
     if kind == "movie":
         season = None

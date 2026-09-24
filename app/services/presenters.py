@@ -10,6 +10,60 @@ from app.models.schemas import ScannedItem, ScanPlan
 EPISODE_TAG_RE = re.compile(r"S\d{2}E\d{2,3}", re.IGNORECASE)
 
 
+def _live_exists_flags(item: ScannedItem) -> tuple[bool, bool, bool]:
+    """Live Show/Season/File flags from real disk state (read-only).
+
+    Stored flags snapshot scan time, so pills go stale when folders/files
+    appear afterwards (e.g. confirming E01 creates the show + season
+    folders that E02-E12 point into, or the user manually places files).
+    Folders and the exact target are cheap ``Path.exists()`` stats; the
+    stored item is never mutated, so scan-time ``action``/counts and the
+    confirm-time "Target file appeared after scan" guard stay intact.
+    A stored movie ``file_exists`` from a replaceable sibling is kept only
+    while that sibling is still there — a read never flips move→replace.
+    """
+    try:
+        target = Path(item.target_path) if item.target_path else None
+        if target is None:
+            return item.show_folder_exists, item.season_folder_exists, item.file_exists
+        parent = target.parent
+        if item.item_type == "series":
+            show = parent.parent.exists() if parent.parent else item.show_folder_exists
+            season = parent.exists()
+            file = target.exists()
+            return show, season, file
+        folder = parent.exists()
+        try:
+            file = target.exists()
+        except OSError:
+            file = item.file_exists
+        if not file and item.file_exists:
+            try:
+                from app.services.resolver import find_existing_movie_file
+
+                sib = find_existing_movie_file(parent, parent.name)
+                file = sib is not None
+            except OSError:
+                file = item.file_exists
+        return folder, item.season_folder_exists, file
+    except OSError:
+        return item.show_folder_exists, item.season_folder_exists, item.file_exists
+
+
+def _live_path_exists(item: ScannedItem) -> str:
+    show, season, file = _live_exists_flags(item)
+    if item.item_type == "series":
+        return "Show %s, Season %s, File %s" % (
+            "\u2713" if show else "\u2717",
+            "\u2713" if season else "\u2717",
+            "\u2713" if file else "\u2717",
+        )
+    return "Folder %s, File %s" % (
+        "\u2713" if show else "\u2717",
+        "\u2713" if file else "\u2717",
+    )
+
+
 def format_path_exists(item: ScannedItem) -> str:
     if item.item_type == "series":
         return "Show %s, Season %s, File %s" % (
@@ -59,7 +113,7 @@ def format_report_md(
         for item in movies:
             title = Path(item.target_path).parent.name
             source = item.source_path
-            lines.append("| %s | %s | %s | %s | `%s` |" % (item.confirm_id, title, source, format_path_exists(item), item.target_path))
+            lines.append("| %s | %s | %s | %s | `%s` |" % (item.confirm_id, title, source, _live_path_exists(item), item.target_path))
         lines.append("")
         movie_candidate_blocks: list[tuple[str, tuple[str, ...], list[str]]] = []
         for item in movies:
@@ -84,7 +138,7 @@ def format_report_md(
             tag_match = EPISODE_TAG_RE.search(p.name)
             ep = tag_match.group(0) if tag_match else p.stem
             source = item.source_path
-            lines.append("| %s | %s | %s | %s | %s | %s | `%s` |" % (item.confirm_id, show, season, ep, source, format_path_exists(item), item.target_path))
+            lines.append("| %s | %s | %s | %s | %s | %s | `%s` |" % (item.confirm_id, show, season, ep, source, _live_path_exists(item), item.target_path))
         lines.append("")
         series_candidate_blocks: list[tuple[str, tuple[str, ...], list[str]]] = []
         for item in series:
@@ -104,7 +158,7 @@ def format_report_md(
         lines.append("|-----|--------|-------------|--------|")
         for item in extras:
             source = item.source_path
-            lines.append("| %s | %s | %s | `%s` |" % (item.confirm_id, source, format_path_exists(item), item.target_path))
+            lines.append("| %s | %s | %s | `%s` |" % (item.confirm_id, source, _live_path_exists(item), item.target_path))
         lines.append("")
 
     if items_by_action["skip"]:
@@ -129,6 +183,7 @@ def format_report_items(scan: ScanPlan, items_by_action: dict[str, list[ScannedI
     """Return structured items (actionable + skipped) for the Web UI."""
     result = []
     for item in items_by_action.get("move", []) + items_by_action.get("replace", []):
+        live_show, live_season, live_file = _live_exists_flags(item)
         result.append({
             "confirmId": item.confirm_id,
             "id": item.confirm_id,
@@ -138,10 +193,10 @@ def format_report_items(scan: ScanPlan, items_by_action: dict[str, list[ScannedI
             "itemType": item.item_type,
             "item_type": item.item_type,
             "action": item.action,
-            "pathExists": format_path_exists(item),
-            "showFolderExists": item.show_folder_exists,
-            "seasonFolderExists": item.season_folder_exists,
-            "fileExists": item.file_exists,
+            "pathExists": _live_path_exists(item),
+            "showFolderExists": live_show,
+            "seasonFolderExists": live_season,
+            "fileExists": live_file,
             "fileSize": item.file_size,
             "crossDrive": item.cross_drive,
             "reason": item.reason,
@@ -166,19 +221,43 @@ def format_report_items(scan: ScanPlan, items_by_action: dict[str, list[ScannedI
             ],
         })
     for item in items_by_action.get("skip", []):
+        live_show, live_season, live_file = _live_exists_flags(item)
         result.append({
             "confirmId": item.confirm_id,
             "id": item.confirm_id,
             "sourcePath": item.source_path,
             "name": item.name,
+            "targetPath": item.target_path,
             "itemType": item.item_type,
             "item_type": item.item_type,
             "action": "skip",
+            "locked": bool(getattr(item, "locked", False)),
+            "pathExists": _live_path_exists(item),
+            "showFolderExists": live_show,
+            "seasonFolderExists": live_season,
+            "fileExists": live_file,
             "fileSize": item.file_size,
+            "crossDrive": item.cross_drive,
             "reason": item.reason,
             "error": item.error,
+            "suspect": item.suspect,
+            "flags": item.flags,
+            "corrected": item.corrected,
+            "correctionNote": item.correction_note,
             "containerPath": item.container_path,
             "sourceFolder": item.source_folder,
+            "extraType": item.extra_type,
+            "extra_type": item.extra_type,
+            "candidateTargets": [
+                {
+                    "path": ct.path,
+                    "label": ct.label,
+                    "evidence": ct.evidence,
+                    "source": ct.source,
+                    "reclassifyAsMovie": ct.reclassify_as_movie,
+                }
+                for ct in item.candidate_targets
+            ],
         })
     return result
 
@@ -501,6 +580,7 @@ def format_report_grouped(items_by_action: dict[str, list[ScannedItem]]) -> list
             entry["count"] += 1
             if item.file_size:
                 entry["totalSize"] += int(item.file_size)
+            live_show, live_season, live_file = _live_exists_flags(item)
             entry["items"].append({
                 "confirmId": item.confirm_id,
                 "id": item.confirm_id,
@@ -511,9 +591,10 @@ def format_report_grouped(items_by_action: dict[str, list[ScannedItem]]) -> list
                 "item_type": item.item_type,
                 "action": item.action,
                 "fileSize": item.file_size,
-                "showFolderExists": item.show_folder_exists,
-                "seasonFolderExists": item.season_folder_exists,
-                "fileExists": item.file_exists,
+                "pathExists": _live_path_exists(item),
+                "showFolderExists": live_show,
+                "seasonFolderExists": live_season,
+                "fileExists": live_file,
                 "crossDrive": item.cross_drive,
                 "reason": item.reason,
                 "error": item.error,

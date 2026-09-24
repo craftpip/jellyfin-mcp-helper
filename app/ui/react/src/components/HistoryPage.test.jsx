@@ -181,8 +181,10 @@ describe('HistoryPage', () => {
   it('edits a target and saves via Save & Move Again (retarget POST)', async () => {
     await expandFirstCard()
     const input = screen.getAllByPlaceholderText('New target path')[0]
+    // Split UI: the input holds the remainder after the library-root dropdown
+    expect(input.value).toBe('New Show/Season 01/New Show S01E01.mkv')
     await userEvent.clear(input)
-    await userEvent.type(input, '/media1/library/New Show/Season 02/New Show S01E01.mkv')
+    await userEvent.type(input, 'New Show/Season 02/New Show S01E01.mkv')
     await userEvent.click(screen.getByText('Save & Move Again'))
     await waitFor(() => expect(posted.some((p) => p.kind === 'retarget')).toBe(true))
     const call = posted.find((p) => p.kind === 'retarget')
@@ -198,6 +200,38 @@ describe('HistoryPage', () => {
     await waitFor(() => expect(posted.some((p) => p.kind === 'undo')).toBe(true))
   })
 
+  it('hides Undo and shows the undone hop once everything is undone', async () => {
+    const undone = structuredClone(GROUPS)
+    undone.groups[0].items.forEach((it) => {
+      it.status = 'undone'
+      it.pathHistory = [it.source_path, it.target_path, it.source_path]
+    })
+    window.fetch.mockImplementation((url) => {
+      const path = String(url)
+      if (path === '/api/history?limit=50') {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(undone) })
+      }
+      if (path === '/api/browse/roots') {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(ROOTS) })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({}) })
+    })
+    renderPage()
+    await screen.findByText('New Show')
+    await userEvent.click(screen.getByText('New Show'))
+    await screen.findByText('Source → Target Path')
+    // Undo button is gone once the whole group is undone
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument()
+    // status badges show undone
+    expect(screen.getAllByText('undone').length).toBeGreaterThanOrEqual(2)
+    // trail counts the undo hop
+    const trailButtons = screen.getAllByRole('button', { name: /hop/ })
+    expect(trailButtons[0]).toHaveTextContent(/2 hops/)
+    await userEvent.click(trailButtons[0])
+    expect(await screen.findByText('Full movement trail')).toBeInTheDocument()
+    expect(screen.getAllByText('undone').length).toBeGreaterThanOrEqual(3)
+  })
+
   it('Browse… opens the folder picker and picking a folder fills the target input', async () => {
     await expandFirstCard()
     await userEvent.click(screen.getAllByText('Browse…')[0])
@@ -207,8 +241,9 @@ describe('HistoryPage', () => {
     await userEvent.click(screen.getByText('Other Show'))
     await userEvent.click(screen.getByRole('button', { name: 'Select this folder' }))
     await waitFor(() => {
+      // Split UI: the picked folder re-splits into dropdown root + remainder
       const input = screen.getAllByPlaceholderText('New target path')[0]
-      expect(input.value).toBe('/media1/library/Other Show')
+      expect(input.value).toBe('Other Show')
     })
   })
 

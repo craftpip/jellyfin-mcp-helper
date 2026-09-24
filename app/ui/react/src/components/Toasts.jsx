@@ -6,13 +6,28 @@ export default function Toasts() {
   // The panel stays mounted on its summary after the rows fade, so a
   // completed move (and a minimized strip) survives until dismissed.
   const showTransfer = state.transferQueue.length > 0 || !!state.transferSummary
-  const hasAny = showTransfer || state.toasts.length > 0
+  // Scan-summary toasts render top-center; everything else stays bottom-right
+  // with the transfer panel.
+  const topToasts = state.toasts.filter((t) => t.pos === 'top')
+  const restToasts = state.toasts.filter((t) => t.pos !== 'top')
+  const hasAny = showTransfer || restToasts.length > 0
 
-  if (!hasAny) return null
+  if (!hasAny && topToasts.length === 0) return null
 
   return (
+    <>
+      {topToasts.length > 0 && (
+        <div className="top-center-toasts" id="topCenterToasts" role="status" aria-live="polite">
+          {topToasts.map((t) => (
+            <div key={t.id} className={'transfer-toast toast-' + t.type} role="status">
+              <span style={{ minWidth: 0 }}>{t.msg}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {hasAny && (
     <div className="transfer-toasts" id="transferToasts" role="status" aria-live="polite">
-      {state.toasts.map((t) => (
+      {restToasts.map((t) => (
         <div key={t.id} className={'transfer-toast toast-' + t.type} role="status">
           <span style={{ minWidth: 0 }}>{t.msg}</span>
           {t.type === 'err' && (
@@ -35,6 +50,8 @@ export default function Toasts() {
         />
       )}
     </div>
+      )}
+    </>
   )
 }
 

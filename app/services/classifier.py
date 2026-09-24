@@ -36,6 +36,7 @@ from app.classification import (  # noqa: F401
     _is_year_word,
     _looks_like_extra,
     _looks_like_sample,
+    _sample_marker_hit,
     _normalize_title_key,
     _parse_guessit,
     _should_use_folder_title,

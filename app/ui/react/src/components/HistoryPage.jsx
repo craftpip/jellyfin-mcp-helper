@@ -1,22 +1,24 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiGet, apiPost } from '../api/apiClient.js'
 import { useAppStore } from '../store/AppStore.jsx'
 import { formatBytes } from '../utils/format.js'
 import { computePathSync, compareReportItemsAsc, typeLabelFor, actionLabelFor, isCrossDriveItem } from '../utils/report.js'
 import PathPills from './PathPills.jsx'
+import TargetPathEditor from './TargetPathEditor.jsx'
 import { FolderPicker } from './BrowseModal.jsx'
 import { confirmDialog } from './ConfirmDialog.jsx'
 
 export default function HistoryPage() {
-  const { actions } = useAppStore()
+  const { state, actions } = useAppStore()
   const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState({})
   const [editing, setEditing] = useState({}) // history_id -> {confirmId -> newTarget}
   const [linked, setLinked] = useState({}) // history_id -> {confirmId -> bool}
   const [busy, setBusy] = useState(null)
-  const [browseRow, setBrowseRow] = useState(null) // {historyId, confirmId, title}
+  const [browseRow, setBrowseRow] = useState(null) // {historyId, confirmId, title, initialPath}
   const [trailPopup, setTrailPopup] = useState(null) // {pathHistory, title}
+  const statusSeq = useRef({})
 
   async function load() {
     setLoading(true)
@@ -32,6 +34,7 @@ export default function HistoryPage() {
 
   useEffect(() => {
     load()
+    actions.loadLibraryRoots?.()
   }, [])
 
   function toggleGroup(id) {
@@ -118,8 +121,38 @@ export default function HistoryPage() {
     })
   }
 
-  async function handleDeleteSource(group, item) {
-    const ok = await confirmDialog({
+  // Live path-status pills, mirroring the report UI: after an edit is
+  // committed (input blur or library-root change), preview what exists at
+  // the new target. Same read-only computation as Save & Move Again.
+  async function refreshHistoryPathStatus(historyId, confirmId) {
+    const group = groups.find((g) => g.history_id === historyId)
+    const item = group?.items.find((it) => it.confirm_id === confirmId)
+    if (!item) return
+    const target = ((editing[historyId] || {})[confirmId] ?? item.target_path ?? '').trim()
+    if (!target) return
+    const key = historyId + ':' + confirmId
+    const seq = (statusSeq.current[key] || 0) + 1
+    statusSeq.current[key] = seq
+    try {
+      const res = await apiGet(
+        '/browse/exists?target=' + encodeURIComponent(target) + '&kind=' + encodeURIComponent(item.item_type || 'movie')
+      )
+      if (statusSeq.current[key] !== seq) return
+      setGroups((prev) =>
+        prev.map((g) => {
+          if (g.history_id !== historyId) return g
+          return {
+            ...g,
+            items: g.items.map((it) => (it.confirm_id === confirmId ? { ...it, pathExists: res.pathExists } : it)),
+          }
+        })
+      )
+    } catch {
+      /* pills keep their last known state when the preview fails */
+    }
+  }
+
+  async function handleDeleteSource(group, item) {    const ok = await confirmDialog({
       title: 'Delete leftover source file?',
       message: 'This cannot be undone.',
       detail: item.source_path,
@@ -211,6 +244,7 @@ export default function HistoryPage() {
 
             {isExpanded && (() => {
               const sortedItems = [...group.items].sort(compareReportItemsAsc)
+              const allUndone = group.items.length > 0 && group.items.every((it) => it.status === 'undone')
               return (
               <div style={{ marginTop: '12px' }}>
                 <div style={{ overflowX: 'auto' }}>
@@ -264,11 +298,6 @@ export default function HistoryPage() {
                                     Suspect
                                   </span>
                                 ) : null}
-                                {item.corrected ? (
-                                  <span className="corrected-badge" title={item.correction_note || 'Reclassified after review'}>
-                                    Corrected
-                                  </span>
-                                ) : null}
                                 <span className="path-status">
                                   <PathPills item={item} />
                                 </span>
@@ -280,13 +309,12 @@ export default function HistoryPage() {
                                   {item.source_path}
                                 </div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                  <input
-                                    type="text"
-                                    className="target-input"
+                                  <TargetPathEditor
                                     value={edited}
-                                    onChange={(e) => handleEditChange(group.history_id, item.confirm_id, e.target.value)}
+                                    roots={state.libraryRoots}
+                                    onChange={(v) => handleEditChange(group.history_id, item.confirm_id, v)}
+                                    onCommit={() => refreshHistoryPathStatus(group.history_id, item.confirm_id)}
                                     placeholder="New target path"
-                                    style={{ flex: 1, minWidth: 0 }}
                                   />
                                   {showLink && (
                                     <button
@@ -316,7 +344,7 @@ export default function HistoryPage() {
                                     type="button"
                                     className="small browse-btn"
                                     onClick={() =>
-                                      setBrowseRow({ historyId: group.history_id, confirmId: item.confirm_id, title: item.source_path })
+                                      setBrowseRow({ historyId: group.history_id, confirmId: item.confirm_id, title: item.source_path, initialPath: edited || item.target_path || null })
                                     }
                                   >
                                     Browse…
@@ -364,9 +392,11 @@ export default function HistoryPage() {
                 </div>
 
                 <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'flex-end', alignItems: 'center' }}>
-                  <button type="button" className="small" onClick={() => handleUndo(group)} disabled={busy === group.history_id}>
-                    {busy === group.history_id ? 'Undoing…' : 'Undo'}
-                  </button>
+                  {!allUndone && (
+                    <button type="button" className="small" onClick={() => handleUndo(group)} disabled={busy === group.history_id}>
+                      {busy === group.history_id ? 'Undoing…' : 'Undo'}
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="small primary"
@@ -385,7 +415,9 @@ export default function HistoryPage() {
 
       {browseRow && (
         <FolderPicker
+          key={browseRow.historyId + ':' + browseRow.confirmId}
           title={browseRow.title}
+          initialPath={browseRow.initialPath || null}
           onPick={(directory) => handleEditChange(browseRow.historyId, browseRow.confirmId, directory)}
           onClose={() => setBrowseRow(null)}
         />
@@ -441,9 +473,10 @@ export default function HistoryPage() {
                   {trailPopup.pathHistory.map((p, idx) => {
                     const isFirst = idx === 0
                     const isLast = idx === trailPopup.pathHistory.length - 1
-                    const hopAction = isFirst ? 'source' : idx === 1 ? (trailPopup.item?.action === 'replace' ? 'replaced' : 'new') : 'new (retarget)'
-                    const badgeBg = hopAction === 'source' ? 'rgba(154,164,171,0.14)' : hopAction.includes('replaced') ? 'rgba(224,90,51,0.14)' : 'rgba(62,207,142,0.14)'
-                    const badgeColor = hopAction === 'source' ? 'var(--jf-text-muted)' : hopAction.includes('replaced') ? '#E05A33' : '#3ecf8e'
+                    const isUndoneHop = isLast && !isFirst && trailPopup.item?.status === 'undone'
+                    const hopAction = isFirst ? 'source' : isUndoneHop ? 'undone' : idx === 1 ? (trailPopup.item?.action === 'replace' ? 'replaced' : 'new') : 'new (retarget)'
+                    const badgeBg = hopAction === 'source' || hopAction === 'undone' ? 'rgba(154,164,171,0.14)' : hopAction.includes('replaced') ? 'rgba(224,90,51,0.14)' : 'rgba(62,207,142,0.14)'
+                    const badgeColor = hopAction === 'source' || hopAction === 'undone' ? 'var(--jf-text-muted)' : hopAction.includes('replaced') ? '#E05A33' : '#3ecf8e'
                     return (
                       <tr key={idx} style={{ background: isLast ? 'rgba(0,164,220,0.04)' : 'transparent' }}>
                         <td style={{ padding: '9px 10px', fontSize: '0.75rem', color: 'var(--jf-text-muted)', textAlign: 'left', borderTop: idx ? '1px solid rgba(46,50,41,0.6)' : 'none' }}>{idx + 1}</td>
@@ -457,7 +490,7 @@ export default function HistoryPage() {
                 </tbody>
               </table>
             </div>
-            <div style={{ fontSize: '0.7rem', color: 'var(--jf-text-muted)', marginTop: '12px', textAlign: 'left' }}>{trailPopup.pathHistory.length} paths • {Math.max(0, trailPopup.pathHistory.length - 1)} moves chained {trailPopup.item?.action ? `• first was ${trailPopup.item.action === 'replace' ? 'replaced' : 'new file'}` : ''}</div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--jf-text-muted)', marginTop: '12px', textAlign: 'left' }}>{trailPopup.pathHistory.length} paths • {Math.max(0, trailPopup.pathHistory.length - 1)} moves chained {trailPopup.item?.action ? `• first was ${trailPopup.item.action === 'replace' ? 'replaced' : 'new file'}` : ''}{trailPopup.item?.status === 'undone' ? ' • undone' : ''}</div>
           </div>
         </div>
       )}

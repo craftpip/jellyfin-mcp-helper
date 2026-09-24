@@ -231,4 +231,22 @@ describe('Toasts bottom-right consolidation', () => {
     const { container } = render(<Toasts />)
     expect(container.querySelector('.transfer-toasts')).toBeNull()
   })
+
+  it('renders scan-summary toasts top-center, apart from the bottom-right container', () => {
+    mockStore = {
+      ...mockStore,
+      toasts: [
+        { id: 't1', type: 'good', msg: 'Scan complete: 2 new files found, 1 file updated', pos: 'top' },
+        { id: 't2', type: 'info', msg: 'Scan started' },
+      ],
+    }
+    const { container } = render(<Toasts />)
+    const top = container.querySelector('#topCenterToasts')
+    expect(top).toBeTruthy()
+    expect(top.textContent).toContain('Scan complete')
+    expect(top.querySelector('.transfer-toast.toast-good')).toBeTruthy()
+    const bottom = container.querySelector('#transferToasts')
+    expect(bottom.textContent).toContain('Scan started')
+    expect(bottom.textContent).not.toContain('Scan complete')
+  })
 })

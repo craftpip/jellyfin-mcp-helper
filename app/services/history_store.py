@@ -197,16 +197,53 @@ def append_to_path_history(history_id: str, confirm_id: str, new_target: str, db
         conn.close()
 
 
-def mark_undone(history_id: str, db_path: Path | None = None) -> bool:
-    """Mark a history group as undone (for undo)."""
+def mark_undone(history_id: str, confirm_ids: list[str] | None = None, db_path: Path | None = None) -> bool:
+    """Mark history items as undone (for undo).
+
+    When confirm_ids is given, only those items are marked and each restored
+    item's source_path is appended to its path_history trail (so the trail
+    shows source -> target -> source with the last hop being the undo).
+    When None (legacy), all items in the group are marked without touching
+    the trail.
+    """
+    # Backward compat: allow mark_undone(history_id, db_path) positional
+    # form used before confirm_ids existed.
+    if isinstance(confirm_ids, Path):
+        confirm_ids, db_path = None, confirm_ids
     init_db(db_path)
     conn = get_db(db_path)
     try:
-        # Add a flag to the group - we can use a separate table or just update a column
-        # For now, just mark items as undone by updating status
-        cur = conn.execute("UPDATE history_items SET status = 'undone' WHERE history_id = ?", (history_id,))
+        if not confirm_ids:
+            cur = conn.execute("UPDATE history_items SET status = 'undone' WHERE history_id = ?", (history_id,))
+            conn.commit()
+            return cur.rowcount > 0
+        marked = False
+        for confirm_id in confirm_ids:
+            cur = conn.execute(
+                "SELECT source_path, path_history_json FROM history_items WHERE history_id = ? AND confirm_id = ?",
+                (history_id, confirm_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                continue
+            source = row["source_path"] or ""
+            try:
+                history = json.loads(row["path_history_json"] or "[]")
+            except Exception:
+                history = []
+            if not isinstance(history, list):
+                history = []
+            # Append the undo hop (back to source) unless already recorded
+            # (guards against double-undo appending twice).
+            if source and (not history or history[-1] != source):
+                history.append(source)
+            conn.execute(
+                "UPDATE history_items SET status = 'undone', path_history_json = ? WHERE history_id = ? AND confirm_id = ?",
+                (json.dumps(history), history_id, confirm_id),
+            )
+            marked = True
         conn.commit()
-        return cur.rowcount > 0
+        return marked
     finally:
         conn.close()
 

@@ -519,3 +519,44 @@ class TestFormatReportItems:
         result = format_report_items(scan, items_by_action)
         assert result[0]["extraType"] == "trailer"
         assert result[0]["extra_type"] == "trailer"
+
+    def test_exists_flags_are_live_not_snapshot(self, tmp_path) -> None:
+        # Stored flags snapshot scan time; the report must reflect real disk
+        # state (e.g. confirming E01 created the show+season folders E02
+        # points into) without a fullRescan, and without mutating the item.
+        show_dir = tmp_path / "Show"
+        season_dir = show_dir / "Season 01"
+        season_dir.mkdir(parents=True)
+        item = _series_item(
+            target_path=str(season_dir / "Show - S01E01.mkv"),
+            show_folder_exists=False,
+            season_folder_exists=False,
+            file_exists=False,
+        )
+        scan = _scan_plan()
+        result = format_report_items(scan, {"move": [item], "replace": [], "skip": []})
+        assert result[0]["showFolderExists"] is True
+        assert result[0]["seasonFolderExists"] is True
+        assert result[0]["fileExists"] is False
+        assert result[0]["pathExists"] == "Show \u2713, Season \u2713, File \u2717"
+        # Read-only: stored item and action untouched (confirm-time
+        # "Target file appeared after scan" guard stays intact).
+        assert item.show_folder_exists is False
+        assert item.action == "move"
+
+    def test_live_file_true_when_target_placed(self, tmp_path) -> None:
+        target = tmp_path / "Show" / "Season 01" / "Show - S01E01.mkv"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"x")
+        item = _series_item(
+            target_path=str(target),
+            show_folder_exists=False,
+            season_folder_exists=False,
+            file_exists=False,
+        )
+        scan = _scan_plan()
+        result = format_report_items(scan, {"move": [item], "replace": [], "skip": []})
+        assert result[0]["fileExists"] is True
+        assert result[0]["pathExists"] == "Show \u2713, Season \u2713, File \u2713"
+        assert item.file_exists is False
+        assert item.action == "move"

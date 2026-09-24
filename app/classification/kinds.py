@@ -7,6 +7,8 @@ from typing import Any
 from app.classification.patterns import (
     DECIMAL_EPISODE_RE,
     EXTRA_MARKERS,
+    MARKER_LOOKAHEAD,
+    MARKER_LOOKBEHIND,
     SAMPLE_MARKERS,
     SEASON_EPISODE_RE,
     SPECIAL_TAG_RE,
@@ -54,27 +56,49 @@ def _extra_type(label: str, parsed: dict[str, Any]) -> str | None:
     episode_title = parsed.get("episode_title")
     if isinstance(episode_title, str):
         text += " " + episode_title.lower()
-    # Check for specific markers in order of specificity
-    if re.search(r"\btrailer\b", text):
+    # Check for specific markers in order of specificity (underscore-tolerant
+    # boundaries — see MARKER_LOOKBEHIND in patterns.py).
+    _LB = MARKER_LOOKBEHIND
+    _LA = MARKER_LOOKAHEAD
+    if re.search(_LB + r"sample" + _LA, text):
+        return "sample"
+    if re.search(_LB + r"trailer" + _LA, text):
         return "trailer"
-    if re.search(r"\bbehindthescenes\b", text) or re.search(r"behind.*scene", text):
+    if re.search(_LB + r"behindthescenes" + _LA, text) or re.search(r"behind.*scene", text):
         return "behind"
-    if re.search(r"\bdeleted", text):
+    if re.search(_LB + r"deleted", text):
         return "deleted"
-    if re.search(r"\binterview\b", text):
+    if re.search(_LB + r"interview" + _LA, text):
         return "interview"
-    if re.search(r"\bfeaturette\b", text):
+    if re.search(_LB + r"featurette" + _LA, text):
         return "featurette"
-    if re.search(r"\bshort\b", text):
+    if re.search(_LB + r"short" + _LA, text):
         return "short"
-    if re.search(r"\bsp\d*\b", text) or re.search(r"\bspecial\b", text):
+    if re.search(_LB + r"sp\d*" + _LA, text) or re.search(_LB + r"special" + _LA, text):
         return "special"
-    if re.search(r"\bextra\b", text):
+    if re.search(_LB + r"extra" + _LA, text):
         return "extra"
     # Fallback for any extra marker
     if EXTRA_MARKERS.search(label) or SPECIAL_TAG_RE.search(label) or DECIMAL_EPISODE_RE.search(label):
         return "special"
     return None
+
+
+def _sample_marker_hit(label: str, parsed: dict[str, Any]) -> bool:
+    """True when a `sample` word marker names the file (not a size guess).
+
+    Marker-only split of `_looks_like_sample`: the size heuristic below stays
+    in `_looks_like_sample` for the size-only suspect path in the classifier.
+    """
+    if SAMPLE_MARKERS.search(label):
+        return True
+    title = parsed.get("title") or parsed.get("movie")
+    if isinstance(title, str) and SAMPLE_MARKERS.search(title):
+        return True
+    other = parsed.get("other")
+    if isinstance(other, str) and SAMPLE_MARKERS.search(other):
+        return True
+    return False
 
 
 def _looks_like_sample(label: str, parsed: dict[str, Any], file_size: int | None = None) -> bool:

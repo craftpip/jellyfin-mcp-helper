@@ -27,6 +27,77 @@ describe('reportSlice', () => {
     expect(state.reportGroups).toBe(groups)
   })
 
+  it('SET_PATH_STATUS merges pills by confirmId without touching other fields', () => {
+    const base = {
+      ...reportInitialState,
+      currentItems: [
+        {
+          confirmId: 'c1',
+          action: 'move',
+          itemType: 'series',
+          targetPath: '/s/Show/Season 01/Show - S01E01.mkv',
+          originalTarget: '/s/Show/Season 01/Show - S01E01.mkv',
+          _liveTarget: '/s/Show/Season 01/Show - S01E01.mkv',
+          pathExists: 'Show ✗, Season ✗, File ✗',
+        },
+        {
+          confirmId: 'c2',
+          action: 'move',
+          itemType: 'series',
+          targetPath: '/s/Show/Season 01/Show - S01E02.mkv',
+          originalTarget: '/s/Show/Season 01/Show - S01E02.mkv',
+          _liveTarget: '/s/Show/Season 01/Show - S01E02.mkv',
+          pathExists: 'Show ✗, Season ✗, File ✗',
+        },
+      ],
+    }
+    const state = reportReducer(base, {
+      type: 'SET_PATH_STATUS',
+      updates: [
+        {
+          confirmId: 'c2',
+          target: '/s/Show/Season 01/Show - S01E02.mkv',
+          pathExists: 'Show ✓, Season ✓, File ✗',
+          showFolderExists: true,
+          seasonFolderExists: true,
+          fileExists: false,
+        },
+      ],
+    })
+    const [c1, c2] = state.currentItems
+    // Untouched row keeps everything
+    expect(c1.pathExists).toBe('Show ✗, Season ✗, File ✗')
+    expect(c1._statusCheckedFor).toBeUndefined()
+    // Linked sibling row gets fresh pills + checked marker, live target intact
+    expect(c2.pathExists).toBe('Show ✓, Season ✓, File ✗')
+    expect(c2.showFolderExists).toBe(true)
+    expect(c2._statusCheckedFor).toBe('/s/Show/Season 01/Show - S01E02.mkv')
+    expect(c2._liveTarget).toBe('/s/Show/Season 01/Show - S01E02.mkv')
+    expect(c2.originalTarget).toBe('/s/Show/Season 01/Show - S01E02.mkv')
+  })
+
+  it('SET_PATH_STATUS skips rows whose live target moved on', () => {
+    const base = {
+      ...reportInitialState,
+      currentItems: [
+        {
+          confirmId: 'c1',
+          action: 'move',
+          itemType: 'movie',
+          targetPath: '/m/A/A.mkv',
+          _liveTarget: '/m/B/B.mkv',
+          pathExists: 'Folder ✗, File ✗',
+        },
+      ],
+    }
+    const state = reportReducer(base, {
+      type: 'SET_PATH_STATUS',
+      updates: [{ confirmId: 'c1', target: '/m/A/A.mkv', pathExists: 'Folder ✓, File ✗' }],
+    })
+    expect(state.currentItems[0].pathExists).toBe('Folder ✗, File ✗')
+    expect(state.currentItems[0]._statusCheckedFor).toBeUndefined()
+  })
+
   it('TOGGLE_GROUP adds gid when absent', () => {
     const state = reportReducer(reportInitialState, { type: 'TOGGLE_GROUP', gid: 'group-0' })
     expect(state.expandedGroups).toEqual(['group-0'])

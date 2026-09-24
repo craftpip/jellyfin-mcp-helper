@@ -80,16 +80,19 @@ def _browse_root_configs(config) -> list[dict]:
 def _browse_resolve_target(target: str, config) -> str | None:
     """Nearest existing ancestor dir of a planned target path (read-only).
 
-    Starts at ``dirname(target)`` — the folder the file would land in — and
-    walks up to the closest existing ancestor. Never creates directories.
-    Returns ``None`` when the target is outside all configured roots or
-    nothing in the chain (incl. the root) exists.
+    Accepts either a full file path (starts at ``dirname(target)`` — the
+    folder the file would land in) or an already-stripped directory path
+    (starts at itself). Walks up to the closest existing ancestor. Never
+    creates directories. Returns ``None`` when the target is outside all
+    configured roots or nothing in the chain (incl. the root) exists.
     """
     target_path = Path(target)
     root = _browse_root_for(target_path, config)
     if not root:
         return None
-    candidate = target_path.parent
+    # File path -> dirname; directory path -> itself (so callers that already
+    # stripped the filename don't lose another level, e.g. Season 01 -> show).
+    candidate = target_path if target_path.is_dir() else target_path.parent
     while True:
         if candidate.is_dir():
             return str(candidate)
@@ -754,6 +757,7 @@ def create_ui_app(
         if not group:
             raise HTTPException(status_code=404, detail="History group not found")
         restored = 0
+        restored_ids = []
         skipped = []
         for item in group.get("items", []):
             target = Path(item.get("target_path") or "")
@@ -768,10 +772,12 @@ def create_ui_app(
                 source.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(target), str(source))
                 restored += 1
+                if item.get("confirm_id"):
+                    restored_ids.append(item["confirm_id"])
             except Exception as e:
                 skipped.append({"path": str(target), "reason": str(e)})
-        if restored:
-            mark_undone(history_id)
+        if restored_ids:
+            mark_undone(history_id, restored_ids)
         return {"restored": restored, "skipped": skipped, "history_id": history_id}
 
     @ui_app.post("/api/history/{history_id}/retarget", dependencies=[Depends(require_panel_auth)])
@@ -999,6 +1005,46 @@ def create_ui_app(
         if not target or not Path(target).is_absolute():
             raise HTTPException(status_code=400, detail="target must be an absolute path")
         return {"path": _browse_resolve_target(target, config), "target": target}
+
+    @ui_app.get("/api/browse/exists", dependencies=[Depends(require_panel_auth)])
+    async def api_browse_exists(request: Request, target: str = "", kind: str = "movie"):
+        """Live path-status for an edited target (read-only).
+
+        Reuses the same existence computation as Update Paths
+        (`refresh_item_after_target_change`), so the pills preview exactly
+        what saving would record. Used on input blur / library-root change.
+        """
+        from app.models.schemas import ScannedItem
+        from app.services.presenters import format_path_exists
+        from app.services.retarget import refresh_item_after_target_change
+
+        manager: ScanManager = request.app.state.scan_manager
+        config = manager._config
+        if not target or not Path(target).is_absolute():
+            raise HTTPException(status_code=400, detail="target must be an absolute path")
+        if not _browse_root_for(Path(target), config):
+            raise HTTPException(status_code=400, detail=f"Path '{target}' is not under any configured movie or series root")
+        item_kind = kind if kind in ("series", "movie", "extra") else "movie"
+        tmp = ScannedItem(
+            confirmId="preview",
+            sourcePath="",
+            name=Path(target).name,
+            item_type=item_kind,
+            confidence=1.0,
+            reason="path-status preview",
+            target_path=target,
+            action="move",
+        )
+        refresh_item_after_target_change(tmp, Path(target))
+        return {
+            "target": target,
+            "kind": item_kind,
+            "pathExists": format_path_exists(tmp),
+            "showFolderExists": tmp.show_folder_exists,
+            "seasonFolderExists": tmp.season_folder_exists,
+            "fileExists": tmp.file_exists,
+            "action": tmp.action,
+        }
 
     @ui_app.get("/api/browse/search", dependencies=[Depends(require_panel_auth)])
     async def api_browse_search(request: Request, q: str = ""):

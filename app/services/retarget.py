@@ -94,7 +94,12 @@ def apply_retarget(item: ScannedItem, directory: Path, reclassify_as_movie: bool
     source_tag = source_episode_tag(item)
 
     # --- compute target path by effective type ---
-    if eff_type == "movie":
+    if eff_type == "extra":
+        # Extras/samples keep their filename flat under the chosen directory
+        # (Jellyfin types `samples/` + `extras/` by folder, not filename).
+        _base = Path(item.target_path).name or Path(item.source_path).name
+        target_path = directory / _base
+    elif eff_type == "movie":
         base_name = directory.name or "Movie"
         # Keep the source container (.mkv stays .mkv); an existing .mp4 with
         # the same stem counts as replace and is deleted on confirm.
@@ -196,8 +201,8 @@ def update_scan(manager, scan_id: str, items: list[dict]) -> ScanPlan:
         if item.confirm_id not in updates_by_id:
             continue
         new_target = updates_by_id[item.confirm_id]
-        if item.action == "skip" or item.item_type == "skip":
-            raise HTTPException(status_code=400, detail=f"Item '{item.confirm_id}' is skipped and cannot be redirected")
+        if getattr(item, "locked", False):
+            raise HTTPException(status_code=400, detail=f"Item '{item.confirm_id}' is locked and cannot be redirected")
 
         target_path_obj = validate_target_path(new_target, allowed_roots)
 
@@ -240,8 +245,8 @@ def retarget_item(
     item = next((i for i in scan.items if i.confirm_id == confirm_id), None)
     if not item:
         raise HTTPException(status_code=400, detail=f"No item found for confirmId '{confirm_id}'")
-    if item.action == "skip" or item.item_type == "skip":
-        raise HTTPException(status_code=400, detail=f"Item '{confirm_id}' is skipped and cannot be redirected")
+    if getattr(item, "locked", False):
+        raise HTTPException(status_code=400, detail=f"Item '{confirm_id}' is locked and cannot be redirected")
     if reclassify_as_movie and apply_to_group:
         raise HTTPException(status_code=400, detail="Cannot apply 'as movie' reclassification to a group")
 
@@ -255,7 +260,7 @@ def retarget_item(
             group_key = str(Path(item.target_path).parent.parent)
             group_items = [
                 i for i in scan.items
-                if i.action != "skip" and i.item_type != "skip"
+                if not getattr(i, "locked", False) and i.target_path
                 and effective_type(i, False) == "series"
                 and str(Path(i.target_path).parent.parent) == group_key
             ]
@@ -263,7 +268,7 @@ def retarget_item(
             group_key = str(Path(item.target_path).parent)
             group_items = [
                 i for i in scan.items
-                if i.action != "skip" and i.item_type != "skip"
+                if not getattr(i, "locked", False) and i.target_path
                 and effective_type(i, False) != "series"
                 and str(Path(i.target_path).parent) == group_key
             ]

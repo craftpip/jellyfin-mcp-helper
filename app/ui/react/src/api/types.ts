@@ -4,7 +4,7 @@
  */
 
 export type OperationMode = "organize" | "normalize"
-export type ItemKind = "movie" | "series" | "skip"
+export type ItemKind = "movie" | "series" | "skip" | "extra"
 export type ScanStatus = "running" | "completed" | "confirmed" | "failed" | "cancelled"
 export type ConfirmStatus = "idle" | "running" | "completed" | "failed"
 export type ConfirmPhase =
@@ -50,6 +50,7 @@ export interface ScannedItem {
   corrected: boolean
   correction_note?: string | null
   candidateTargets: CandidateTarget[]
+  locked?: boolean
 }
 
 export interface ScanCounts {

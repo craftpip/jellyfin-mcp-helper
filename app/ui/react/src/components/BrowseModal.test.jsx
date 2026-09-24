@@ -148,7 +148,7 @@ describe('BrowseModal', () => {
     await waitFor(() => expect(posted.length).toBe(1))
     expect(posted[0].confirmId).toBe('c1')
     expect(posted[0].directory).toBe('/media1/series/Existing Show/Season 05')
-    expect(posted[0].applyToGroup).toBe(false)
+    expect(posted[0].applyToGroup).toBe(true)
     expect(posted[0].reclassifyAsMovie).toBe(false)
   })
 

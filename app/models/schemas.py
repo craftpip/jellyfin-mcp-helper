@@ -61,6 +61,10 @@ class ScannedItem(BaseModel):
     container_path: str | None = Field(default=None, alias="containerPath")
     source_folder: str | None = Field(default=None, alias="sourceFolder")
     extra_type: str | None = Field(default=None, alias="extraType")
+    # Plan 17: only locked skips (in-progress, source-missing, error/zero-byte)
+    # stay non-editable. Every other skip carries a proposed target and can be
+    # re-pointed via Update Paths / Browse, promoting to move/replace on save.
+    locked: bool = False
 
     model_config = {"populate_by_name": True}
 

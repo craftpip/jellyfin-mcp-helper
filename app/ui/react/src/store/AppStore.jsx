@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useReducer, useRef, useCallback } from 'react'
 import { apiDelete, apiGet, apiPatch, apiPost, getAuthToken, setAuthToken } from '../api/apiClient.js'
-import { computePathSync, defaultSelection, groupItems, isCrossDriveItem, mapReportItems } from '../utils/report.js'
+import { bringNewGroupsToTop, computePathSync, defaultSelection, groupItems, isCrossDriveItem, mapReportItems, summarizeReportDiff } from '../utils/report.js'
 import { isCrossDrive } from '../utils/format.js'
 import { buildTransferQueue, buildTransferQueueFromGroups, deriveTransferQueue, TRANSFER_DONE_REMOVE_MS } from '../utils/transfer.js'
 import { usePoll } from '../hooks/usePoll.js'
@@ -118,6 +118,7 @@ const initialState = {
   navMenuOpen: false,
   jellyfinLibraries: [],
   libraryScanning: null,
+  libraryRoots: [],
   // Scan slice
   ...scanInitialState,
   // Report slice
@@ -149,7 +150,7 @@ const initialState = {
   ...adminInitialState,
 }
 
-const REPORT_TYPES = new Set(['SET_REPORT', 'SET_SELECTION', 'SET_ITEMS', 'TOGGLE_GROUP', 'SET_GROUPS_EXPANDED', 'SET_FILTER', 'SET_SEARCH_QUERY'])
+const REPORT_TYPES = new Set(['SET_REPORT', 'SET_SELECTION', 'SET_ITEMS', 'SET_PATH_STATUS', 'TOGGLE_GROUP', 'SET_GROUPS_EXPANDED', 'SET_FILTER', 'SET_SEARCH_QUERY'])
 const SCAN_TYPES = new Set(['SET_SCAN_ID', 'SET_SCAN_RUNNING', 'SET_SCAN_PROGRESS'])
 const ADMIN_TYPES = new Set(['SET_ADMIN_ENV', 'SET_ADMIN_LOADING'])
 
@@ -168,6 +169,8 @@ function reducer(state, action) {
       return { ...state, undoTick: state.undoTick + 1 }
     case 'SET_LIBRARIES':
       return { ...state, jellyfinLibraries: action.libraries }
+    case 'SET_LIBRARY_ROOTS':
+      return { ...state, libraryRoots: action.roots }
     case 'SET_LIBRARY_SCANNING':
       return { ...state, libraryScanning: action.name }
     case 'SET_REPORT_LOADING':
@@ -235,11 +238,15 @@ export function AppStoreProvider({ children }) {
   const confirmPostRef = useRef(false)
   const pendingBatchesRef = useRef([])
   const didInit = useRef(false)
+  // Set when the report load was triggered by a scan completion (not a page
+  // load / undo / confirm-dismiss): renderReport then diffs against the
+  // previous report, lifts new groups to the top and toasts a summary.
+  const scanFreshRef = useRef(false)
 
   // ---- feedback primitives ----
-  function toast(msg, type = 'info') {
+  function toast(msg, type = 'info', opts) {
     const id = ++toastSeq
-    dispatch({ type: 'ADD_TOAST', toast: { id, msg, type } })
+    dispatch({ type: 'ADD_TOAST', toast: { id, msg, type, pos: opts?.pos || 'default' } })
     // Error toasts persist until dismissed — a 3.5s flash is not enough to
     // read a move failure. All other types still auto-dismiss.
     if (type !== 'err') {
@@ -384,17 +391,32 @@ export function AppStoreProvider({ children }) {
   }
 
   // ---- report rendering ----
-  function renderReport(report) {
+  function renderReport(report, prevItems) {
     const all = mapReportItems(report)
     const s = report.summary || {}
-    const withLive = all.map((i) => ({ ...i, _liveTarget: i.targetPath, _linked: true }))
-    const groups = groupItems(withLive)
+    const withLive = all.map((i) => ({ ...i, _liveTarget: i.targetPath, _linked: true, _statusCheckedFor: i.targetPath }))
+    let groups = groupItems(withLive)
+    // Fresh scan results: lift newly found groups to the top so they are
+    // seen first, and diff against the previous report for the toast.
+    let diff = null
+    if (prevItems) {
+      diff = summarizeReportDiff(prevItems, all)
+      if (diff.newSources.size > 0) groups = bringNewGroupsToTop(groups, diff.newSources)
+    }
     const allIds = groups.map((g, gi) => 'group-' + gi)
     // A stored collapse wins over the default-expand-all, so a refresh (or a
     // reloaded report) brings back the same open/closed groups. Unknown ids
     // from an older report shape are dropped.
     const stored = getInitialExpandedGroups()
     const expanded = stored === null ? allIds : stored.filter((gid) => allIds.includes(gid))
+    // New groups start expanded even when a stored collapse exists — their
+    // positional ids are unknown to the stored list and would hide them.
+    if (diff && diff.newSources.size > 0) {
+      const isNew = (g) => g.items.some((i) => diff.newSources.has(i.sourcePath || ''))
+      groups.forEach((g, gi) => {
+        if (isNew(g) && !expanded.includes('group-' + gi)) expanded.push('group-' + gi)
+      })
+    }
     dispatch({
       type: 'SET_REPORT',
       payload: {
@@ -409,6 +431,14 @@ export function AppStoreProvider({ children }) {
         scanId: s.scan_id || stateRef.current.scanId,
       },
     })
+    if (diff) {
+      const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's')
+      if (diff.newCount === 0 && diff.updatedCount === 0) {
+        toast('Scan complete — no new files', 'info', { pos: 'top' })
+      } else {
+        toast(`Scan complete: ${plural(diff.newCount, 'new file')} found, ${plural(diff.updatedCount, 'file')} updated`, 'good', { pos: 'top' })
+      }
+    }
   }
 
   async function fetchReport() {
@@ -437,7 +467,9 @@ export function AppStoreProvider({ children }) {
       }
       dispatch({ type: 'SET_SCAN_RUNNING', scanRunning: false })
       if (result.summary?.scan_id) dispatch({ type: 'SET_SCAN_ID', scanId: result.summary.scan_id })
-      renderReport(result)
+      const justScanned = scanFreshRef.current
+      scanFreshRef.current = false
+      renderReport(result, justScanned ? stateRef.current.reportAll : null)
       log('Report loaded — ' + (result.summary?.action_required || 0) + ' actions pending', 'good')
     } catch (e) {
       if (handleApiError(e)) return
@@ -521,6 +553,19 @@ export function AppStoreProvider({ children }) {
     dispatch({ type: 'SET_LIBRARIES', libraries })
     log('Loaded ' + libraries.length + ' libraries', 'good')
     fetchReport()
+    loadLibraryRoots()
+  }
+
+  // Library roots for the target-path prefix dropdown (GET /api/browse/roots).
+  // Cached in the store so every report/history row shares one fetch.
+  async function loadLibraryRoots() {
+    if ((stateRef.current.libraryRoots || []).length) return
+    try {
+      const res = await apiGet('/browse/roots')
+      dispatch({ type: 'SET_LIBRARY_ROOTS', roots: res.roots || [] })
+    } catch (e) {
+      /* rows fall back to a plain input when roots are unavailable */
+    }
   }
 
   // ---- setup wizard ----
@@ -549,6 +594,7 @@ export function AppStoreProvider({ children }) {
           dispatch({ type: 'SET_LIBRARIES', libraries: libs.libraries || [] })
           dispatch({ type: 'SET_CONN', status: 'connected', message: 'connected' })
           fetchReport()
+          loadLibraryRoots()
           restoreTransfer()
           return
         } catch (e) {
@@ -653,6 +699,7 @@ export function AppStoreProvider({ children }) {
       dispatch({ type: 'SET_REPORT_LOADING', reportLoading: true })
       toast('Scan completed — loading report...', 'good')
       dispatch({ type: 'SET_SCAN_PROGRESS', progress: null })
+      scanFreshRef.current = true
       setTimeout(fetchReport, 500)
       return true
     }
@@ -794,6 +841,61 @@ export function AppStoreProvider({ children }) {
     dispatch({ type: 'SET_ITEMS', currentItems: updated, reportGroups: groupItems(updated) })
   }
 
+  // Live path-status pills: after a target edit is committed (input blur or
+  // library-root change), ask the backend what exists at the new targets and
+  // update the pills. Same computation as Update Paths, read-only.
+  // Path linking syncs an edit to sibling rows in the same group, so refresh
+  // every dirty row in the committed row's group — not just the edited row.
+  // The update merges by confirmId (SET_PATH_STATUS) so a resolving preview
+  // can never clobber a concurrent Update Paths save.
+  const pathStatusSeq = useRef(0)
+  async function refreshPathStatus(idx) {
+    const items = stateRef.current.currentItems
+    const item = items[idx]
+    // Plan 17: unlocked skips are editable — preview their edited targets too.
+    if (!item || (item.action === 'skip' && (item.locked ?? true))) return
+    const group = stateRef.current.reportGroups?.find((g) => g.items.some((i) => i._idx === idx))
+    const members = group ? group.items : [{ ...item, _idx: idx }]
+    const pending = members
+      .map((i) => i._idx)
+      .filter((i) => {
+        const it = stateRef.current.currentItems[i]
+        if (!it || (it.action === 'skip' && (it.locked ?? true))) return false
+        const t = (it._liveTarget || it.targetPath || '').trim()
+        return t && t !== it._statusCheckedFor
+      })
+    if (!pending.length) return
+    const seq = ++pathStatusSeq.current
+    const reqs = pending.map((i) => {
+      const it = stateRef.current.currentItems[i]
+      const t = (it._liveTarget || it.targetPath || '').trim()
+      return { confirmId: it.confirmId, target: t, kind: it.itemType || 'movie' }
+    })
+    try {
+      const results = await Promise.all(
+        reqs.map((r) =>
+          apiGet(
+            '/browse/exists?target=' + encodeURIComponent(r.target) + '&kind=' + encodeURIComponent(r.kind)
+          ).then((res) => ({ ...r, res }))
+        )
+      )
+      if (seq !== pathStatusSeq.current) return
+      dispatch({
+        type: 'SET_PATH_STATUS',
+        updates: results.map(({ confirmId, target, res }) => ({
+          confirmId,
+          target,
+          pathExists: res.pathExists,
+          showFolderExists: res.showFolderExists,
+          seasonFolderExists: res.seasonFolderExists,
+          fileExists: res.fileExists,
+        })),
+      })
+    } catch (e) {
+      /* pills keep their last known state when the preview fails */
+    }
+  }
+
   async function applyGroupTargetEdits(gi) {
     const group = stateRef.current.reportGroups?.[gi]
     if (!group) return
@@ -809,12 +911,19 @@ export function AppStoreProvider({ children }) {
       return
     }
     try {
-      await apiPatch('/scans/current/items', {
+      // Plan 17: the PATCH response is the canonical report — re-render it so
+      // promoted skips (skip→move) flip their badge/action immediately instead
+      // of staying stuck as Skipped locally.
+      const report = await apiPatch('/scans/current/items', {
         scanId: stateRef.current.scanId,
         items: updates,
       })
       log('Updated ' + updates.length + ' paths in "' + group.title + '"', 'good')
       toast('Paths updated in "' + group.title + '"', 'good')
+      if (report && report.summary) {
+        renderReport(report, null)
+        return
+      }
       const items = stateRef.current.currentItems.map((item) => {
         const u = updates.find((x) => x.confirmId === item.confirmId)
         if (u) {
@@ -846,7 +955,7 @@ export function AppStoreProvider({ children }) {
       return item && item.action !== 'skip'
     })
     if (!ids.length) {
-      toast('No move/replace items selected (skipped items are not movable)', 'info')
+      toast('No move/replace items selected (skipped items need Update Paths first)', 'info')
       return
     }
     openConfirmModal(ids, 'selected items')
@@ -1369,6 +1478,7 @@ export function AppStoreProvider({ children }) {
     login,
     logout,
     loadLibraries,
+    loadLibraryRoots,
     triggerLibraryScan,
     startScan,
     pollScanProgress,
@@ -1381,6 +1491,7 @@ export function AppStoreProvider({ children }) {
     setCheckedItems,
     onTargetInputChange,
     toggleLink,
+    refreshPathStatus,
     applyGroupTargetEdits,
     confirmSelected,
     confirmGroup,

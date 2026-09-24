@@ -402,6 +402,38 @@ class TestBrowseAndRetarget:
             assert res.status_code == 200
             assert res.json()["path"] is None
 
+    def test_browse_exists_reports_missing_then_present(self, tmp_path, monkeypatch):
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            target = str(tmp_path / "series" / "Show" / "Season 01" / "Show - S01E01.mkv")
+            missing = client.get("/api/browse/exists", params={"target": target, "kind": "series"})
+            assert missing.status_code == 200
+            assert missing.json()["pathExists"] == "Show ✗, Season ✗, File ✗"
+            assert missing.json()["action"] == "move"
+
+            season = tmp_path / "series" / "Show" / "Season 01"
+            season.mkdir(parents=True)
+            (season / "Show - S01E01.mkv").touch()
+            present = client.get("/api/browse/exists", params={"target": target, "kind": "series"})
+            assert present.status_code == 200
+            assert present.json()["pathExists"] == "Show ✓, Season ✓, File ✓"
+            assert present.json()["action"] == "replace"
+
+    def test_browse_exists_movie_and_validation(self, tmp_path, monkeypatch):
+        movie_dir = tmp_path / "movies" / "Movie (2024)"
+        movie_dir.mkdir(parents=True)
+        client, _ = _make_client(tmp_path, monkeypatch)
+        with client:
+            target = str(movie_dir / "Movie (2024).mkv")
+            res = client.get("/api/browse/exists", params={"target": target, "kind": "movie"})
+            assert res.status_code == 200
+            assert res.json()["pathExists"] == "Folder ✓, File ✗"
+
+            outside = client.get("/api/browse/exists", params={"target": "/tmp/x.mkv", "kind": "movie"})
+            assert outside.status_code == 400
+            relative = client.get("/api/browse/exists", params={"target": "relative/x.mkv"})
+            assert relative.status_code == 400
+
     def test_browse_search(self, tmp_path, monkeypatch):
         (tmp_path / "series" / "Crumpled Staircase" / "Season 01").mkdir(parents=True)
         (tmp_path / "series" / "Other Show" / "Season 01").mkdir(parents=True)

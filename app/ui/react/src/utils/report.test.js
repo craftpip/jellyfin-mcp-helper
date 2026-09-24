@@ -1,13 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import {
+  bringNewGroupsToTop,
   compareReportItemsAsc,
   computePathSync,
   defaultSelection,
   groupItems,
   isCrossDriveItem,
+  isLockedItem,
+  joinTarget,
   mapReportItems,
   matchesFilter,
   itemSearchText,
+  splitTarget,
+  summarizeReportDiff,
   typeLabelFor,
 } from './report.js'
 
@@ -392,6 +397,133 @@ describe('computePathSync', () => {
     // No linked sibling exists, so revert should not trigger — return null (keep edit)
     expect(synced).toBeNull()
   })
+
+  it('keeps a solo generic-root edit (lanterns) — same sourceFolder, different titles, no sync/no revert', () => {
+    const items = [
+      { confirmId: 'r1', title: 'Rent-a-Girlfriend', sourceFolder: 'torrents', containerPath: '', targetPath: '/m2/series-r/Rent-a-Girlfriend/Season 05/Rent-a-Girlfriend - S05E12.mkv', _liveTarget: '/m2/series-r/Rent-a-Girlfriend/Season 05/Rent-a-Girlfriend - S05E12.mkv', itemType: 'series', action: 'move' },
+      { confirmId: 'l1', title: 'Lanterns (2026)', sourceFolder: 'torrents', containerPath: '', targetPath: '/m3/series/Lanterns (2026)/Season 01/lanterns - S01E06.mkv', _liveTarget: '/m3/series/Lanterns (2026)/Season 01/lanterns - S01E06.mkv', itemType: 'series', action: 'move' },
+    ]
+    // Rendered groups split generic 'torrents' by title, so Lanterns is solo (group size 1, no link icon)
+    const groups = groupItems(items)
+    expect(groups.find((g) => g.title === 'Lanterns (2026)').items).toHaveLength(1)
+    const synced = computePathSync(
+      1,
+      items[1]._liveTarget,
+      '/m3/series/Lanterns (2026)/Season 01/lanterns - S01E06-edited.mkv',
+      items
+    )
+    expect(synced).toBeNull()
+  })
+})
+
+describe('summarizeReportDiff', () => {
+  const prev = [
+    { sourcePath: '/d/Show.S01E01.mkv', action: 'move', targetPath: '/s/Show/Season 01/Show S01E01.mkv' },
+    { sourcePath: '/d/Movie.mkv', action: 'skip', targetPath: '' },
+  ]
+
+  it('counts unseen sources as new and changed ones as updated', () => {
+    const next = [
+      { sourcePath: '/d/Show.S01E01.mkv', action: 'move', targetPath: '/s/Show/Season 01/Show S01E01.mkv' },
+      { sourcePath: '/d/Movie.mkv', action: 'move', targetPath: '/m/Movie/Movie.mkv' },
+      { sourcePath: '/d/Fresh.S01E01.mkv', action: 'move', targetPath: '/s/Fresh/Season 01/Fresh S01E01.mkv' },
+    ]
+    const diff = summarizeReportDiff(prev, next)
+    expect(diff.newCount).toBe(1)
+    expect(diff.updatedCount).toBe(1)
+    expect(diff.newSources.has('/d/Fresh.S01E01.mkv')).toBe(true)
+  })
+
+  it('reports zeroes when nothing changed', () => {
+    const diff = summarizeReportDiff(prev, [...prev])
+    expect(diff.newCount).toBe(0)
+    expect(diff.updatedCount).toBe(0)
+    expect(diff.newSources.size).toBe(0)
+  })
+
+  it('reads snake_case history shapes', () => {
+    const diff = summarizeReportDiff(
+      [{ source_path: '/d/a.mkv', action: 'move', target_path: '/s/A.mkv' }],
+      [{ source_path: '/d/a.mkv', action: 'move', target_path: '/s/A.mkv' }],
+    )
+    expect(diff.newCount).toBe(0)
+    expect(diff.updatedCount).toBe(0)
+  })
+})
+
+describe('bringNewGroupsToTop', () => {
+  function groups() {
+    return [
+      { title: 'Old Show', items: [{ sourcePath: '/d/Old.S01E01.mkv' }] },
+      { title: 'Fresh Show', items: [{ sourcePath: '/d/Fresh.S01E01.mkv' }] },
+    ]
+  }
+
+  it('lifts groups with new sources first, keeping order otherwise', () => {
+    const ordered = bringNewGroupsToTop(groups(), new Set(['/d/Fresh.S01E01.mkv']))
+    expect(ordered.map((g) => g.title)).toEqual(['Fresh Show', 'Old Show'])
+  })
+
+  it('returns groups untouched when nothing is new', () => {
+    const input = groups()
+    expect(bringNewGroupsToTop(input, new Set())).toBe(input)
+    expect(bringNewGroupsToTop(input, new Set(['/d/Other.mkv']))).toBe(input)
+  })
+})
+describe('splitTarget/joinTarget', () => {
+  const ROOTS = [
+    { key: 's2', path: '/mnt/media2t/downloads/series', kind: 'series', description: 'Series' },
+    { key: 'm2', path: '/mnt/media2t/downloads/movies', kind: 'movie', description: 'Movies' },
+  ]
+
+  it('splits the library prefix from the remainder', () => {
+    expect(splitTarget('/mnt/media2t/downloads/series/Toshi Densetsu Series/Season 01/Toshi .mp4', ROOTS)).toEqual({
+      root: '/mnt/media2t/downloads/series/',
+      remainder: 'Toshi Densetsu Series/Season 01/Toshi .mp4',
+    })
+  })
+
+  it('round-trips through joinTarget', () => {
+    const { root, remainder } = splitTarget('/mnt/media2t/downloads/series/Show/Season 01/f.mkv', ROOTS)
+    expect(joinTarget(root, remainder)).toBe('/mnt/media2t/downloads/series/Show/Season 01/f.mkv')
+  })
+
+  it('swaps only the prefix when the root changes', () => {
+    const { remainder } = splitTarget('/mnt/media2t/downloads/series/Show/Season 01/f.mkv', ROOTS)
+    expect(joinTarget('/mnt/media1t/downloads/series/', remainder)).toBe(
+      '/mnt/media1t/downloads/series/Show/Season 01/f.mkv'
+    )
+  })
+
+  it('strips leading slashes from the remainder so edits never escape the root', () => {
+    expect(joinTarget('/mnt/media2t/downloads/series/', '/Show/f.mkv')).toBe(
+      '/mnt/media2t/downloads/series/Show/f.mkv'
+    )
+  })
+
+  it('returns an empty remainder when the target is exactly the root', () => {
+    expect(splitTarget('/mnt/media2t/downloads/series', ROOTS)).toEqual({
+      root: '/mnt/media2t/downloads/series/',
+      remainder: '',
+    })
+  })
+
+  it('falls back to custom when outside all roots', () => {
+    expect(splitTarget('/tmp/other/f.mkv', ROOTS)).toEqual({ root: '', remainder: '/tmp/other/f.mkv' })
+    expect(joinTarget('', '/tmp/other/f.mkv')).toBe('/tmp/other/f.mkv')
+  })
+
+  it('prefers the longest matching root', () => {
+    const nested = [...ROOTS, '/mnt/media2t/downloads/series/Show']
+    expect(splitTarget('/mnt/media2t/downloads/series/Show/Season 01/f.mkv', nested)).toEqual({
+      root: '/mnt/media2t/downloads/series/Show/',
+      remainder: 'Season 01/f.mkv',
+    })
+  })
+
+  it('accepts plain string roots', () => {
+    expect(splitTarget('/a/b/f.mkv', ['/a/b'])).toEqual({ root: '/a/b/', remainder: 'f.mkv' })
+  })
 })
 
 describe('itemSearchText', () => {
@@ -402,11 +534,63 @@ describe('itemSearchText', () => {
     expect(text).toContain('s01e01')
     expect(text).toContain('/media1/series')
   })
-
   it('matches type labels such as movie and extra', () => {
     const items = buildItems()
     const movie = items.find((i) => i.confirmId === 'c2')
     expect(itemSearchText(movie)).toContain('movie')
     expect(itemSearchText({ itemType: 'extra', extraType: 'trailer', targetPath: '/s/Show/Extras/x.mkv', typeLabel: 'Extra · trailer' })).toContain('trailer')
+  })
+})
+
+describe('editable skips (plan 17)', () => {
+  const EDITABLE_REPORT = {
+    summary: {},
+    items: [
+      {
+        confirmId: 'e1',
+        action: 'skip',
+        locked: false,
+        itemType: 'extra',
+        extraType: 'sample',
+        sourcePath: '/d/Show/file-sample.mkv',
+        targetPath: '/s/Show/samples/file-sample.mkv',
+        candidateTargets: [],
+        flags: [],
+      },
+      {
+        confirmId: 'e2',
+        action: 'skip',
+        locked: true,
+        itemType: 'skip',
+        sourcePath: '/d/other.mkv.!qB',
+        reason: 'In-progress download',
+      },
+    ],
+  }
+
+  it('isLockedItem defaults missing locked to locked, false stays editable', () => {
+    expect(isLockedItem({ action: 'skip' })).toBe(true)
+    expect(isLockedItem({ action: 'skip', locked: true })).toBe(true)
+    expect(isLockedItem({ action: 'skip', locked: false })).toBe(false)
+    expect(isLockedItem({ action: 'move', locked: true })).toBe(false)
+  })
+
+  it('maps unlocked skips with their proposed target and title', () => {
+    const items = mapReportItems(EDITABLE_REPORT)
+    const editable = items.find((i) => i.confirmId === 'e1')
+    expect(editable.locked).toBe(false)
+    expect(editable.targetPath).toBe('/s/Show/samples/file-sample.mkv')
+    // Extra titles derive from the parent folder (same as actionable extras)
+    expect(editable.title).toBe('samples')
+    expect(editable.typeLabel).toBe('Extra · sample')
+    const locked = items.find((i) => i.confirmId === 'e2')
+    expect(locked.locked).toBe(true)
+    expect(locked.title).toBe('Skipped items')
+    expect(locked.targetPath).toBe('')
+  })
+
+  it('keeps unlocked skips out of the default confirm selection', () => {
+    const items = mapReportItems(EDITABLE_REPORT)
+    expect(defaultSelection(items)).toEqual([])
   })
 })

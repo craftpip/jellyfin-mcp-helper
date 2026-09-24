@@ -233,11 +233,16 @@ class PathResolver:
         return await self._resolve_series(candidate, classification)
 
     async def _resolve_extra(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
-        # All extras go to a single "extras" folder under the show/movie, preserving relative path under extras/
+        # Extras go flat (filename only) into a Jellyfin-native subfolder under
+        # the show/movie: `samples/` for sample extras, `extras/` for the rest.
         # Determine if it's a movie or series extra based on the classification's title/year and candidate
         # For simplicity, try to find the best matching show/movie folder, then use its extras subfolder
         # If we can't determine, fall back to the download root's extras
         is_series_extra = classification.season is not None or classification.episode is not None or "special" in (classification.extra_type or "") or "extra" in (classification.extra_type or "")
+        # Samples without episode context are ambiguous by title alone — route
+        # by whichever library already holds the title (see _resolve_sample).
+        if (classification.extra_type or "") == "sample" and not is_series_extra:
+            return await self._resolve_sample(candidate, classification)
         # Try to resolve as series first if it looks like a series extra (has season/episode)
         if is_series_extra or classification.extra_type in ("special", "extra"):
             # Try series resolution but force extras subfolder
@@ -269,19 +274,11 @@ class PathResolver:
                 index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0
                 series_root = self._pick_drive_root(candidate.source_path, series_roots_list, index)
                 show_dir = Path(series_root) / show_name
-            # extras folder under the show
-            extras_dir = show_dir / "extras"
-            # Preserve relative path under extras if the download had subfolders
-            rel = Path(candidate.relative_path or candidate.name)
-            # If the download is a folder of extras, keep its structure under extras/
-            target_path = str(extras_dir / rel.name)
-            # Also preserve subfolders if any
-            if candidate.relative_path and "/" in candidate.relative_path:
-                # Keep the relative path under extras
-                target_path = str(extras_dir / Path(candidate.relative_path).name)
-                # For nested extras folders, keep them
-                if len(Path(candidate.relative_path).parts) > 1:
-                    target_path = str(extras_dir / candidate.relative_path)
+            # extras folder under the show (`samples/` for samples, `extras/` else)
+            extras_dir = show_dir / ("samples" if (classification.extra_type or "") == "sample" else "extras")
+            # Flat: extras always land directly in extras/ (filename only,
+            # nested source subfolders are not recreated).
+            target_path = str(extras_dir / Path(candidate.name).name)
             return ResolvedTarget(
                 root_key=candidate.source_root_key,
                 target_dir=str(extras_dir),
@@ -309,11 +306,9 @@ class PathResolver:
             desired_name=folder_name,
         )
         movie_dir = Path(best_movie) if best_movie else Path(movie_root) / folder_name
-        extras_dir = movie_dir / "extras"
-        rel = Path(candidate.relative_path or candidate.name)
-        target_path = str(extras_dir / rel.name)
-        if candidate.relative_path and "/" in candidate.relative_path:
-            target_path = str(extras_dir / candidate.relative_path)
+        extras_dir = movie_dir / ("samples" if (classification.extra_type or "") == "sample" else "extras")
+        # Flat: filename only, no nested subfolders.
+        target_path = str(extras_dir / Path(candidate.name).name)
         return ResolvedTarget(
             root_key=candidate.source_root_key,
             target_dir=str(extras_dir),
@@ -323,6 +318,72 @@ class PathResolver:
             season_folder_exists=extras_dir.exists(),
             candidate_targets=[],
         )
+
+    async def _resolve_sample(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
+        """Route a sample extra flat into a Jellyfin-native `samples/` folder.
+
+        Samples without episode context are ambiguous by title alone, so the
+        library that already holds the title wins: existing series folder →
+        `<Show>/samples/`, existing movie folder → `<Movie>/samples/`. Fresh
+        titles with a year read as movies, otherwise the series-first default
+        (same as special/extra) applies. Always editable downstream.
+        """
+        index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0
+
+        def _sample_target(base_dir: Path, existing_match: str | None) -> ResolvedTarget:
+            extras_dir = base_dir / "samples"
+            return ResolvedTarget(
+                root_key=candidate.source_root_key,
+                target_dir=str(extras_dir),
+                target_path=str(extras_dir / Path(candidate.name).name),
+                existing_match=existing_match,
+                show_folder_exists=base_dir.exists(),
+                season_folder_exists=extras_dir.exists(),
+                candidate_targets=[],
+            )
+
+        # Level 1: main folder = show identity — never use file stem for lookup
+        raw_title = classification.title or Path(candidate.container_path or candidate.source_path).name
+        show_name = sanitize_name(raw_title)
+        if _is_generic_extra_title(show_name) or _is_generic_extra_title(raw_title) or _is_generic_folder_title(show_name):
+            folder_title = _get_folder_title(candidate)
+            if folder_title and not _is_generic_folder_title(folder_title) and not _is_generic_extra_title(folder_title):
+                show_name = sanitize_name(folder_title)
+        all_series_paths = list(self._series_existing_paths)
+        series_roots_list = list(self._config.paths.series_roots.values())
+        if not self._scan_prepared:
+            for root in series_roots_list:
+                all_series_paths.extend(list_target_paths(root))
+        best_show = await self._pick_existing_path(
+            media_kind="series",
+            title=show_name,
+            year=classification.year,
+            target_paths=all_series_paths,
+            desired_name=show_name,
+        )
+        if best_show:
+            return _sample_target(Path(best_show), best_show)
+
+        folder_name = self._movie_folder_name(classification)
+        movie_roots_list = list(self._config.paths.movie_roots.values())
+        all_movie_paths = list(self._movie_existing_paths)
+        if not self._scan_prepared:
+            for root in movie_roots_list:
+                all_movie_paths.extend(list_target_paths(root))
+        best_movie = await self._pick_existing_path(
+            media_kind="movie",
+            title=classification.title or candidate.name,
+            year=classification.year,
+            target_paths=all_movie_paths,
+            desired_name=folder_name,
+        )
+        if best_movie:
+            return _sample_target(Path(best_movie), best_movie)
+        if classification.year is not None:
+            movie_root = self._pick_drive_root(candidate.source_path, movie_roots_list, index)
+            return _sample_target(Path(movie_root) / folder_name, None)
+        series_root = self._pick_drive_root(candidate.source_path, series_roots_list, index)
+        return _sample_target(Path(series_root) / show_name, None)
 
     async def _resolve_movie(self, candidate: CandidateItem, classification: ClassificationResult) -> ResolvedTarget:
         index = int(candidate.source_root_key.split("_")[-1]) if "_" in candidate.source_root_key else 0

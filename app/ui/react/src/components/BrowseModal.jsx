@@ -14,13 +14,16 @@ function BrowseView({ confirmId }) {
   const { state, actions } = useAppStore()
   const item = state.currentItems.find((i) => i.confirmId === confirmId)
   const isSeries = item?.itemType === 'series'
-  // Open the picker at the folder the file is actually headed for (its
-  // target's directory); the picker resolves it to the nearest existing
-  // ancestor and falls back to the roots list when unresolvable.
-  const initialPath = item?.targetPath ? item.targetPath.split('/').slice(0, -1).join('/') : null
+  // Open the picker at the folder the file is actually headed for. Pass the
+  // full target file path — /browse/resolve starts at dirname(target) and
+  // walks up to the nearest existing ancestor. (Previously we pre-stripped
+  // the filename here, so resolve stripped again and a Season 01 target
+  // opened one level too high at the show folder.)
+  const initialPath = item?.targetPath || null
 
   return (
     <FolderPicker
+      key={confirmId || 'browse'}
       title={item ? item.title : null}
       initialPath={initialPath}
       suspectNote={item?.suspect ? ' — flagged as suspicious' : ''}
@@ -52,7 +55,7 @@ export function FolderPicker({ title, initialPath, suspectNote, correctionNote, 
   const [results, setResults] = useState([])
   const [searching, setSearching] = useState(false)
   const [searched, setSearched] = useState(false)
-  const [applyToGroup, setApplyToGroup] = useState(false)
+  const [applyToGroup, setApplyToGroup] = useState(true)
   const [reclassifyAsMovie, setReclassifyAsMovie] = useState(false)
   const didInit = useRef(false)
 

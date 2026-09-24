@@ -1,7 +1,8 @@
 // reportSlice — extracted from AppStore for long-horizon maintainability
 // Keeps reportVisible, reportAll, reportSummary, reportServiceErrors, currentItems,
-// reportGroups, selectedIds, expandedGroups, currentFilter, searchQuery and their helpers.
+// reportGroups, selectedIds, expandedGroups, currentFilter/searchQuery and their helpers.
 // Pure reducers + helpers, no side effects.
+import { groupItems } from '../../utils/report.js'
 
 export const reportInitialState = {
   reportVisible: false,
@@ -26,6 +27,29 @@ export function reportReducer(state, action) {
       return { ...state, selectedIds: action.selectedIds }
     case 'SET_ITEMS':
       return { ...state, currentItems: action.currentItems, reportGroups: action.reportGroups }
+    case 'SET_PATH_STATUS': {
+      // Merge live path-status pills into CURRENT items (race-free).
+      // A whole-array replace here would clobber a concurrent dispatch
+      // (e.g. Update Paths saving while a status preview resolves), so match
+      // by confirmId and only touch rows whose live target still equals the
+      // checked target.
+      const byId = new Map((action.updates || []).map((u) => [u.confirmId, u]))
+      const currentItems = state.currentItems.map((it) => {
+        const u = byId.get(it.confirmId)
+        if (!u) return it
+        const live = it._liveTarget || it.targetPath
+        if ((live || '').trim() !== u.target) return it
+        return {
+          ...it,
+          pathExists: u.pathExists ?? it.pathExists,
+          showFolderExists: u.showFolderExists ?? it.showFolderExists,
+          seasonFolderExists: u.seasonFolderExists ?? it.seasonFolderExists,
+          fileExists: u.fileExists ?? it.fileExists,
+          _statusCheckedFor: u.target,
+        }
+      })
+      return { ...state, currentItems, reportGroups: groupItems(currentItems) }
+    }
     case 'TOGGLE_GROUP': {
       const list = state.expandedGroups.includes(action.gid)
         ? state.expandedGroups.filter(v => v !== action.gid)

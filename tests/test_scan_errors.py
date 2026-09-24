@@ -178,6 +178,113 @@ def test_create_scan_reports_renamed_only_incomplete_file(tmp_path, monkeypatch)
     assert scan.items[0].reason == "In-progress download"
 
 
+def test_incremental_scan_drops_completed_marker_rename(tmp_path) -> None:
+    # qBittorrent rename shape: Show.S01E01.mkv.!qB -> Show.S01E01.mkv on
+    # completion. The incremental scan must drop the stale marker entry
+    # instead of keeping it as "Source missing" alongside the ready file.
+    root = tmp_path / "downloads"
+    root.mkdir()
+    partial_file = root / "Show.S01E01.mkv.!qB"
+    partial_file.write_bytes(b"partial")
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)], movieRoots={"m": str(tmp_path / "movies")}, seriesRoots={"s": str(tmp_path / "series")}),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+
+    async def run_scan(full=False):
+        scan = await manager.create_scan(ScanRequest(fullRescan=full))
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        return scan
+
+    first = asyncio.run(run_scan(full=True))
+    assert len(first.items) == 1
+    assert first.items[0].reason == "In-progress download"
+
+    # Simulate download completion: marker renamed to the real video file.
+    partial_file.unlink()
+    real_file = root / "Show.S01E01.mkv"
+    real_file.write_bytes(b"x" * 1024)
+
+    second = asyncio.run(run_scan(full=False))
+    by_path = {item.source_path for item in second.items}
+    assert str(real_file) in by_path
+    assert str(partial_file) not in by_path
+    assert all("Source missing" not in (item.reason or "") for item in second.items)
+    assert second.counts.skipped == 0
+    ready = [i for i in second.items if i.source_path == str(real_file)]
+    assert len(ready) == 1
+    assert ready[0].action in ("move", "replace")
+
+
+def test_incremental_scan_drops_completed_prefix_rename(tmp_path) -> None:
+    # Tixati prefix shape: incomplete.Show.S01E01.mkv -> Show.S01E01.mkv.
+    root = tmp_path / "downloads"
+    root.mkdir()
+    partial_file = root / "incomplete.Show.S01E01.mkv"
+    partial_file.write_bytes(b"partial")
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)], movieRoots={"m": str(tmp_path / "movies")}, seriesRoots={"s": str(tmp_path / "series")}),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+
+    async def run_scan(full=False):
+        scan = await manager.create_scan(ScanRequest(fullRescan=full))
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        return scan
+
+    first = asyncio.run(run_scan(full=True))
+    assert len(first.items) == 1
+    assert first.items[0].reason == "In-progress download"
+
+    partial_file.unlink()
+    real_file = root / "Show.S01E01.mkv"
+    real_file.write_bytes(b"x" * 1024)
+
+    second = asyncio.run(run_scan(full=False))
+    assert {i.source_path for i in second.items} == {str(real_file)}
+    assert second.counts.skipped == 0
+
+
+def test_incremental_scan_keeps_genuine_missing(tmp_path) -> None:
+    # A normal file that vanishes with no completed counterpart must still be
+    # flagged "Source missing" — the marker-cleanup must not swallow it.
+    root = tmp_path / "downloads"
+    root.mkdir()
+    video = root / "Show.S01E01.mkv"
+    video.write_bytes(b"x" * 1024)
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)], movieRoots={"m": str(tmp_path / "movies")}, seriesRoots={"s": str(tmp_path / "series")}),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+
+    async def run_scan(full=False):
+        scan = await manager.create_scan(ScanRequest(fullRescan=full))
+        while scan.status == "running":
+            await asyncio.sleep(0)
+        return scan
+
+    first = asyncio.run(run_scan(full=True))
+    assert any(i.source_path == str(video) and i.action in ("move", "replace") for i in first.items)
+
+    video.unlink()
+    second = asyncio.run(run_scan(full=False))
+    missing = [i for i in second.items if i.source_path == str(video)]
+    assert len(missing) == 1
+    assert missing[0].action == "skip"
+    assert "Source missing" in (missing[0].reason or "")
+
+
 def test_create_scan_skips_none_incomplete_when_toggle_off(tmp_path, monkeypatch) -> None:
     root = tmp_path / "downloads"
     root.mkdir()
@@ -859,6 +966,11 @@ def test_delete_items_allows_already_skipped_items(tmp_path, monkeypatch) -> Non
             )
         ]
         scan.counts.skipped = 1
+        # Plan 17: the fixture file now classifies as an editable movie
+        # (size-only suspect) instead of a skip — reset counts to match the
+        # hand-replaced skip-only item list below.
+        scan.counts.movies = 0
+        scan.counts.series = 0
 
         report_before = _format_scan_report(scan)
         assert any(i["confirmId"] == "s1" and i["action"] == "skip" for i in report_before["items"])
@@ -947,6 +1059,64 @@ def test_incremental_scan_preserves_edits_and_adds_new(tmp_path, monkeypatch) ->
     assert len(s2.items) == len(s1.items) + 1
 
 
+def test_incremental_scan_revives_undone_item_instead_of_revision_skip(tmp_path, monkeypatch) -> None:
+    # Confirm -> history undo (target moved back to source) -> incremental scan.
+    # Without revival the stale confirmed entry seeds planned_targets and the
+    # restored file lands in Skipped as "Lower revision v0 skipped...".
+    root = tmp_path / "downloads"
+    root.mkdir()
+    f1 = root / "Showville.2026.S01E06.1080p.WEB.mkv"
+    f1.write_bytes(b"x" * 1024)
+    config = AppConfig(
+        paths=PathsConfig(downloadRoots=[str(root)], movieRoots={"m": str(tmp_path / "movies")}, seriesRoots={"s": str(tmp_path / "series")}),
+        model=ModelConfig(),
+        log_dir=tmp_path,
+        report_dir=tmp_path,
+    )
+    manager = ScanManager(config)
+
+    async def run_scan(full=False):
+        s = await manager.create_scan(ScanRequest(fullRescan=full))
+        while s.status == "running":
+            await asyncio.sleep(0)
+        return s
+
+    s1 = asyncio.run(run_scan(full=True))
+    item = next(i for i in s1.items if i.source_path == str(f1))
+    assert item.action in ("move", "replace")
+
+    # Simulate confirm (source moved away) then history undo (source restored)
+    payload = f1.read_bytes()
+    f1.unlink()
+    item.confirmed = True
+    s1.counts.moved += 1
+    f1.write_bytes(payload)
+
+    s2 = asyncio.run(run_scan(full=False))
+    matches = [i for i in s2.items if i.source_path == str(f1)]
+    assert len(matches) == 1
+    assert matches[0].action in ("move", "replace")
+    assert matches[0].confirmed is False
+    assert all("Lower revision" not in (i.reason or "") for i in s2.items)
+
+    # A stale dedup skip from an earlier incremental scan is dropped on revive
+    from app.models.schemas import ScannedItem as _SI
+    stale = _SI(confirmId="i-stale", sourcePath=str(f1), name=f1.name, item_type="skip", confidence=1.0,
+                reason="Lower revision v0 skipped; keeping v0 for same episode", target_path="",
+                action="skip", file_size=1024, container_path=None, source_folder="torrents")
+    s2.items.append(stale)
+    s2.counts.skipped += 1
+    # Re-confirm the revived item, then undo again so revive triggers once more
+    revived = next(i for i in s2.items if i.source_path == str(f1) and i.action != "skip")
+    revived.confirmed = True
+    s2.counts.moved += 1
+    assert f1.is_file()  # source still on disk (undo had restored it)
+
+    s3 = asyncio.run(run_scan(full=False))
+    matches3 = [i for i in s3.items if i.source_path == str(f1)]
+    assert len(matches3) == 1
+    assert matches3[0].action in ("move", "replace")
+    assert "Lower revision" not in (matches3[0].reason or "")
 def test_full_rescan_overwrites_and_discards_edits(tmp_path, monkeypatch) -> None:
     root = tmp_path / "downloads"
     root.mkdir()

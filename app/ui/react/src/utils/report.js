@@ -30,6 +30,36 @@ export function actionLabelFor(item) {
   return (item.action || 'move') === 'replace' ? 'Existing' : 'New'
 }
 
+// Plan 17: only locked skips (in-progress, source-missing, error) are
+// Delete-only. Missing `locked` (old payloads/tests) defaults to locked.
+export function isLockedItem(item) {
+  if (!item || item.action !== 'skip') return false
+  return item.locked ?? true
+}
+
+// Title/season/episode derived from the target path (shared by actionable
+// rows and editable-skip rows, which now carry a proposed target).
+function deriveTitleParts(p, itemType, fallbackName) {
+  let title = fallbackName || ''
+  let season = ''
+  let episode = ''
+  if ((itemType === 'series' || itemType === 'extra') && p) {
+    const parts = p.split('/').filter(Boolean)
+    if (itemType === 'series') {
+      season = parts.length >= 2 ? parts[parts.length - 2] : ''
+      const epMatch = p.match(/S\d{2}E\d{2,3}/i)
+      episode = epMatch ? epMatch[0].toUpperCase() : ''
+      title = parts.length >= 3 ? parts[parts.length - 3] : (parts[0] || '')
+    } else {
+      title = parts.length >= 2 ? parts[parts.length - 2] : (parts[0] || '')
+    }
+  } else if (p) {
+    const parts = p.split('/').filter(Boolean)
+    title = parts.length >= 2 ? parts[parts.length - 2] : (parts[0] || '')
+  }
+  return { title, season, episode }
+}
+
 // Single source of truth for the "Type" column. Accepts both report shapes
 // (camelCase from /scans/current/report) and history shapes (snake_case).
 export function typeLabelFor(item) {
@@ -135,30 +165,64 @@ export function mapReportItems(report) {
     }
   })
 
-  const skippedMapped = skipped.map((item) => ({
-    confirmId: item.confirmId,
-    title: 'Skipped items',
-    sourceName: (item.sourcePath || '').split('/').filter(Boolean).pop() || '',
-    sourcePath: item.sourcePath || '',
-    sourceFolder: item.sourceFolder || (item.containerPath ? item.containerPath.split('/').filter(Boolean).pop() : '') || 'Skipped items',
-    containerPath: item.containerPath || '',
-    targetPath: '',
-    originalTarget: '',
-    itemType: item.itemType || 'skip',
-    action: 'skip',
-    pathExists: '',
-    fileExists: false,
-    fileSize: item.fileSize,
-    reason: item.error || item.reason || 'Unknown',
-    extraType: item.extraType || item.extra_type || '',
-    typeLabel: typeLabelFor(item),
-  }))
+  const skippedMapped = skipped.map((item) => {
+    const p = item.targetPath || item.target_path || ''
+    const locked = item.locked ?? true
+    const kind = item.itemType || item.item_type || 'skip'
+    // Editable skips derive a real title from their proposed target so they
+    // render/group like actionable rows; locked rows keep the old bucket.
+    const parts = !locked && p ? deriveTitleParts(p, kind, item.name) : { title: 'Skipped items', season: '', episode: '' }
+    const extraType = item.extraType || item.extra_type || ''
+    return {
+      confirmId: item.confirmId,
+      title: parts.title,
+      sourceName: (item.sourcePath || '').split('/').filter(Boolean).pop() || '',
+      sourcePath: item.sourcePath || '',
+      sourceFolder: item.sourceFolder || (item.containerPath ? item.containerPath.split('/').filter(Boolean).pop() : '') || parts.title,
+      containerPath: item.containerPath || '',
+      targetPath: p,
+      originalTarget: p,
+      itemType: kind,
+      action: 'skip',
+      locked,
+      pathExists: item.pathExists || '',
+      showFolderExists: item.showFolderExists || false,
+      seasonFolderExists: item.seasonFolderExists || false,
+      fileExists: item.fileExists || false,
+      fileSize: item.fileSize,
+      crossDrive: item.crossDrive || false,
+      originalCrossDrive: item.crossDrive || false,
+      season: parts.season,
+      episode: parts.episode || (kind === 'series' && p ? (p.match(/S\d{2}E\d{2,3}/i) || [''])[0].toUpperCase() : ''),
+      reason: item.error || item.reason || 'Unknown',
+      extraType,
+      typeLabel: typeLabelFor({ itemType: kind, episode: parts.episode, targetPath: p, extraType }),
+      candidateTargets: item.candidateTargets || [],
+      flags: item.flags || [],
+      suspect: item.suspect || false,
+      corrected: item.corrected || false,
+      correctionNote: item.correctionNote || '',
+    }
+  })
 
   return mapped.concat(skippedMapped)
 }
 
+const GENERIC_FOLDERS = new Set(['downloads', 'torrents', 'download', 'complete', 'incomplete'])
+
+// Group key shared by groupItems and computePathSync. Generic download roots
+// (e.g. 'torrents') fall back to title so loose files group/sync solo —
+// otherwise unrelated solo titles in the same root look like siblings and
+// a solo edit reverts instead of sticking.
+function syncGroupKey(item) {
+  const raw = item.sourceFolder || item.containerPath?.split('/').filter(Boolean).pop() || item.title || 'Unknown'
+  if (GENERIC_FOLDERS.has(String(raw).toLowerCase())) {
+    return item.title || 'Unknown'
+  }
+  return raw
+}
+
 export function groupItems(items) {
-  const GENERIC_FOLDERS = new Set(['downloads', 'torrents', 'download', 'complete', 'incomplete'])
   const groups = {}
   items.forEach((item, idx) => {
     // Group by source folder (download folder) per plan 12 — all files in one download folder stay together
@@ -213,10 +277,11 @@ export function matchesFilter(item, query, filterVal) {
   return match
 }
 
-// Smart path sync (group-scoped by source folder). Given the edited row index and new value,
+// Smart path sync (group-scoped, same key as groupItems). Given the edited row index and new value,
 // computes { updates: [{idx, value}...] } for sibling rows whose live path shares
 // the same prefix/chunk, or { revert: true } if siblings existed but none matched.
-// Solo groups (no other rows with the same source folder) keep the edit — no revert, no sync.
+// Solo groups (no other rows in the same rendered group, incl. generic-root
+// titles like Lanterns) keep the edit — no revert, no sync, no link icon.
 // Per-row link toggle: items with `_linked === false` are excluded from sync
 // both as source (editing an unlinked row never syncs) and as target (unlinked rows never receive sync).
 export function computePathSync(changedIdx, oldPath, newPath, items) {
@@ -225,7 +290,7 @@ export function computePathSync(changedIdx, oldPath, newPath, items) {
   if (!changedItem) return null
   // Unlinked source → free edit, no sync, no revert
   if (changedItem._linked === false) return null
-  const groupKey = changedItem.sourceFolder || changedItem.containerPath || changedItem.title
+  const groupKey = syncGroupKey(changedItem)
 
   let i1 = 0
   while (i1 < oldPath.length && i1 < newPath.length && oldPath[i1] === newPath[i1]) i1++
@@ -246,7 +311,7 @@ export function computePathSync(changedIdx, oldPath, newPath, items) {
   const updates = []
   items.forEach((item, idx) => {
     if (idx === changedIdx) return
-    const itemKey = item.sourceFolder || item.containerPath || item.title
+    const itemKey = syncGroupKey(item)
     if (itemKey !== groupKey) return
     // Unlinked targets are skipped entirely — they neither count as sibling nor receive updates
     if (item._linked === false) return
@@ -262,6 +327,79 @@ export function computePathSync(changedIdx, oldPath, newPath, items) {
   if (!hasLinkedSibling) return null
   if (updates.length === 0) return { revert: true }
   return { updates }
+}
+
+// Diff a fresh report against the previously shown items (matched by source
+// path). "New" = source never shown before; "updated" = known source with a
+// changed action/target (e.g. skip -> move after an undo-revive, retarget).
+// newSources feeds bringNewGroupsToTop so fresh groups render first.
+export function summarizeReportDiff(prevItems, nextItems) {
+  const prevBySource = new Map()
+  ;(prevItems || []).forEach((i) => {
+    const key = i.sourcePath || i.source_path || ''
+    if (key && !prevBySource.has(key)) prevBySource.set(key, i)
+  })
+  let newCount = 0
+  let updatedCount = 0
+  const newSources = new Set()
+  ;(nextItems || []).forEach((i) => {
+    const key = i.sourcePath || i.source_path || ''
+    if (!key) return
+    const prev = prevBySource.get(key)
+    if (!prev) {
+      newCount += 1
+      newSources.add(key)
+    } else {
+      const prevTarget = prev.targetPath ?? prev.target_path ?? ''
+      const nextTarget = i.targetPath ?? i.target_path ?? ''
+      if ((prev.action || '') !== (i.action || '') || prevTarget !== nextTarget) updatedCount += 1
+    }
+  })
+  return { newCount, updatedCount, newSources }
+}
+
+// Stable reorder: groups containing freshly found sources render at the top,
+// preserving relative order otherwise. No-op when nothing is new.
+export function bringNewGroupsToTop(groups, newSources) {
+  if (!newSources || newSources.size === 0 || !groups) return groups
+  const hasNew = (g) => (g.items || []).some((i) => newSources.has(i.sourcePath || i.source_path || ''))
+  const fresh = groups.filter(hasNew)
+  if (fresh.length === 0) return groups
+  return [...fresh, ...groups.filter((g) => !hasNew(g))]
+}
+
+// Split a full target path into its library-root prefix (slash-terminated)
+// and the remainder after it. Longest-prefix match wins so nested roots
+// resolve to the most specific one. Roots may be strings or
+// {path} objects (GET /api/browse/roots shape).
+// No match → { root: '', remainder: fullPath } (custom path, nothing lost).
+export function splitTarget(fullPath, roots) {
+  const value = fullPath || ''
+  const list = (roots || [])
+    .map((r) => (typeof r === 'string' ? r : r && r.path))
+    .filter(Boolean)
+  let best = ''
+  for (const raw of list) {
+    const root = raw.replace(/\/+$/, '')
+    if (!root) continue
+    if (value === raw || value === root) {
+      if (root.length > best.length) best = root
+    } else if (value.startsWith(root + '/')) {
+      if (root.length > best.length) best = root
+    }
+  }
+  if (!best) return { root: '', remainder: value }
+  const prefix = best + '/'
+  return { root: prefix, remainder: value === best || value === best + '/' ? '' : value.slice(prefix.length) }
+}
+
+// Join a slash-terminated root with a remainder. Leading slashes on the
+// remainder are stripped so typing "/x/y" never escapes the root.
+export function joinTarget(root, remainder) {
+  if (!root) return remainder || ''
+  const prefix = root.endsWith('/') ? root : root + '/'
+  const rem = (remainder || '').replace(/^\/+/, '')
+  return prefix + rem
 }
 
 // Default selection on report render: every actionable item checked, skipped unchecked.

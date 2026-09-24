@@ -345,8 +345,9 @@ if not new_target.endswith((".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".fl
 - `scan_orchestrator.py` skips in-progress candidates (reason `"In-progress download"`) only when `ENABLE_INCOMPLETE_DOWNLOAD_DETECTION` is true (read via `_incomplete_detection_enabled()` from `get_settings()`).
 - The `stopping_seeding` confirm phase is removed from `schemas.py`, `types.ts`, and `format.js`.
 - Requires the download client to append an incomplete-file marker (e.g. qBittorrent "Append .!qB extension to incomplete files"). Documented in the Settings page Downloads section.
+- Incremental scans drop the stale marker when the download completes: `_completed_path_for_marker_rename` (`scan_orchestrator.py`) strips the suffix/prefix to the finished path, and the final missing-mark pass removes the old marker entry (decrementing `counts.skipped`) when that path exists on disk or arrived as a new candidate — so `Show.mkv.!qB` (In-progress) → `Show.mkv` (ready) never shows as ready + `Source missing` duplicates. Genuine missing files with no completed counterpart are still flagged, never dropped.
 
-**Verification:** `python3 -m pytest tests/` (scanner marker tests, `test_create_scan_skips_incomplete_download_by_marker`, toggle-off test in `test_scan_errors.py`). Frontend `npm test` in `app/ui/react`.
+**Verification:** `python3 -m pytest tests/` (scanner marker tests, `test_create_scan_skips_incomplete_download_by_marker`, toggle-off test, `test_incremental_scan_drops_completed_marker_rename` / `prefix_rename` / `keeps_genuine_missing` in `test_scan_errors.py`). Frontend `npm test` in `app/ui/react`.
 
 ### Replace existing checkbox default
 
@@ -403,6 +404,18 @@ Use `JellyfinClient.scan_library()` for the MCP tool `trigger jellyfin library s
 **Affected file:** `app/services/move_executor.py` (`run_confirm_task`, `trigger_jellyfin_scans`)
 
 **Verification:** `python3 -m pytest tests/` (27 move-executor tests pass). Rebuild/restart Docker.
+
+### Incremental scan must revive undone items, or they stick in Skipped as "Lower revision"
+
+**Problem:** Confirm an item, undo it from History (file moves target→source), then Scan (incremental): the item reappears in Skipped with `Lower revision v0 skipped; keeping v0 for same episode`. Only Scan-all (fullRescan) shows it normally.
+
+**Cause:** History undo restores the file but never touches the scan report — the item stays `confirmed=True` with its old target. Incremental seeding (`run_scan_sync` in `app/services/scan_orchestrator.py`) excludes confirmed sources from `initial_source_paths` but still seeds `planned_targets` from them, so the restored file collides with its own stale entry (rev 0 vs 0) and is filed as a revision-dedup skip, creating a duplicate row for the same source.
+
+**Fix (`run_scan_sync`, before the incremental seed):** revive every `confirmed` move/replace item whose `source_path` is a file on disk again (`confirmed=False`, `error=None`, decrement `counts.moved`/`replaced`), then drop stale skips for those sources whose reason contains `Lower revision`/`Superseded by higher revision` (decrementing `counts.skipped`). The revived item then dedupes normally via `initial_source_paths` and stays a single actionable row.
+
+**Rule:** confirmed + source-back-on-disk = undone. Never let a confirmed entry seed `planned_targets` against its own restored source.
+
+**Verification:** `tests/test_scan_errors.py::test_incremental_scan_revives_undone_item_instead_of_revision_skip` (fails without the fix with 2 rows for one source, passes with it). Full backend suite 457 passed. Live: confirm → undo → scan shows the item as an actionable move, no skip; re-confirm moves it again.
 
 ### Resolver scan hang with sorted(rglob) in series_aliases
 
@@ -532,6 +545,7 @@ This ensures `Path(target_path).exists()` returns `True` in `scan_manager.py`, c
 - No same-group sibling → return `null` (keep the edit, no sync, no revert).
 - Siblings exist but none share the changed prefix/chunk → `{ revert: true }`.
 - Siblings synced → `{ updates: [...] }`.
+- Solo = rendered group size 1: no link icon (`showLink = groupSize > 1` in ReportPanel/HistoryPage) and no sync. `computePathSync` uses `syncGroupKey`, the same generic-root fallback as `groupItems` (`torrents`/`downloads`/etc. → title), so loose files sharing a generic `sourceFolder` but with different titles are solo, not siblings. Without this, a solo Lanterns row saw other `torrents`-root rows as siblings and every edit reverted.
 
 The store's `onTargetInputChange` (AppStore.jsx) already skips revert when `computePathSync` returns `null`.
 
@@ -587,6 +601,8 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 2. `checkConnection` calls `fetchReport()` after loading libraries on page load
 
 `fetchReport` uses a `finally` block to re-enable the "Get Report" button so it never stays disabled on error.
+
+**New groups on top + summary toast:** scan-triggered loads (only those — `scanFreshRef` set in `handleScanProgress`, consumed by `fetchReport`) diff the fresh items against the previous report (`summarizeReportDiff` in `utils/report.js`: new vs updated by source path), lift groups with new sources first (`bringNewGroupsToTop`, stable), force-expand them (positional `group-N` ids are unknown to the stored collapse), and toast `Scan complete: X new files found, Y files updated` (`no new files` when zero). Page-load/undo/confirm-dismiss loads pass no prev items → no reorder, no toast.
 
 ### React UI routes: path-based SPA routing
 
@@ -647,6 +663,7 @@ Backend `python3 -m pytest tests/` runs **418 tests** (uses the container: `dock
 - `_browse_entries` counts videos by direct `iterdir()` only. Show folders (subdirs, no direct videos, no season number) report the count of season subfolders instead of a recursive video count. Recursive `rglob` counting hung the listing (same root cause as the resolver hang).
 - `_browse_search_root` is a depth-limited walk (root → show → season, max depth 3) using `os.scandir` (d_type, no stat) with a per-dir child cap (`BROWSE_SEARCH_CHILD_CAP`), junk-name pruning (`BROWSE_IGNORED_NAME_PARTS`: trickplay/extras/sample/…), and results sorted by depth. A full `os.walk` over the roots took ~18s; the depth-limited scandir walk takes ~0.3s.
 - Browse/search read roots from `request.app.state.scan_manager._config`, **not** `get_config()` — the global settings read the real `.env` media roots and must not be trusted for UI listing.
+- **Resolve takes the full file target, not the dirname.** `BrowseModal.jsx` passes `item.targetPath` verbatim to `GET /api/browse/resolve`; `_browse_resolve_target` starts at `dirname` for file paths and at itself for existing dir paths (so a pre-stripped `Season 01` dir no longer walks up to the show folder). Never strip in both places — that double-strip opened every replace-item one level too high.
 
 **Verification:** backend `tests/test_ui_api.py::TestBrowseAndRetarget` (5 tests: listing/season numbers, out-of-root + missing-dir 400s, search, movie retarget, retarget validation); frontend `BrowseModal.test.jsx` (drill-down + retarget POST body, search hit) and `report.test.js` (candidate passthrough). Backend suite is 390 tests, frontend 73.
 
@@ -677,8 +694,19 @@ Backend `python3 -m pytest tests/` runs **418 tests** (uses the container: `dock
 
 - Shared helpers (`app/ui/react/src/utils/report.js`): `typeLabelFor`, `actionLabelFor`, `isCrossDriveItem`, `compareReportItemsAsc`, `computePathSync` — all accept camelCase (report) and snake_case (history) shapes. Never inline a one-off label/verdict in either page; use the helper. History adapts its edit state (`{ ...item, _liveTarget: isEdited ? edited : undefined }`) instead of reimplementing the verdict.
 - Shared component (`PathPills.jsx`): tolerates both shapes and missing `pathExists` (treats as nothing-exists). Callers pass the item through directly.
+- Shared component (`TargetPathEditor.jsx`): library-root dropdown + remainder input as one joined group (report + history rows). `splitTarget`/`joinTarget` in `utils/report.js` (longest-prefix match, slash-terminated root); roots cached once in `AppStore.libraryRoots` via `GET /api/browse/roots`; full-path paste passes through so the dropdown re-splits it.
 - Shared CSS (`theme.css`): `.action-cell`, `.path-cell`, `.target-tools`, `.browse-btn`, `.link-toggle` (+`.active`), `.crossdrive-badge`, `.suspect-badge`, `.corrected-badge`. Never duplicate row styles as inline `style={{...}}` in either page — the duplicated link-toggle style block was the concrete smell that motivated this rule. When extracting an inline style to a class, qualify the selector so it beats `button.small` (e.g. `button.small.link-toggle`, not bare `.link-toggle`) — otherwise `button.small`'s `padding: 5px 12px` wins on specificity and the button renders broken on both pages.
 - **Intentional divergences (do not "sync" away):** History-only Trail/Status columns, Undo + Save & Move Again, conditional Delete (`source_exists`); Report-only search highlight, selection checkboxes, Confirm/Update Paths, skip rows.
+
+### History undo appends the trail and hides the button
+
+**Problem:** After Undo the item `status` showed `undone` but the trail popup missed the undo hop, and the Undo button stayed visible so a second undo could be attempted.
+
+**Fix:**
+- Backend: `mark_undone(history_id, confirm_ids, db_path)` (`app/services/history_store.py`) marks only the actually-restored items (skipped ones keep their status) and appends each restored item's `source_path` to its `path_history_json` trail (`source → target → source`), guarded against double-append. `api_history_undo` (`app/ui/server.py`) collects restored `confirm_id`s and passes them through.
+- Frontend (`HistoryPage.jsx`): the Undo button renders only when NOT every item is `undone` (`allUndone`); the trail popup labels the last hop `undone` when `item.status === 'undone'` (muted badge like `source`) and the footer appends `• undone`.
+
+**Verification:** `tests/test_history_store.py::TestHistoryUndo::test_undo_appends_trail_and_marks_only_restored`; `HistoryPage.test.jsx` "hides Undo and shows the undone hop once everything is undone". Full suites: backend `docker exec jellysort python3 -m pytest tests/`, frontend `npm test` in `app/ui/react`.
 
 **Verification:** `npm test` in `app/ui/react`, then `npm run build` + `docker restart jellysort`.
 
