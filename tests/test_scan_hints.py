@@ -85,6 +85,23 @@ def test_hint_preserves_filename_episode_parsing(tmp_path) -> None:
     assert tags == {"S01E01", "S01E02", "S01E03"}
 
 
+def test_new_episode_without_previous_episode_is_not_suspect(tmp_path) -> None:
+    source = _write(
+        tmp_path / "downloads" / "coral.beacon",
+        ["Coral.Beacon.2026.S01E08.1080p.WEB.mkv"],
+    )
+    season = tmp_path / "series" / "Coral Beacon (2026)" / "Season 01"
+    season.mkdir(parents=True)
+    manager = ScanManager(_make_config(tmp_path))
+
+    scan = _run_scan(manager, ScanRequest())
+
+    item = next(item for item in scan.items if item.source_path.startswith(str(source)))
+    assert item.item_type == "series"
+    assert item.suspect is False
+    assert "episode_gap" not in item.flags
+
+
 def test_hint_season_mismatch_flags_suspect(tmp_path) -> None:
     folder = _write(
         tmp_path / "downloads" / "north.beacon.s01.pack",

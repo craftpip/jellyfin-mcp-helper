@@ -316,6 +316,8 @@ def group_retarget_pass(manager, scan, planned_targets: dict[str, tuple[int, int
                 episode_number > 1
                 and (episode_number - 1) not in existing_episodes
                 and (season_number, episode_number - 1) not in group_episodes
+                and any(episode > episode_number for episode in existing_episodes)
+                and not any(season == season_number and episode > episode_number for season, episode in group_episodes)
             ):
                 regrouped_flags.append("episode_gap")
             item.suspect = bool(regrouped_flags)
@@ -737,11 +739,15 @@ def run_scan_sync(manager, scan_id: str, request) -> None:
                     and (resolved.season_number - 1) not in base_seasons
                 ):
                     flags.append("season_gap")
+                known_episodes = manager._resolver._existing_episodes_in_season(
+                    Path(resolved.target_path).parent
+                ) | planned_episodes.get((series_key, resolved.season_number), set())
                 if (
                     resolved.episode_number > 1
                     and not resolved.has_previous_episode
                     and (resolved.episode_number - 1)
                     not in planned_episodes.get((series_key, resolved.season_number), set())
+                    and any(episode > resolved.episode_number for episode in known_episodes)
                 ):
                     flags.append("episode_gap")
 
@@ -931,4 +937,3 @@ async def delete_items(manager, scan_id: str, item_ids: list[str]):
         manager._cleanup_empty_parents(source_path)
     logger.info("Scan %s deleted %d source file(s): %s", scan_id, len(deleted), deleted)
     return scan
-
