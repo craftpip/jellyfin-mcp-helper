@@ -22,6 +22,10 @@ class JellyfinClient:
         self._movie_library = (movie_library or "").strip() or None
         self._series_library = (series_library or "").strip() or None
 
+    @property
+    def _auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f'MediaBrowser Token="{self._api_key}"'}
+
     @classmethod
     def from_env(cls) -> "JellyfinClient | None":
 
@@ -156,7 +160,7 @@ class JellyfinClient:
                     r = await httpx_client.post(
                         f"{self._base_url}/Items/{item_id}/Refresh",
                         params=refresh_params,
-                        headers={"X-Emby-Token": self._api_key},
+                        headers=self._auth_headers,
                     )
                     r.raise_for_status()
 
@@ -165,7 +169,7 @@ class JellyfinClient:
                 response = await httpx_client.post(
                     f"{self._base_url}/Items/{target['id']}/Refresh",
                     params=refresh_params,
-                    headers={"X-Emby-Token": self._api_key},
+                    headers=self._auth_headers,
                 )
                 response.raise_for_status()
 
@@ -188,7 +192,7 @@ class JellyfinClient:
             response = await httpx_client.post(
                 f"{self._base_url}/Library/Media/Updated",
                 json=payload,
-                headers={"X-Emby-Token": self._api_key},
+                headers=self._auth_headers,
             )
             response.raise_for_status()
 
@@ -213,7 +217,7 @@ class JellyfinClient:
             response = await client.get(
                 f"{self._base_url}{path}",
                 params=params,
-                headers={"X-Emby-Token": self._api_key},
+                headers=self._auth_headers,
             )
             response.raise_for_status()
         return response.json()

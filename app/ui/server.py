@@ -504,7 +504,7 @@ def create_ui_app(
         api_key = str(data.get("apiKey") or "").strip()
         if not base_url:
             raise HTTPException(status_code=400, detail="baseUrl is required")
-        headers = {"X-Emby-Token": api_key} if api_key else {}
+        headers = {"Authorization": f'MediaBrowser Token="{api_key}"'} if api_key else {}
         try:
             async with httpx.AsyncClient(timeout=6.0) as client:
                 resp = await client.get(f"{base_url}/System/Info/Public", headers=headers)
