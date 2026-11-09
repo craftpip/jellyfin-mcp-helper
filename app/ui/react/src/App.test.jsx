@@ -79,6 +79,27 @@ function renderApp() {
 }
 
 describe('App integration', () => {
+  it('keeps the empty report state outside the header and omits the empty selection summary', async () => {
+    fetch.mockImplementation((url) => {
+      const path = String(url)
+      const payload = path === '/api/status'
+        ? { auth: { required: false } }
+        : path === '/api/libraries'
+          ? { libraries: [] }
+          : { summary: { movies: 0, series: 0, skipped: 0, action_required: 0 }, items: [] }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(payload) })
+    })
+
+    renderApp()
+
+    expect(await screen.findByText('Nothing to organize')).toBeInTheDocument()
+    expect(screen.queryByText('No report items loaded yet.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/item\(s\) selected/)).not.toBeInTheDocument()
+    expect(document.querySelector('#reportPanel .empty-report')).not.toBeInTheDocument()
+    expect(document.querySelector('#reportPanel .report-toolbar')).not.toBeInTheDocument()
+    expect(document.querySelector('#reportPanel').children).toHaveLength(3)
+  })
+
   it('connects, loads libraries and renders the full report', async () => {
     renderApp()
 

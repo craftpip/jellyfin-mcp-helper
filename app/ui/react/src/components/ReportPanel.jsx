@@ -122,6 +122,7 @@ export default function ReportPanel() {
             </button>
           )}
         </div>
+      </div>
 
       {state.reportServiceErrors && Object.keys(state.reportServiceErrors).length > 0 && (() => {
         return (
@@ -160,7 +161,7 @@ export default function ReportPanel() {
         </div>
       )}
 
-      <div className="report-toolbar">
+      {(hasItems || hasSkippedOnly) && <div className="report-toolbar">
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <div className="hint" id="selectionSummary" style={{ display: 'flex', alignItems: 'center', minHeight: 28 }}>
             {selectionSummary}
@@ -186,8 +187,7 @@ export default function ReportPanel() {
             </button>
           </div>
         )}
-      </div>
-    </div>
+      </div>}
 
       <div id="reportItems" style={{ marginTop: 12 }}>
         {reportGroups.length === 0 && hasItems && (
