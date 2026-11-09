@@ -176,6 +176,7 @@ Known examples:
 - ED3: should be kind=skip. Numbered ending extra.
 - SP01: should be kind=skip. Special marker followed by digits.
 - SP02: should be kind=skip. Special marker followed by digits.
+- A nested `Show (2001) OAV/Show - S01E01.mkv` must be `kind=extra`, `extra_type=special`, routed to `extras/`, while sibling `Show (2001) S1/Show - S01E01.mkv` remains series. `OAV` is an alternate spelling of `OVA`; `EXTRA_MARKERS` and `_GENERIC_EXTRA_SET` include it. Previously the OAV took the normal S01E01 destination and the real episode became a lower-revision skip. Confirm correctly leaves such unmoved skips visible; never hide them merely because another file reached the same target. Regression: `tests/test_scan_oav_collision.py` covers classification, distinct targets, both moves and an empty post-confirm report; obfuscated paths are in the corpus. Run `python3 -m pytest tests/test_scan_oav_collision.py tests/test_classifier.py`.
 - S01E01 with Opus 2.0: should be kind=series. Codec decimals must not be treated as special or decimal episodes.
 - S01E01 with DDP2.0: should be kind=series. Audio format decimals must not trigger skip logic.
 - spider.mkv: should not be skipped because of sp.

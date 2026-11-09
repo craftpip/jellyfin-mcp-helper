@@ -16,10 +16,10 @@ import re
 MARKER_LOOKBEHIND = r"(?<![a-z0-9])"
 MARKER_LOOKAHEAD = r"(?![a-z0-9])"
 
-EXTRA_MARKERS = re.compile(MARKER_LOOKBEHIND + r"(ncop\d*|nced\d*|op\d*|ed\d*|sp\d*|ova|ona|special|extras?|featurettes?|bonus|recap|trailer)" + MARKER_LOOKAHEAD, re.IGNORECASE)
+EXTRA_MARKERS = re.compile(MARKER_LOOKBEHIND + r"(ncop\d*|nced\d*|op\d*|ed\d*|sp\d*|ova|oav|ona|special|extras?|featurettes?|bonus|recap|trailer)" + MARKER_LOOKAHEAD, re.IGNORECASE)
 SAMPLE_MARKERS = re.compile(MARKER_LOOKBEHIND + r"sample" + MARKER_LOOKAHEAD, re.IGNORECASE)
 _GENERIC_EXTRA_SET = {
-    "ed", "op", "nc", "nced", "ncop", "ova", "ona", "sp", "special", "extras", "extra",
+    "ed", "op", "nc", "nced", "ncop", "ova", "oav", "ona", "sp", "special", "extras", "extra",
     "featurette", "featurettes", "bonus", "recap", "trailer", "short", "interview", "deleted",
     "behindthescenes",
 }
