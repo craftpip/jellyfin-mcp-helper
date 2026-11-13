@@ -17,7 +17,7 @@ commit in that range, then set this line to the new HEAD.
 
 - **Scan -> review -> confirm workflow**: build a move plan before writing anything.
 - **Background progress + final report**: check scan progress first, then fetch an LLM-friendly report.
-- **Plan editing before confirm**: redirect specific items with `update move new downloads scan`.
+- **Plan editing before confirm**: redirect specific items with `downloads_scan_update`.
 - **Multi-root curation**: movie and series roots can include descriptions to help root selection.
 - **Jellyfin tools**: list libraries, browse items, inspect ongoing series, and trigger targeted scans.
 - **Release Tracker**: store and query locally tracked next-release dates for ongoing series.
@@ -219,19 +219,19 @@ curl -X POST http://localhost:18328/mcp \
 
 Core organizer flow:
 
-1. `move new downloads scan`
-2. `get move new downloads scan progress`
-3. `get move new downloads scan report`
-4. Optional: `update move new downloads scan`
-5. `confirm move new downloads scan`
-6. Optional: `get move new downloads confirm progress`
+1. `downloads_scan_start`
+2. `downloads_scan_progress`
+3. `downloads_scan_report`
+4. Optional: `downloads_scan_update`
+5. `downloads_scan_confirm`
+6. Optional: `downloads_confirm_progress`
 
 Example scan:
 
 ```bash
 curl -X POST http://localhost:18328/mcp \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"move new downloads scan","arguments":{"replaceExisting":true}}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"downloads_scan_start","arguments":{"replaceExisting":true}}}'
 ```
 
 Example report fetch:
@@ -239,7 +239,7 @@ Example report fetch:
 ```bash
 curl -X POST http://localhost:18328/mcp \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get move new downloads scan report","arguments":{"scanId":"abc123"}}}'
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"downloads_scan_report","arguments":{"scanId":"abc123"}}}'
 ```
 
 Example target update:
@@ -247,7 +247,7 @@ Example target update:
 ```bash
 curl -X POST http://localhost:18328/mcp \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"update move new downloads scan","arguments":{"scanId":"abc123","items":[{"confirmId":"m1","targetPath":"/media/movies_4k/Movie Title (2024)/Movie Title (2024).mkv"}]}}}'
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"downloads_scan_update","arguments":{"scanId":"abc123","items":[{"confirmId":"m1","targetPath":"/media/movies_4k/Movie Title (2024)/Movie Title (2024).mkv"}]}}}'
 ```
 
 Example confirm:
@@ -255,17 +255,17 @@ Example confirm:
 ```bash
 curl -X POST http://localhost:18328/mcp \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"confirm move new downloads scan","arguments":{"scanId":"abc123"}}}'
+  -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"downloads_scan_confirm","arguments":{"scanId":"abc123"}}}'
 ```
 
 ### Jellyfin Tools
 
-- `trigger jellyfin library scan`
-- `get available jellyfin libraries list`
-- `get jellyfin library items`
-- `get ongoing jellyfin series latest episodes`
+- `jellyfin_library_scan`
+- `jellyfin_libraries`
+- `jellyfin_library_items`
+- `jellyfin_ongoing_latest_episodes`
 
-`trigger jellyfin library scan` supports:
+`jellyfin_library_scan` supports:
 
 1. Whole-library scans.
 2. Targeted scans by `itemNames` or `itemIds`.
@@ -277,11 +277,11 @@ curl -X POST http://localhost:18328/mcp \
 
 ### Release Tracker Tools
 
-- `store ongoing series next release`
-- `get ongoing series next release`
-- `get due ongoing series releases`
-- `get ongoing series next releases`
-- `delete ongoing series next release`
+- `release_tracker_update`
+- `release_tracker_lookup` with seriesName
+- `release_tracker_lookup` with dueOnly=true
+- `release_tracker_lookup` without seriesName
+- `release_tracker_update` with action=delete
 
 Use Release Tracker for locally stored next-release markers for ongoing shows. If a user asks what date is already tracked for a series, the intended workflow is to query Release Tracker first before using live Jellyfin or the web.
 
@@ -289,13 +289,13 @@ Use Release Tracker for locally stored next-release markers for ongoing shows. I
 
 The intended organizer workflow is:
 
-1. Start `move new downloads scan`.
-2. Poll `get move new downloads scan progress` until the scan completes.
-3. Read `get move new downloads scan report`.
-4. If any target path or root is wrong, fix it with `update move new downloads scan`.
+1. Start `downloads_scan_start`.
+2. Poll `downloads_scan_progress` until the scan completes.
+3. Read `downloads_scan_report`.
+4. If any target path or root is wrong, fix it with `downloads_scan_update`.
 5. Fetch the report again and verify the updated targets.
-6. Run `confirm move new downloads scan`.
-7. If needed, poll `get move new downloads confirm progress` until complete.
+6. Run `downloads_scan_confirm`.
+7. If needed, poll `downloads_confirm_progress` until complete.
 
 The final report includes:
 

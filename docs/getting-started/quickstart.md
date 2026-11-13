@@ -138,7 +138,7 @@ Call a tool (example scan):
 ```bash
 curl -X POST http://localhost:18328/mcp \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"move new downloads scan","arguments":{"replaceExisting":true}}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"downloads_scan_start","arguments":{"replaceExisting":true}}}'
 ```
 
 See [backend/mcp.md](../backend/mcp.md) and [backend/mcp-tools.md](../backend/mcp-tools.md) for the full protocol and tool reference.

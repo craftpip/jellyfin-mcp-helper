@@ -55,21 +55,21 @@ def test_initialize_returns_autonomous_workflow_instructions() -> None:
         resp = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
     instructions = resp.json()["result"]["instructions"]
     assert "Work autonomously" in instructions
-    assert "get move new downloads scan progress" in instructions
-    assert "confirm move new downloads scan" in instructions
+    assert "downloads_scan_progress" in instructions
+    assert "downloads_scan_confirm" in instructions
 
 
 def test_progress_and_report_hints_never_ask_user_to_continue() -> None:
     running = _scan(status="running", total_candidates=10, processed_candidates=2)
     assert not _asks_user(format_scan_progress(running)["next"])
-    assert "get move new downloads scan progress" in format_scan_progress(running)["next"]
+    assert "downloads_scan_progress" in format_scan_progress(running)["next"]
 
     running_report = format_scan_report(running)
     assert not _asks_user(running_report["next"])
     assert not any(_asks_user(line) for line in running_report["llm_instructions"])
 
     done = _scan()
-    assert "get move new downloads scan report" in format_scan_progress(done)["next"]
+    assert "downloads_scan_report" in format_scan_progress(done)["next"]
 
     confirming = _scan(confirm_status="running", confirm_total=3)
     assert not _asks_user(format_confirm_progress(confirming)["next"])
@@ -77,7 +77,7 @@ def test_progress_and_report_hints_never_ask_user_to_continue() -> None:
     pending = _scan(items=[_item("i1", "/dl/Show/Show S01E01.mkv", "/series/Show/Season 01/Show - S01E01.mkv")])
     step = report_next_step(pending)
     assert "IS the approval" in step
-    assert "confirm move new downloads scan" in step
+    assert "downloads_scan_confirm" in step
 
 
 def test_report_search_filters_items_case_and_punctuation_insensitive() -> None:

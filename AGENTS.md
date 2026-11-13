@@ -81,7 +81,7 @@ Current state: **the React app is the main UI at `/`**. Old `/react` bookmarks 3
 **Source of truth:** `config/app.db` `scans` table (`app/core/db.py:get_db`, `app/services/scan_history.py:load_report`/`list_history`). `reports/current.json` and `reports/history/*.json` are legacy compat mirrors written by `save_report`/`save_singleton` — do not `cat` them for agent work.
 
 **Correct approach for agents:**
-- Preferred: `POST /mcp` `tools/call` `get move new downloads scan report` (or `docker exec jellysort curl http://127.0.0.1:18327/mcp` with same body) — this reads `ScanStore`/`scans` DB.
+- Preferred: `POST /mcp` `tools/call` `downloads_scan_report` (or `docker exec jellysort curl http://127.0.0.1:18327/mcp` with same body) — this reads `ScanStore`/`scans` DB.
 - Fallback (inside container): `python3 -c "from app.services.scan_history import load_report; print(load_report(scan_id))"` or `sqlite3 config/app.db "SELECT report_json FROM scans ORDER BY saved_at DESC LIMIT 1"` — never `cat reports/current.json` directly.
 - History: `GET /api/scans/history` or `load_report`/`list_history`, not `ls reports/history`.
 
@@ -268,7 +268,7 @@ Prefer adding the new case to the existing examples list.
 
 ### Strict-hint bare absolute numbering (anime batches)
 
-**Problem:** A strict hint (`move new downloads scan` with `hints=[{sourcePrefix, title, kind: series, season: S}]`) on a folder of bare-numbered files (`[RlsGrp] Show - 13.mkv` … `- 24.mkv`, absolute numbering, no SxxEyy) resolved every file to the same target. Only the first file was actionable; the rest skipped with "Lower revision v0 skipped; keeping v0 for same episode".
+**Problem:** A strict hint (`downloads_scan_start` with `hints=[{sourcePrefix, title, kind: series, season: S}]`) on a folder of bare-numbered files (`[RlsGrp] Show - 13.mkv` … `- 24.mkv`, absolute numbering, no SxxEyy) resolved every file to the same target. Only the first file was actionable; the rest skipped with "Lower revision v0 skipped; keeping v0 for same episode".
 
 **Cause:** `_classification_from_hint` (`app/services/scan_orchestrator.py`) only called `_extract_season_episode`, which matches SxxEyy tags — bare numbers yielded `episode=None` for every file, and the resolver defaults `episode=None` to 1 (`episode_number = classification.episode or 1` in `app/services/resolver.py`), so all files collided on S0SE01 and the revision-dedup skipped all but the first.
 
@@ -318,7 +318,7 @@ Prefer adding the new case to the existing examples list.
 
 ### Update scan path validation bug
 
-**Problem:** `update move new downloads scan` failed with `tuple expected at most 1 argument, got 7`.
+**Problem:** `downloads_scan_update` failed with `tuple expected at most 1 argument, got 7`.
 
 **Cause:** `app/services/scan_manager.py:388` used `tuple(".mkv", ".mp4", ...)` but `tuple()` accepts at most 1 positional argument.
 
@@ -364,7 +364,7 @@ if not new_target.endswith((".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".fl
 
 ### Jellyfin library scan trigger endpoint
 
-**Problem:** `trigger jellyfin library scan` can return success while Jellyfin does not show a real library scan if the handler calls the wrong update path or only trusts a fast HTTP response.
+**Problem:** `jellyfin_library_scan` can return success while Jellyfin does not show a real library scan if the handler calls the wrong update path or only trusts a fast HTTP response.
 
 **Correct approach:** For a named library scan, resolve the library through `GET /Library/VirtualFolders`, then call Jellyfin's library item refresh endpoint using the library `ItemId`:
 
@@ -372,7 +372,7 @@ if not new_target.endswith((".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".fl
 POST /Items/{libraryItemId}/Refresh?Recursive=true&ImageRefreshMode=Default&MetadataRefreshMode=Default&ReplaceAllImages=false&ReplaceAllMetadata=false
 ```
 
-Use `JellyfinClient.scan_library()` for the MCP tool `trigger jellyfin library scan`. Do not replace this with the global scheduled task endpoint or with `Library/Media/Updated` for named library scans.
+Use `JellyfinClient.scan_library()` for the MCP tool `jellyfin_library_scan`. Do not replace this with the global scheduled task endpoint or with `Library/Media/Updated` for named library scans.
 
 **Path update distinction:** `Library/Media/Updated` is useful after moving or replacing known media files because it can notify Jellyfin about specific updated paths. Keep this for organizer/confirm flows that already know the changed target paths.
 
@@ -556,11 +556,11 @@ The store's `onTargetInputChange` (AppStore.jsx) already skips revert when `comp
 
 **Problem:** After clicking "Start Move" in the confirm modal, the progress never updated and the backend logged `TOOL xxx get move new downloads scan confirm progress (not found)` on every poll. The cross-drive copy ran fine in the background; only the UI polling failed.
 
-**Cause:** `app/ui/react/src/store/AppStore.jsx` `pollConfirmProgress()` called the tool `'get move new downloads scan confirm progress'`, but the backend registers `'get move new downloads confirm progress'` (`app/main.py` tool list + handler dispatch).
+**Cause:** `app/ui/react/src/store/AppStore.jsx` `pollConfirmProgress()` called the tool `'get move new downloads scan confirm progress'`, but the backend registers `'downloads_confirm_progress'` (`app/main.py` tool list + handler dispatch).
 
-**Fix:** `AppStore.jsx:484` → `'get move new downloads confirm progress'`.
+**Fix:** `AppStore.jsx:484` → `'downloads_confirm_progress'`.
 
-**Verification:** After `npm run build` + container restart, confirm a cross-drive move and watch the modal update live (Phase, Copied, Speed, File %). Backend logs show `✅ Ran "get move new downloads confirm progress"` with no `(not found)`.
+**Verification:** After `npm run build` + container restart, confirm a cross-drive move and watch the modal update live (Phase, Copied, Speed, File %). Backend logs show `✅ Ran "downloads_confirm_progress"` with no `(not found)`.
 
 ### Confirm progress counts were cumulative across confirms
 
@@ -651,24 +651,30 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 **Problem:** Agents using the MCP stopped after every tool call ("Want me to check progress?", "Should I confirm?") because the server's own `next`/`llm_instructions` said "Ask the user if they want to check progress. Do not call any tool automatically." They also grepped a huge report to find one release.
 
-**Rule:** A user request to scan/move downloads is the approval for the whole chain: scan → progress → report → confirm → confirm progress → summary. Hints in `app/main.py` (tool handlers, `MCP_SERVER_INSTRUCTIONS` returned from `initialize`) and `app/services/presenters.py` (`format_scan_progress`, `format_confirm_progress`, `format_scan_report`, `report_next_step`) must tell the agent to continue, never to ask. Only ask on genuine ambiguity or before `delete move new downloads scan items`.
+**Rule:** A user request to scan/move downloads is the approval for the whole chain: scan → progress → report → confirm → confirm progress → summary. Hints in `app/main.py` (tool handlers, `MCP_SERVER_INSTRUCTIONS` returned from `initialize`) and `app/services/presenters.py` (`format_scan_progress`, `format_confirm_progress`, `format_scan_report`, `report_next_step`) must tell the agent to continue, never to ask. Only ask on genuine ambiguity or before `downloads_scan_delete_items`.
 
 - Progress tools take `waitSeconds` (default 30, clamped 0–55; `_wait_while_running` polls once a second and returns as soon as the scan/confirm stops running), so one call is the "sleep 30s and check" step. The agent doesn't need its own sleep tool.
 - Report tool takes `search` (`_item_matches_search`: every token must match name/source/target, case- and punctuation-insensitive, glued spelling allowed) → `summary.matched`, `search_hint` when empty.
 
 **Verification:** `tests/test_mcp_autonomous_workflow.py`.
 
-### Library items stay compact; series detail is a separate tool
+### MCP tool surface: compact lists, detail tools, spec names, isError
 
-**Problem:** `get jellyfin library items` returned only totals per series (`season_count`, `episode_count`), so an LLM could not tell which episodes exist in a season or which languages they have. Adding that to the list tool would bloat every browse/search response.
+**Problem:** `jellyfin_library_items` gave only per-series totals (no episodes per season, no episode languages); adding detail to the list tool would bloat every browse. Separately: spaced tool names (`get jellyfin library items`) break spec-strict clients, no tool had annotations, five near-identical release-tracker tools (`... next release` vs `... next releases`) confused the model, library items made one `/Shows/{id}/Seasons` call per series, and tool failures came back as JSON-RPC errors that many clients hide from the model.
 
-**Rule:** keep `get jellyfin library items` compact (series keys: `name/type/ongoing/path/season_count/episode_count` only — asserted by `test_library_items_stays_compact`). Detail lives in `get jellyfin series details` (`JellyfinClient.get_series_details` → `_get_series_episodes`, one `/Shows/{id}/Episodes` call with `MediaStreams`): per season `episode_numbers` as ranges (`"1-12, 14"`), `missing_episodes` gaps, `audio_languages`/`subtitle_languages`, `language_groups` only when episodes differ; `season` arg adds a per-episode `episode_list` (number, title, languages). Multi-episode files expand via `IndexNumberEnd`; season 0 is flagged `specials` and excluded from totals.
+**Rules:**
+- **Lists stay compact, detail is a second call.** `jellyfin_library_items` returns movies `name/type/year/path` and series `name/type/ongoing/path/season_count/episode_count` only (no languages, no `MediaStreams` in Fields). Series totals come from one library-wide Season query (`JellyfinClient._library_season_totals`: season `ChildCount` sum, season 0 excluded; verified identical to the old per-series numbers on the live server). `downloads_recent_files` mirrors that shape.
+- **`jellyfin_item_details`** (`JellyfinClient.get_item_details`, args `libraryName` + `name`, legacy `seriesName` accepted, optional `season`): series → `_get_series_episodes` (one `/Shows/{id}/Episodes` call incl. virtual items): per season `episode_numbers` ranges, `missing_episodes` gaps, `aired_not_downloaded`/`upcoming` from `LocationType=Virtual` items (empty unless Jellyfin has missing-episode metadata — this server currently has none), languages, `language_groups` when they differ, `episode_list` with `season`; `IndexNumberEnd` expands multi-episode files; season 0 flagged `specials`, excluded from totals. Movie → `_movie_details` (`/Items?Ids=` with `MediaSources`): runtime + per-version path/size/container/resolution/codec/audio tracks/languages.
+- **Names** are snake_case (`^[a-zA-Z0-9_-]{1,64}$`). Old spaced names are call-only aliases (`MCP_TOOL_ALIASES`; internal dispatch keys are still the old names). Hint/description text must reference the new names. Release tracker = `release_tracker_lookup` (`seriesName` → one marker, `dueOnly` → due, neither → list) + `release_tracker_update` (`action=store|delete`), routed by `_resolve_tool_name`.
+- **Every tool has `title` + `annotations`** (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`). Destructive: `downloads_scan_confirm`, `downloads_scan_delete_items`, `release_tracker_update`.
+- **Tool failures are `isError: true` results** (`{"error": msg}` text), converted in one place: `mcp()` wraps `_mcp_dispatch()`; only unknown tool (`-32601`) stays a JSON-RPC error. Handlers may keep using `_mcp_error_response`. The activity log reads `isError` as ❌.
+- `initialize` echoes a supported client `protocolVersion` (`2025-06-18`/`2025-03-26`/`2024-11-05`).
 
-**Verification:** `tests/test_jellyfin_series_details.py`.
+**Verification:** `tests/test_jellyfin_item_details.py` (details, batching, aliases, routing, isError, protocol), `tests/test_mcp_errors.py::test_mcp_tools_list_includes_scan_progress_tool` (names, count 16, annotations).
 
 ### Test suite counts
 
-Backend `python3 -m pytest tests/` runs **418 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **112 tests**. Keep both green after changes.
+Backend `python3 -m pytest tests/` runs **498 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **112 tests**. Keep both green after changes.
 
 ### Browse + retarget (smart correction UI)
 
@@ -696,7 +702,7 @@ Backend `python3 -m pytest tests/` runs **418 tests** (uses the container: `dock
 - `ScanManager` gains `self._confirm_queue` (list of dicts: scan_id, item_ids, source_paths, source_prefixes, total). `confirm_scan` no longer raises 409 when `confirm_status == "running"` — it computes the total, appends to the queue, and returns the scan immediately.
 - `_start_confirm(...)` is the extracted "start a batch" helper (resets `confirm_processed`/baselines, sets `confirm_status="running"`, creates the task). `_run_confirm_task` ends with `finally: self._start_queued_confirms(scan_id)`, which pops the next queued batch and starts it synchronously — so the frontend never observes a `completed` state while batches remain queued (the backend flips straight back to `running`).
 - `_run_confirm_task` recomputes `scan.confirm_total = len(selected_items)` so queued batches whose items were confirmed by an earlier batch show accurate totals.
-- `ScanPlan` gained `confirm_queue_length`/`confirm_queue_items`, refreshed by `_update_confirm_state`. `format_confirm_progress` exposes `queue_length`/`queue_items` and mentions the queue in `next`. UI server `_confirm_started_response` and the MCP `confirm move new downloads scan` handler return a "was queued" message when `queue_length > 0`.
+- `ScanPlan` gained `confirm_queue_length`/`confirm_queue_items`, refreshed by `_update_confirm_state`. `format_confirm_progress` exposes `queue_length`/`queue_items` and mentions the queue in `next`. UI server `_confirm_started_response` and the MCP `downloads_scan_confirm` handler return a "was queued" message when `queue_length > 0`.
 
 **Frontend** (`app/store/AppStore.jsx`):
 - The three `confirmActive` toast-blocks in `openConfirmModal`/`confirmSelected`/`confirmGroup` were removed — the modal opens and Start Move always POSTs.

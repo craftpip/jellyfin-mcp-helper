@@ -79,23 +79,23 @@ the approval for the whole workflow. Run every step back-to-back without asking 
 "should I confirm?", or announcing what you are about to do. Report once, at the end.
 
 Workflow:
-1. 'move new downloads scan' - starts a background scan and returns immediately.
-2. 'get move new downloads scan progress' - this call waits server-side (waitSeconds, default 30) until the scan
+1. 'downloads_scan_start' - starts a background scan and returns immediately.
+2. 'downloads_scan_progress' - this call waits server-side (waitSeconds, default 30) until the scan
    finishes. If status is still 'running', call it again immediately. Repeat until 'completed'. Never ask the user
    whether to keep checking. (If your client times out on long tool calls, pass a smaller waitSeconds and sleep
    ~30 seconds between calls yourself.)
-3. 'get move new downloads scan report' with search=<show or release name> to get only the items the user asked
+3. 'downloads_scan_report' with search=<show or release name> to get only the items the user asked
    about (the full report can be large). Check targetPath/root for obvious mistakes; fix with
-   'update move new downloads scan' if needed.
-4. 'confirm move new downloads scan' with itemIds = the matching confirmId values (or sourcePrefixes = the release folder) so only
+   'downloads_scan_update' if needed.
+4. 'downloads_scan_confirm' with itemIds = the matching confirmId values (or sourcePrefixes = the release folder) so only
    the requested release moves. Omit filters only when the user asked to move everything.
-5. 'get move new downloads confirm progress' - waits like step 2; repeat until confirm_status is not 'running'.
+5. 'downloads_confirm_progress' - waits like step 2; repeat until confirm_status is not 'running'.
    Jellyfin library scans are triggered automatically after the move; you do not need to trigger one.
 6. Tell the user what moved where, plus any skipped or failed items.
 
 Only stop to ask the user when something is genuinely ambiguous (e.g. a suspect item with no fitting
 candidateTargets, or the requested release is not in the report even after a rescan) or before destructive
-deletes ('delete move new downloads scan items')."""
+deletes ('downloads_scan_delete_items')."""
 
 MCP_PROGRESS_MAX_WAIT_SECONDS = 55
 MCP_PROGRESS_DEFAULT_WAIT_SECONDS = 30
@@ -185,6 +185,19 @@ def _mcp_error_message(method: object, tool_name: object) -> str:
     return "❌ MCP request failed"
 
 
+def _tool_error_text(result: dict) -> str:
+    """Error message from an isError tool result (content[0].text JSON or plain text)."""
+    content = result.get("content") if isinstance(result.get("content"), list) else []
+    text = content[0].get("text", "") if content and isinstance(content[0], dict) else ""
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return text or "Tool failed"
+    if isinstance(parsed, dict):
+        return str(parsed.get("error") or parsed.get("message") or "Tool failed")
+    return text or "Tool failed"
+
+
 def _format_mcp_activity_line(
     request_body: bytes,
     response_body: bytes,
@@ -200,6 +213,9 @@ def _format_mcp_activity_line(
     tool_name = params.get("name") if isinstance(params, dict) else None
     arguments = params.get("arguments") if isinstance(params, dict) and isinstance(params.get("arguments"), dict) else {}
     error = response_payload.get("error") if isinstance(response_payload.get("error"), dict) else None
+    result = response_payload.get("result") if isinstance(response_payload.get("result"), dict) else {}
+    if error is None and result.get("isError"):
+        error = {"message": _tool_error_text(result)}
     timestamp = datetime.now().strftime("%H:%M:%S")
 
     if error:
@@ -237,7 +253,7 @@ def _mcp_error_response(request_id: object, code: int, message: str) -> JSONResp
 
 
 def _build_recent_file_items(files: list, series_title_aliases: dict[str, str]) -> list[dict]:
-    """Shape recent download files like 'get jellyfin library items' entries."""
+    """Shape recent download files like 'jellyfin_library_items' entries."""
     from app.models.schemas import CandidateItem
     from app.services.classifier import classify_candidate
 
@@ -272,8 +288,6 @@ def _build_recent_file_items(files: list, series_title_aliases: dict[str, str]) 
                     "type": "movie",
                     "year": cls.year,
                     "path": f.source_path,
-                    "audio_languages": [],
-                    "subtitle_languages": [],
                 }
             )
         else:
@@ -390,53 +404,55 @@ def _mcp_tools() -> list[dict[str, object]]:
     _lib_hint = _cached_library_list or ""
     return [
         {
-            "name": "move new downloads scan",
-            "description": "Start a new background organizer scan of the configured download folders. This tool is read-only: it classifies candidates and prepares a move plan, but it does not move files. By default scans are incremental: only new files not already in the report are added; existing edits (retargets, etc.) are preserved. Use fullRescan to overwrite the report. After calling this tool, without asking the user, call 'get move new downloads scan progress' repeatedly (each call waits up to 30s server-side) until the scan completes, then fetch the report (use search to narrow it) and confirm the requested items.",
+            "name": "downloads_scan_start",
+            "title": "Start downloads scan",
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+            "description": "Start a background scan of the download folders that classifies files and builds a move plan (move/replace/skip). Does not move files. Incremental by default: keeps the existing report and its edits, adds only new files. Then, without asking the user, call 'downloads_scan_progress' until completed, 'downloads_scan_report' (with search) and confirm the requested items.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "replaceExisting": {
                         "type": "boolean",
                         "default": True,
-                        "description": "When true, the planned action may replace an existing target file. When false, items with an existing target are planned as skip instead of replace."
+                        "description": "Allow replacing an existing target file; false plans those items as skip."
                     },
                     "fullRescan": {
                         "type": "boolean",
                         "default": False,
-                        "description": "When true, rescan all files and overwrite the report (discarding previous edits). When false (default), only new files not already in the report are added."
+                        "description": "Rescan everything and overwrite the report, discarding edits. Default false: only add new files."
                     },
                     "hints": {
                         "type": "array",
                         "default": [],
-                        "description": "Per-folder authoritative metadata (e.g. from JellyJake at download time). Each hint strictly classifies the files in one torrent folder instead of re-guessing. Non-hinted folders classify as usual (additive scope).",
+                        "description": "Authoritative per-folder metadata (e.g. from the downloader). A hint classifies the files of one download folder instead of guessing; other folders classify as usual.",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "sourcePrefix": {
                                     "type": "string",
-                                    "description": "Torrent folder basename the hint applies to (matched case-insensitively against the download container dirname)."
+                                    "description": "Download folder basename (case-insensitive)."
                                 },
                                 "title": {
                                     "type": "string",
-                                    "description": "Canonical show/movie title — authoritative."
+                                    "description": "Canonical title."
                                 },
                                 "kind": {
                                     "type": "string",
                                     "enum": ["movie", "series"],
-                                    "description": "Authoritative media kind."
+                                    "description": "Media kind."
                                 },
                                 "year": {
                                     "type": "integer",
-                                    "description": "Release/first-air year when known."
+                                    "description": "Year, if known."
                                 },
                                 "season": {
                                     "type": "integer",
-                                    "description": "Pack season when known. Used as the default when the filename has no SxxEyy tag; a conflicting file tag flags the item as suspect."
+                                    "description": "Pack season, used when a file has no SxxEyy tag; a conflicting tag flags the item suspect."
                                 },
                                 "strict": {
                                     "type": "boolean",
                                     "default": True,
-                                    "description": "When true (default), bypass guess-based classification for title/kind. When false, the hint is ignored."
+                                    "description": "false ignores the hint."
                                 }
                             },
                             "required": ["sourcePrefix", "title", "kind"]
@@ -446,169 +462,185 @@ def _mcp_tools() -> list[dict[str, object]]:
                         "type": "string",
                         "enum": ["additive", "only"],
                         "default": "additive",
-                        "description": "Only 'additive' works in v1 (hints apply to matching folders, everything else classifies as usual). 'only' returns an error."
+                        "description": "Only 'additive' is supported."
                     }
                 }
             },
         },
         {
-            "name": "get recently added download files",
-            "description": "List video files in the configured download folders on disk that were added or modified within the last N hours. This reads the filesystem, not the Jellyfin library. Useful before starting a scan to see what is new and whether a move is worth doing. Returns the full source path, size, and modification time for each recent file, newest first. This tool is read-only and does not classify or move anything.",
+            "name": "downloads_recent_files",
+            "title": "Recent download files",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+            "description": "List video files in the download folders (filesystem, not Jellyfin) added or modified in the last N hours, newest first, with a quick classification. Read-only; useful to see what is new before scanning.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "hours": {
                         "type": "number",
                         "default": 24,
-                        "description": "How far back in hours to look for files. Defaults to 24."
+                        "description": "Look-back window in hours."
                     }
                 }
             },
         },
         {
-            "name": "get recently added in library",
-            "description": "List the individual files most recently added to a Jellyfin library, sorted by DateCreated descending (default: last 72 hours; use 'hours' to change the window). This reads Jellyfin's library index, not the filesystem. It returns episodes and movies as separate items — if a show added two episodes, both episodes appear individually. Each item includes the absolute file path on disk, and movies also include year and audio/subtitle languages.",
+            "name": "jellyfin_recently_added",
+            "title": "Recently added in Jellyfin",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+            "description": "List individual episodes and movies most recently added to a Jellyfin library (DateCreated descending, default last 72 hours), each with its file path; movies include year and audio/subtitle languages.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "libraryName": {
                         "type": "string",
-                        "description": "The Jellyfin library name to inspect, for example 'Movies' or 'Shows'."
+                        "description": "Library name, e.g. 'Movies' or 'Shows'."
                     },
                     "hours": {
                         "type": "number",
                         "default": 72,
-                        "description": "How far back in hours to look for items added to the library. Defaults to 72."
+                        "description": "Look-back window in hours."
                     },
                     "limit": {
                         "type": "integer",
                         "default": 10,
-                        "description": "Maximum number of most recently added items to return."
+                        "description": "Maximum items to return."
                     }
                 },
                 "required": ["libraryName"]
             },
         },
         {
-            "name": "confirm move new downloads scan",
-            "description": "Apply a completed organizer scan plan. This tool performs write actions: it moves files into the library. A user request to move/organize downloads counts as approval - call this right after checking the report, without asking again. Limit it to the requested release with itemIds (confirmId values) or sourcePrefixes. If you need to redirect items to a different root, call 'update move new downloads scan' first. After calling, poll 'get move new downloads confirm progress' until done; Jellyfin scans are triggered automatically.",
+            "name": "downloads_scan_confirm",
+            "title": "Move scanned items into library",
+            "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+            "description": "Move the planned items of a completed scan into the library. A user request to move/organize downloads is the approval: call this right after checking the report, without asking again. Limit it with itemIds (confirmId) or sourcePrefixes; fix targets first with 'downloads_scan_update'. Then poll 'downloads_confirm_progress'; Jellyfin scans run automatically.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
-                        "description": "Optional scan_id returned by 'move new downloads scan'. If omitted, the current active scan is used."
+                        "description": "Defaults to the current scan."
                     },
                     "itemIds": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional list of compact confirmId values from the scan report. Use this to confirm only specific planned items. Omit to confirm all remaining items."
+                        "description": "confirmId values from the report to move. Omit all filters to move every remaining item."
                     },
                     "sourcePaths": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional list of exact sourcePath values from the scan report. Use this to confirm only matching planned items."
+                        "description": "Exact sourcePath values from the report to move."
                     },
                     "sourcePrefixes": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional list of source path prefixes to confirm selectively, such as the parent download folder for one release or batch."
+                        "description": "Source path prefixes to move, e.g. one release's download folder."
                     }
                 },
                 "required": []
             },
         },
         {
-            "name": "get move new downloads scan progress",
-            "description": "Check progress for an organizer scan that is currently running or has already finished. Returns status, current file, processed and total counts, elapsed time, and ETA when available. This call waits up to waitSeconds (default 30) for the scan to finish, so call it again immediately while status is 'running' - do not ask the user whether to keep checking. When completed, fetch the report.",
+            "name": "downloads_scan_progress",
+            "title": "Scan progress",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+            "description": "Scan status, current file, processed/total, elapsed and ETA. Waits up to waitSeconds for the scan to finish; while status is 'running' call it again immediately - do not ask the user. When completed, fetch the report.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
-                        "description": "Optional scan_id to check a specific scan. If omitted, the current active scan is used."
+                        "description": "Defaults to the current scan."
                     },
                     "waitSeconds": {
                         "type": "number",
-                        "description": "Seconds to wait server-side for the operation to finish before returning (0-55, default 30). Returns as soon as it is done. Use a smaller value only if your client times out on long tool calls."
+                        "description": "Wait server-side up to this long (0-55, default 30); returns as soon as it is done. Lower it only if your client times out."
                     }
                 }
             },
         },
         {
-            "name": "get move new downloads confirm progress",
-            "description": "Check progress for a confirm operation that is currently running or has already finished. Returns confirm status, current file, processed and total counts, elapsed time, and ETA when available. This call waits up to waitSeconds (default 30) for the move to finish, so call it again immediately while confirm_status is 'running' - do not ask the user whether to keep checking.",
+            "name": "downloads_confirm_progress",
+            "title": "Move progress",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+            "description": "Move status, current file, processed/total, elapsed and ETA. Waits up to waitSeconds for the move to finish; while confirm_status is 'running' call it again immediately - do not ask the user.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
-                        "description": "Optional scan_id to check confirm progress for a specific scan. If omitted, the current active scan is used."
+                        "description": "Defaults to the current scan."
                     },
                     "waitSeconds": {
                         "type": "number",
-                        "description": "Seconds to wait server-side for the operation to finish before returning (0-55, default 30). Returns as soon as it is done. Use a smaller value only if your client times out on long tool calls."
+                        "description": "Wait server-side up to this long (0-55, default 30); returns as soon as it is done. Lower it only if your client times out."
                     }
                 }
             },
         },
         {
-            "name": "get move new downloads scan report",
-            "description": "Get the final organizer scan report after a scan completes. Returns planned items and actions such as move, replace, or skip. If the scan is still running, this tool returns compact progress guidance instead of a full report. Use format=json to get grouped JSON by source folder instead of markdown. Pass search with the show/release name to return only matching items - the full report can be very large.",
+            "name": "downloads_scan_report",
+            "title": "Scan report",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+            "description": "Planned items of a scan with their action (move/replace/skip) and target. Pass search with the show/release name - the full report can be very large. While the scan runs it returns progress guidance instead.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
-                        "description": "Optional scan_id to fetch a specific scan report. If omitted, the current active scan is used."
+                        "description": "Defaults to the current scan."
                     },
                     "search": {
                         "type": "string",
-                        "description": "Optional filter: only return items whose name, source path, or target path contains every word of this text (case- and punctuation-insensitive), e.g. 'Neutral Show' or 'show name s01'."
+                        "description": "Only items whose name/source/target contain every word (case- and punctuation-insensitive), e.g. 'show name s01'."
                     },
                     "format": {
                         "type": "string",
                         "enum": ["markdown", "json"],
                         "default": "markdown",
-                        "description": "Output format. markdown returns report_md plus flat items; json returns groups grouped by sourceFolder with no markdown."
+                        "description": "markdown: report_md + flat items; json: groups by sourceFolder."
                     },
                     "groupBy": {
                         "type": "string",
                         "enum": ["sourceFolder"],
                         "default": "sourceFolder",
-                        "description": "Grouping key when format=json. Only sourceFolder is supported."
+                        "description": "Grouping for format=json."
                     }
                 }
             },
         },
         {
-            "name": "delete move new downloads scan items",
-            "description": "Permanently delete the source download file for one or more planned scan items and remove them from the move plan. This is destructive and cannot be undone. Use it when the user does not want to keep a file and it should not be moved into the library.",
+            "name": "downloads_scan_delete_items",
+            "title": "Delete download files",
+            "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False},
+            "description": "Permanently delete the source download files of planned items and drop them from the plan. Destructive and irreversible - ask the user first.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
-                        "description": "The scan_id returned by 'move new downloads scan'."
+                        "description": "scan_id from 'downloads_scan_start'."
                     },
                     "itemIds": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of compact confirmId values from the scan report whose source files should be deleted."
+                        "description": "confirmId values whose source files to delete."
                     }
                 },
                 "required": ["scanId", "itemIds"]
             },
         },
         {
-            "name": "update move new downloads scan",
-            "description": "Update planned target destinations for items in a completed scan report. Use this to redirect movie or series items to a different root before confirming. After updating, fetch the report again to verify, then confirm. This tool does not move files.",
+            "name": "downloads_scan_update",
+            "title": "Change planned targets",
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+            "description": "Change planned target paths of report items (e.g. a different root) before confirming. Does not move files; re-check the report, then confirm.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
-                        "description": "The scan_id returned by 'move new downloads scan'."
+                        "description": "scan_id from 'downloads_scan_start'."
                     },
                     "items": {
                         "type": "array",
@@ -617,72 +649,76 @@ def _mcp_tools() -> list[dict[str, object]]:
                             "properties": {
                                 "confirmId": {
                                     "type": "string",
-                                    "description": "The confirmId from the scan report for the item to update."
+                                    "description": "confirmId from the report."
                                 },
                                 "targetPath": {
                                     "type": "string",
-                                    "description": "The new full destination path for this item. Must be under one of the configured movie or series roots."
+                                    "description": "New full destination path under a configured movie or series root."
                                 }
                             },
                             "required": ["confirmId", "targetPath"]
                         },
-                        "description": "List of item updates. Each update specifies a confirmId and the new targetPath."
+                        "description": "Updates, each a confirmId and new targetPath."
                     }
                 },
                 "required": ["scanId", "items"]
             },
         },
         {
-            "name": "trigger jellyfin library scan",
-            "description": "Trigger a Jellyfin metadata refresh and library scan for a named library, such as Movies or Shows. By default refreshes the whole library. Use itemNames or itemIds to scan specific items only. Use refresh mode params to control whether metadata, images, or both are force-refreshed.",
+            "name": "jellyfin_library_scan",
+            "title": "Refresh Jellyfin library",
+            "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+            "description": "Refresh a Jellyfin library (or only itemNames/itemIds in it) to pick up new or changed files and metadata. Not needed after 'downloads_scan_confirm', which triggers it automatically.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "libraryName": {
                         "type": "string",
-                        "description": "The Jellyfin library name to refresh, for example 'Movies' or 'Shows'."
+                        "description": "Library name, e.g. 'Movies' or 'Shows'."
                     },
                     "itemNames": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional list of specific movie or series names to scan instead of the whole library."
+                        "description": "Scan only these movie/series names."
                     },
                     "itemIds": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional list of Jellyfin item IDs to scan instead of the whole library."
+                        "description": "Scan only these Jellyfin item IDs."
                     },
                     "recursive": {
                         "type": "boolean",
                         "default": True,
-                        "description": "When true, scan recursively including all children items."
+                        "description": "Include child items."
                     },
                     "metadataRefreshMode": {
                         "type": "string",
                         "default": "Default",
-                        "description": "Metadata refresh mode. Matches Jellyfin UI options: Default (scan for new/updated files), FullRefresh (search for missing metadata), ValidationOnly."
+                        "description": "Default (new/updated files), FullRefresh (search missing metadata) or ValidationOnly."
                     },
                     "imageRefreshMode": {
                         "type": "string",
                         "default": "Default",
-                        "description": "Image refresh mode. Matches Jellyfin UI options: Default (scan for new/updated images), FullRefresh (replace existing images), ValidationOnly."
+                        "description": "Default (new/updated images), FullRefresh (replace images) or ValidationOnly."
                     },
                     "replaceAllMetadata": {
                         "type": "boolean",
                         "default": False,
-                        "description": "When true, replace all existing metadata instead of merging. Only applies when metadataRefreshMode is FullRefresh."
+                        "description": "Replace instead of merge (FullRefresh only)."
                     },
                     "replaceAllImages": {
                         "type": "boolean",
                         "default": False,
-                        "description": "When true, replace all existing images instead of merging. Only applies when imageRefreshMode is FullRefresh."
+                        "description": "Replace instead of merge (FullRefresh only)."
                     }
                 },
                 "required": ["libraryName"]
             },
         },
         {
-            "name": "get available jellyfin libraries list",
+            "name": "jellyfin_libraries",
+            "title": "Jellyfin libraries",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
             "description": "List all Jellyfin libraries that are available to the configured Jellyfin user." + (f" {_lib_hint}" if _lib_hint else "") + " Use this when you need the exact library names before calling other Jellyfin tools.",
             "inputSchema": {
                 "type": "object",
@@ -690,204 +726,170 @@ def _mcp_tools() -> list[dict[str, object]]:
             },
         },
         {
-            "name": "get jellyfin library items",
-                        "description": "List compact Jellyfin library items for movies and series, sorted by most recently added first (descending DateCreated). This tool is for existence checks, lightweight library browsing, and LLM-friendly summaries. It supports optional fuzzy search (client-side token overlap and similarity scoring handles typos and partial name matches) and optional ongoing-series filtering. For each item, it returns the absolute directory path on disk. For movies, it also returns audio_languages and subtitle_languages arrays listing available language codes from the media streams. For series, it returns only the total season count and total episode count — to see which episodes exist in each season, missing episodes, or per-episode audio/subtitle languages, call 'get jellyfin series details' for that show.",
+            "name": "jellyfin_library_items",
+            "title": "Jellyfin library items",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+            "description": "Compact list of a library's movies and series, most recently added first, with optional fuzzy search; use it to check whether something exists. Movies: name, year, path. Series: name, path, ongoing, season_count, episode_count. For one item's episodes per season, missing episodes, files or audio/subtitle languages, call 'jellyfin_item_details'.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "libraryName": {
                         "type": "string",
-                        "description": "The Jellyfin library name to search or browse, for example 'Movies' or 'Shows'."
+                        "description": "Library name, e.g. 'Movies' or 'Shows'."
                     },
                     "search": {
                         "type": "string",
-                        "description": "Optional search term for fuzzy matching by name (handles typos and partial matches client-side). Use this to check whether a movie or series already exists."
+                        "description": "Fuzzy name search (typos and partial names OK)."
                     },
                     "ongoingOnly": {
                         "type": "boolean",
                         "default": False,
-                        "description": "When true, return only ongoing series. Movies are excluded. This is useful when you want to inspect only currently active shows."
+                        "description": "Only ongoing series (excludes movies)."
                     },
                     "limit": {
                         "type": "integer",
                         "default": 10,
-                        "description": "Maximum number of items to return. Results are ordered by newest release year first, then by name."
+                        "description": "Maximum items: the most recent without search, the best matches with it."
                     },
                 },
                 "required": ["libraryName"]
             },
         },
         {
-            "name": "get jellyfin series details",
-            "description": "Detailed episode view of ONE Jellyfin series (best fuzzy name match). Use after 'get jellyfin library items' when you need to know which episodes exist in a season, which are missing, or what audio/subtitle languages are available. Per season it returns episode_numbers as compact ranges (e.g. '1-12, 14'), missing_episodes (gaps between 1 and the highest episode on disk), audio_languages and subtitle_languages, and language_groups when episodes in a season differ (which episodes have which languages). Pass 'season' to get only that season plus an episode_list with each episode's number, title and languages. Season 0 is specials.",
+            "name": "jellyfin_item_details",
+            "title": "Jellyfin item details",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+            "description": "Detail for ONE movie or series (fuzzy name match). Series, per season: episode_numbers as ranges ('1-12, 14'), missing_episodes (gaps), aired_not_downloaded and upcoming (when Jellyfin has that metadata), audio/subtitle languages and language_groups when episodes differ; pass season for a per-episode list. Season 0 is specials. Movie: year, runtime and each file's size, container, resolution, codec, audio tracks and subtitles.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "libraryName": {
                         "type": "string",
-                        "description": "The Jellyfin series library name, for example 'Shows'."
+                        "description": "Library name, e.g. 'Movies' or 'Shows'."
                     },
-                    "seriesName": {
+                    "name": {
                         "type": "string",
-                        "description": "Series name; fuzzy matched (typos and partial names are fine)."
+                        "description": "Movie or series name (fuzzy matched)."
                     },
                     "season": {
                         "type": "integer",
-                        "description": "Optional season number. When set, only that season is returned, with a per-episode list (number, title, audio/subtitle languages)."
+                        "description": "Series only: return just this season with a per-episode list."
                     },
                 },
-                "required": ["libraryName", "seriesName"]
+                "required": ["libraryName", "name"]
             },
         },
         {
-            "name": "get ongoing jellyfin series latest episodes",
-            "description": "List only ongoing Jellyfin series and return the latest available episode for each series. This tool is useful for checking what the current latest released episode is for active shows. If search is omitted or set to 'all', it returns all ongoing series in the library.",
+            "name": "jellyfin_ongoing_latest_episodes",
+            "title": "Ongoing series latest episodes",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+            "description": "List ongoing series in a library with the latest episode Jellyfin has for each.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "libraryName": {
                         "type": "string",
-                        "description": "The Jellyfin series library name, for example 'Shows'."
+                        "description": "Series library name, e.g. 'Shows'."
                     },
                     "search": {
                         "type": "string",
-                        "description": "Optional search term used to filter ongoing series by name. Use 'all' or omit it to return all ongoing series in the library."
+                        "description": "Filter by series name; omit or 'all' for every ongoing series."
                     },
                     "limit": {
                         "type": "integer",
                         "default": 10,
-                        "description": "Maximum number of ongoing series to return. Results are ordered by newest release year first, then by name."
+                        "description": "Maximum series, newest release year first."
                     }
                 },
                 "required": ["libraryName"]
             },
         },
         {
-            "name": "store ongoing series next release",
-            "description": "Release Tracker: store or update one locally tracked next-release marker for an ongoing Jellyfin series. Use this after an external source determines the next expected release date for the next episode that should appear in Jellyfin. Later, if the user asks what date is stored or tracked for that series, read Release Tracker first instead of using Jellyfin or the web.",
+            "name": "release_tracker_lookup",
+            "title": "Release Tracker lookup",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+            "description": "Release Tracker (local store, not Jellyfin or the web): stored next-release markers for ongoing series. seriesName: that series' marker - use this first when asked what date is stored/tracked; only go live (Jellyfin/web) if the user asks. dueOnly=true: markers due now, for cron checks. Neither: all markers, soonest first.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "libraryName": {
                         "type": "string",
-                        "description": "Jellyfin library name for the series, for example 'Shows'."
+                        "description": "Library name, e.g. 'Shows'. Required with seriesName, else a filter."
                     },
                     "seriesName": {
                         "type": "string",
-                        "description": "Series name as shown in Jellyfin. Required when storing or updating a marker."
+                        "description": "Return this one series' marker."
                     },
                     "seriesId": {
                         "type": "string",
-                        "description": "Optional Jellyfin series item id. Prefer this when available because series names can change. You can get it from 'get ongoing jellyfin series latest episodes'."
+                        "description": "Jellyfin series id; most stable key."
                     },
-                    "nextReleaseDate": {
-                        "type": "string",
-                        "description": "Required next expected release time. Accepts either an ISO datetime like 2026-06-28T18:00:00+09:00 or a plain date like 2026-06-28. Plain dates are treated as due at the start of that date."
-                    },
-                    "nextSeason": {
-                        "type": "integer",
-                        "description": "Optional season number for the next expected episode."
-                    },
-                    "nextEpisode": {
-                        "type": "integer",
-                        "description": "Optional episode number for the next expected episode."
-                    },
-                    "timezone": {
-                        "type": "string",
-                        "description": "Optional IANA timezone name such as Asia/Tokyo. Useful when nextReleaseDate is a plain date or a datetime without an offset."
-                    },
-                    "source": {
-                        "type": "string",
-                        "description": "Optional source label describing where the release estimate came from, for example 'llm', 'manual', or a website name."
-                    },
-                    "notes": {
-                        "type": "string",
-                        "description": "Optional free-text note about the release estimate or reasoning."
-                    }
-                },
-                "required": ["libraryName", "seriesName", "nextReleaseDate"]
-            },
-        },
-        {
-            "name": "get ongoing series next release",
-            "description": "Release Tracker: return the single locally stored next-release marker for one ongoing Jellyfin series. This is the local-memory lookup tool. Use it first when the user asks what date is stored, tracked, or saved for a specific series. Do not use Jellyfin or the web before this tool unless the user explicitly asks for live verification.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "libraryName": {
-                        "type": "string",
-                        "description": "Jellyfin library name for the series, for example 'Shows'."
-                    },
-                    "seriesName": {
-                        "type": "string",
-                        "description": "Series name to look up in the local Release Tracker store. Required for direct lookup."
-                    },
-                    "seriesId": {
-                        "type": "string",
-                        "description": "Optional Jellyfin series item id. Prefer this when available because it is the most stable key."
-                    }
-                },
-                "required": ["libraryName", "seriesName"]
-            },
-        },
-        {
-            "name": "get due ongoing series releases",
-            "description": "Release Tracker: return locally tracked ongoing-series release markers whose nextReleaseDate is due now or overdue. Use this for cron-driven checks before re-checking Jellyfin for newly arrived episodes.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "libraryName": {
-                        "type": "string",
-                        "description": "Optional Jellyfin library name filter, for example 'Shows'. Omit it to check due markers across all tracked libraries."
+                    "dueOnly": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Only markers due by 'before'."
                     },
                     "before": {
                         "type": "string",
                         "default": "now",
-                        "description": "Optional due cutoff. Use 'now' or an ISO datetime. Returns markers whose nextReleaseDate is earlier than or equal to this time."
+                        "description": "'now' or an ISO datetime."
                     },
                     "limit": {
                         "type": "integer",
-                        "default": 50,
-                        "description": "Maximum number of due markers to return, sorted by nextReleaseDate ascending."
+                        "description": "Maximum markers (default 100 list, 50 due), soonest first."
                     }
                 }
             },
         },
         {
-            "name": "get ongoing series next releases",
-            "description": "Release Tracker: list all locally stored upcoming release markers for ongoing series. This is useful for planning, debugging, and confirming what is currently tracked before checking which ones are due. For a single-series stored-date question, prefer 'get ongoing series next release' first.",
+            "name": "release_tracker_update",
+            "title": "Release Tracker store/delete",
+            "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
+            "description": "Release Tracker (local store): action=store (default) saves or updates the next expected release of one ongoing series, e.g. after looking it up externally; action=delete removes a wrong or unneeded marker.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "libraryName": {
+                    "action": {
                         "type": "string",
-                        "description": "Optional Jellyfin library name filter, for example 'Shows'."
+                        "enum": ["store", "delete"],
+                        "default": "store",
+                        "description": "store creates/updates, delete removes."
                     },
-                    "limit": {
-                        "type": "integer",
-                        "default": 100,
-                        "description": "Maximum number of tracked markers to return, sorted by nextReleaseDate ascending."
-                    }
-                }
-            },
-        },
-        {
-            "name": "delete ongoing series next release",
-            "description": "Release Tracker: delete one locally stored ongoing-series release marker when it is no longer needed. Prefer seriesId when available so the correct marker is removed even if the series name changes.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
                     "libraryName": {
                         "type": "string",
-                        "description": "Jellyfin library name for the series, for example 'Shows'."
+                        "description": "Library name, e.g. 'Shows'."
                     },
                     "seriesName": {
                         "type": "string",
-                        "description": "Series name for the marker to remove."
+                        "description": "Series name as in Jellyfin."
                     },
                     "seriesId": {
                         "type": "string",
-                        "description": "Optional Jellyfin series item id. Prefer this when available because it is the most stable key."
+                        "description": "Jellyfin series id; preferred, names can change."
+                    },
+                    "nextReleaseDate": {
+                        "type": "string",
+                        "description": "Required for store: ISO datetime (2026-06-28T18:00:00+09:00) or date (2026-06-28, due at its start)."
+                    },
+                    "nextSeason": {
+                        "type": "integer",
+                        "description": "Season of the next episode."
+                    },
+                    "nextEpisode": {
+                        "type": "integer",
+                        "description": "Number of the next episode."
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "description": "IANA timezone for dates without an offset."
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Where the estimate came from, e.g. 'llm', 'manual', a site."
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Free-text note."
                     }
                 },
                 "required": ["libraryName", "seriesName"]
@@ -895,8 +897,88 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
     ]
 
+# Advertised snake_case names (MCP spec: ^[a-zA-Z0-9_-]{1,64}$) -> internal
+# handler key. Internal keys are the legacy spaced names, which stay callable
+# as aliases so older clients and saved prompts keep working.
+MCP_TOOL_ALIASES: dict[str, str] = {
+    "downloads_scan_start": "move new downloads scan",
+    "downloads_recent_files": "get recently added download files",
+    "downloads_scan_progress": "get move new downloads scan progress",
+    "downloads_scan_report": "get move new downloads scan report",
+    "downloads_scan_update": "update move new downloads scan",
+    "downloads_scan_confirm": "confirm move new downloads scan",
+    "downloads_confirm_progress": "get move new downloads confirm progress",
+    "downloads_scan_delete_items": "delete move new downloads scan items",
+    "jellyfin_recently_added": "get recently added in library",
+    "jellyfin_library_scan": "trigger jellyfin library scan",
+    "jellyfin_libraries": "get available jellyfin libraries list",
+    "jellyfin_library_items": "get jellyfin library items",
+    "jellyfin_item_details": "get jellyfin series details",
+    "jellyfin_ongoing_latest_episodes": "get ongoing jellyfin series latest episodes",
+}
+
+MCP_SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
+
+
+def _negotiate_protocol_version(request: dict) -> str:
+    params = request.get("params") if isinstance(request.get("params"), dict) else {}
+    requested = params.get("protocolVersion")
+    return requested if requested in MCP_SUPPORTED_PROTOCOL_VERSIONS else MCP_SUPPORTED_PROTOCOL_VERSIONS[-1]
+
+
+def _resolve_tool_name(name: object, arguments: dict) -> object:
+    """Map an advertised (or legacy) tool name to its internal handler key."""
+    if name == "release_tracker_lookup":
+        if arguments.get("seriesName") or arguments.get("seriesId"):
+            return "get ongoing series next release"
+        if arguments.get("dueOnly"):
+            return "get due ongoing series releases"
+        return "get ongoing series next releases"
+    if name == "release_tracker_update":
+        action = str(arguments.get("action") or "store").lower()
+        if action == "delete":
+            return "delete ongoing series next release"
+        if action != "store":
+            return "release_tracker_update:invalid"
+        return "store ongoing series next release"
+    return MCP_TOOL_ALIASES.get(name, name) if isinstance(name, str) else name
+
+
+def _tool_error_result(request_id: object, message: str) -> JSONResponse:
+    """Tool execution failure as a normal result with isError=true.
+
+    MCP clients hand result content to the model, so it can read the message
+    and retry with fixed arguments; JSON-RPC errors are often swallowed.
+    """
+    return JSONResponse(
+        {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {
+                "content": [{"type": "text", "text": json.dumps({"error": message})}],
+                "isError": True,
+            },
+        }
+    )
+
+
 @app.post("/mcp", dependencies=[Depends(require_mcp_auth)])
-async def mcp(request: dict) -> JSONResponse:
+async def mcp(request: dict) -> Response:
+    response = await _mcp_dispatch(request)
+    if request.get("method") != "tools/call" or not isinstance(response, JSONResponse):
+        return response
+    try:
+        body = json.loads(response.body)
+    except (TypeError, ValueError):
+        return response
+    error = body.get("error") if isinstance(body, dict) else None
+    # Unknown tool stays a protocol error; every other tool failure becomes isError.
+    if isinstance(error, dict) and error.get("code") != -32601:
+        return _tool_error_result(body.get("id"), str(error.get("message") or "Tool failed"))
+    return response
+
+
+async def _mcp_dispatch(request: dict) -> Response:
     method = request.get("method")
     request_id = request.get("id")
 
@@ -909,7 +991,7 @@ async def mcp(request: dict) -> JSONResponse:
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": _negotiate_protocol_version(request),
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "JellySort", "version": VERSION},
                     "instructions": MCP_SERVER_INSTRUCTIONS,
@@ -934,8 +1016,8 @@ async def mcp(request: dict) -> JSONResponse:
 
     if method == "tools/call":
         params = request.get("params") or {}
-        name = params.get("name")
         arguments = params.get("arguments") or {}
+        name = _resolve_tool_name(params.get("name"), arguments)
 
         manager: ScanManager = app.state.scan_manager
         release_tracker: ReleaseTracker = app.state.release_tracker
@@ -968,15 +1050,15 @@ async def mcp(request: dict) -> JSONResponse:
                 ]
                 instructions = [
                     "Do not stop to ask the user anything. Continue the workflow yourself.",
-                    "Call 'get move new downloads scan progress' with this scanId now. It waits up to 30s server-side; if status is still 'running', call it again immediately. Repeat until 'completed'.",
-                    "Then call 'get move new downloads scan report' with search=<the show/release the user asked about>.",
-                    "Then confirm the matching items (the user's request to move them is the approval) and poll 'get move new downloads confirm progress' until done.",
+                    "Call 'downloads_scan_progress' with this scanId now. It waits up to 30s server-side; if status is still 'running', call it again immediately. Repeat until 'completed'.",
+                    "Then call 'downloads_scan_report' with search=<the show/release the user asked about>.",
+                    "Then confirm the matching items (the user's request to move them is the approval) and poll 'downloads_confirm_progress' until done.",
                     "Do not call the confirm tool before the scan has completed.",
                 ]
                 if _is_cross_drive_transfer():
                     instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer; keep polling progress, and mention it in your final summary.")
                 response["llm_instructions"] = instructions
-                response["next"] = "Do not ask the user. Call 'get move new downloads scan progress' now and keep calling it until the scan completes."
+                response["next"] = "Do not ask the user. Call 'downloads_scan_progress' now and keep calling it until the scan completes."
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -1012,7 +1094,7 @@ async def mcp(request: dict) -> JSONResponse:
             cutoff = _datetime.now().timestamp() - hours * 3600
             items = _build_recent_file_items(files, config.series_title_aliases)
             response = {
-                "tool": "get recently added download files",
+                "tool": "downloads_recent_files",
                 "query": {"hours": hours, "cutoffUtc": _datetime.fromtimestamp(cutoff).isoformat()},
                 "count": len(items),
                 "rootsChecked": list(config.paths.download_roots),
@@ -1024,10 +1106,10 @@ async def mcp(request: dict) -> JSONResponse:
                 ]
             response["message"] = (
                 f"Found {len(items)} video file(s) added or modified in the last {hours:g} hour(s). "
-                "Each item follows the same shape as 'get jellyfin library items'. "
+                "Each item follows the same shape as 'jellyfin_library_items'. "
                 "This list is informational only — nothing was moved or classified."
             )
-            response["next"] = "Ask the user if they want to run 'move new downloads scan' to organize these files."
+            response["next"] = "Ask the user if they want to run 'downloads_scan_start' to organize these files."
             return JSONResponse(
                 {
                     "jsonrpc": "2.0",
@@ -1051,7 +1133,7 @@ async def mcp(request: dict) -> JSONResponse:
                 if current:
                     scan_id = current.scan_id
                 else:
-                    return _mcp_error_response(request_id, -32000, "No active scan — scanId is required when no current scan exists. Run 'move new downloads scan' first.")
+                    return _mcp_error_response(request_id, -32000, "No active scan — scanId is required when no current scan exists. Run 'downloads_scan_start' first.")
 
             item_ids = arguments.get("itemIds")
             source_paths = arguments.get("sourcePaths")
@@ -1084,13 +1166,13 @@ async def mcp(request: dict) -> JSONResponse:
                     instructions = [
                         "The confirm was queued behind the running move and will start automatically when it finishes.",
                         "The user does not need to do anything else — do not call the confirm tool again.",
-                        "Call 'get move new downloads confirm progress' with this scanId now and keep calling it until confirm_status is not 'running'. Do not ask the user.",
+                        "Call 'downloads_confirm_progress' with this scanId now and keep calling it until confirm_status is not 'running'. Do not ask the user.",
                         "Then tell the user what was moved.",
                     ]
                     if _is_cross_drive_transfer():
                         instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer; keep polling progress, and mention it in your final summary.")
                     response["llm_instructions"] = instructions
-                    response["next"] = "Confirm was queued and will start automatically. Keep calling 'get move new downloads confirm progress' until it is done; do not ask the user."
+                    response["next"] = "Confirm was queued and will start automatically. Keep calling 'downloads_confirm_progress' until it is done; do not ask the user."
                     return JSONResponse(
                         {
                             "jsonrpc": "2.0",
@@ -1121,13 +1203,13 @@ async def mcp(request: dict) -> JSONResponse:
                 ]
                 instructions = [
                     "Do not stop to ask the user anything.",
-                    "Call 'get move new downloads confirm progress' with this scanId now. It waits up to 30s server-side; if confirm_status is still 'running', call it again immediately. Repeat until done.",
+                    "Call 'downloads_confirm_progress' with this scanId now. It waits up to 30s server-side; if confirm_status is still 'running', call it again immediately. Repeat until done.",
                     "Jellyfin library scans are triggered automatically after the move. When done, tell the user what moved where and any failures.",
                 ]
                 if _is_cross_drive_transfer():
                     instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer; keep polling progress, and mention it in your final summary.")
                 response["llm_instructions"] = instructions
-                response["next"] = "Do not ask the user. Call 'get move new downloads confirm progress' now and keep calling it until the move finishes."
+                response["next"] = "Do not ask the user. Call 'downloads_confirm_progress' now and keep calling it until the move finishes."
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -1156,7 +1238,7 @@ async def mcp(request: dict) -> JSONResponse:
                 )
                 if not scan:
                     logger.info("TOOL <<< %s (no active scan)", name)
-                    payload = {"hint": "No scan found. If the user asked to scan or move downloads, call 'move new downloads scan' now; otherwise ask what they want."}
+                    payload = {"hint": "No scan found. If the user asked to scan or move downloads, call 'downloads_scan_start' now; otherwise ask what they want."}
                 else:
                     payload = _format_scan_progress(scan)
                 return JSONResponse(
@@ -1187,7 +1269,7 @@ async def mcp(request: dict) -> JSONResponse:
                 )
                 if not scan:
                     logger.info("TOOL <<< %s (no active scan)", name)
-                    payload = {"hint": "No scan found. If the user asked to scan or move downloads, call 'move new downloads scan' now; otherwise ask what they want."}
+                    payload = {"hint": "No scan found. If the user asked to scan or move downloads, call 'downloads_scan_start' now; otherwise ask what they want."}
                 else:
                     logger.info("TOOL <<< %s", name)
                     payload = _format_confirm_progress(scan)
@@ -1232,7 +1314,7 @@ async def mcp(request: dict) -> JSONResponse:
                                 "content": [
                                     {
                                         "type": "text",
-                                        "text": json.dumps({"hint": "No scan found. If the user asked to scan or move downloads, call 'move new downloads scan' now; otherwise ask what they want."}),
+                                        "text": json.dumps({"hint": "No scan found. If the user asked to scan or move downloads, call 'downloads_scan_start' now; otherwise ask what they want."}),
                                     }
                                 ],
                                 "isError": False,
@@ -1345,7 +1427,7 @@ async def mcp(request: dict) -> JSONResponse:
                                     ),
                                 }
                             ],
-                            "isError": False,
+                            "isError": True,
                         },
                     }
                 )
@@ -1403,7 +1485,7 @@ async def mcp(request: dict) -> JSONResponse:
                                     ),
                                 }
                             ],
-                            "isError": False,
+                            "isError": True,
                         },
                     }
                 )
@@ -1450,7 +1532,7 @@ async def mcp(request: dict) -> JSONResponse:
                                     ),
                                 }
                             ],
-                            "isError": False,
+                            "isError": True,
                         },
                     }
                 )
@@ -1484,9 +1566,9 @@ async def mcp(request: dict) -> JSONResponse:
 
         if name == "get jellyfin series details":
             library_name = arguments.get("libraryName")
-            series_name = arguments.get("seriesName")
-            if not library_name or not series_name:
-                return _mcp_error_response(request_id, -32602, "libraryName and seriesName are required")
+            item_name = arguments.get("name") or arguments.get("seriesName")
+            if not library_name or not item_name:
+                return _mcp_error_response(request_id, -32602, "libraryName and name are required")
             season = arguments.get("season")
             if season is not None:
                 try:
@@ -1502,14 +1584,14 @@ async def mcp(request: dict) -> JSONResponse:
                     "Jellyfin integration is not configured. Set ENABLE_JELLYFIN_INTEGRATION=true and JELLYFIN_API_KEY in .env",
                 )
             try:
-                result = await client.get_series_details(
+                result = await client.get_item_details(
                     library_name=library_name,
-                    series_name=series_name,
+                    name=item_name,
                     season=season,
                 )
-                if season is None:
+                if season is None and result.get("type") == "series":
                     result["next"] = "Pass 'season' to get a per-episode list (title + audio/subtitle languages) for one season."
-                logger.info("TOOL <<< %s (library=%s, series=%s)", name, library_name, series_name)
+                logger.info("TOOL <<< %s (library=%s, item=%s)", name, library_name, item_name)
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -1545,7 +1627,7 @@ async def mcp(request: dict) -> JSONResponse:
                                     ),
                                 }
                             ],
-                            "isError": False,
+                            "isError": True,
                         },
                     }
                 )
@@ -1561,7 +1643,7 @@ async def mcp(request: dict) -> JSONResponse:
                     limit=arguments.get("limit", 10),
                     hours=hours,
                 )
-                result["next"] = "These are the individual episodes and movies most recently added in Jellyfin (DateCreated descending). For recently added download files on disk, use 'get recently added download files'."
+                result["next"] = "These are the individual episodes and movies most recently added in Jellyfin (DateCreated descending). For recently added download files on disk, use 'downloads_recent_files'."
                 logger.info("TOOL <<< %s (library=%s)", name, library_name)
                 return JSONResponse(
                     {
@@ -1603,7 +1685,7 @@ async def mcp(request: dict) -> JSONResponse:
                                     ),
                                 }
                             ],
-                            "isError": False,
+                            "isError": True,
                         },
                     }
                 )
@@ -1645,9 +1727,9 @@ async def mcp(request: dict) -> JSONResponse:
                     + [
                         "Release Tracker stores one marker per ongoing series for the next expected episode release.",
                         "Prefer seriesId when available because it is more stable than the series name.",
-                        "When the release becomes due, call 'get due ongoing series releases', then check Jellyfin latest episodes, then update this marker again with the following expected release.",
+                        "When the release becomes due, call 'release_tracker_lookup' with dueOnly=true, then check Jellyfin latest episodes, then update this marker again with the following expected release.",
                     ],
-                    "next": "When this Release Tracker marker becomes due, call 'get due ongoing series releases'. After Jellyfin has the new episode, calculate the following release and call this store tool again.",
+                    "next": "When this Release Tracker marker becomes due, call 'release_tracker_lookup' with dueOnly=true. After Jellyfin has the new episode, calculate the following release and call this store tool again.",
                 }
                 logger.info("TOOL <<< %s (library=%s series=%s)", name, record["libraryName"], record["seriesName"])
                 return JSONResponse(
@@ -1689,7 +1771,7 @@ async def mcp(request: dict) -> JSONResponse:
                     "next": (
                         "If the user wants live verification, check Jellyfin latest episodes next. Otherwise answer from this stored Release Tracker value."
                         if record
-                        else "If the user wants to save a tracker value, call 'store ongoing series next release'. If the user wants live verification instead, check Jellyfin latest episodes or another requested source."
+                        else "If the user wants to save a tracker value, call 'release_tracker_update'. If the user wants live verification instead, check Jellyfin latest episodes or another requested source."
                     ),
                 }
                 logger.info("TOOL <<< %s", name)
@@ -1721,11 +1803,11 @@ async def mcp(request: dict) -> JSONResponse:
                 payload["authorityScope"] = "stored_tracker_value"
                 payload["llm_instructions"] = RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS + [
                     "Treat each returned item as a Release Tracker marker that should now be checked against Jellyfin.",
-                    "For each due item, call 'get ongoing jellyfin series latest episodes' using the series name as search text and compare the returned latest episode to nextSeason and nextEpisode when those fields exist.",
-                    "If the expected episode has arrived, calculate the following release and call 'store ongoing series next release' again.",
+                    "For each due item, call 'jellyfin_ongoing_latest_episodes' using the series name as search text and compare the returned latest episode to nextSeason and nextEpisode when those fields exist.",
+                    "If the expected episode has arrived, calculate the following release and call 'release_tracker_update' again.",
                     "If the expected episode has not arrived yet, leave the marker unchanged so it stays due for the next cron run.",
                 ]
-                payload["next"] = "For each due item, check Jellyfin latest episodes. If the tracked episode has arrived, calculate the following release date and call 'store ongoing series next release' again. If it has not arrived yet, leave the marker in place for the next cron run."
+                payload["next"] = "For each due item, check Jellyfin latest episodes. If the tracked episode has arrived, calculate the following release date and call 'release_tracker_update' again. If it has not arrived yet, leave the marker in place for the next cron run."
                 logger.info("TOOL <<< %s", name)
                 return JSONResponse(
                     {
@@ -1754,10 +1836,10 @@ async def mcp(request: dict) -> JSONResponse:
                 payload["authorityScope"] = "stored_tracker_value"
                 payload["llm_instructions"] = RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS + [
                     "Use this tool to inspect all stored Release Tracker markers, not just overdue ones.",
-                    "Use 'get due ongoing series releases' when you want only the markers that should be checked now.",
-                    "For a single-series stored lookup, prefer 'get ongoing series next release' because it avoids ambiguous list scanning.",
+                    "Use 'release_tracker_lookup' with dueOnly=true when you want only the markers that should be checked now.",
+                    "For a single-series stored lookup, prefer 'release_tracker_lookup' with seriesName because it avoids ambiguous list scanning.",
                 ]
-                payload["next"] = "Use this list to inspect tracked Release Tracker markers. Use 'get due ongoing series releases' to focus only on markers that should be checked now."
+                payload["next"] = "Use this list to inspect tracked Release Tracker markers. Use 'release_tracker_lookup' with dueOnly=true to focus only on markers that should be checked now."
                 logger.info("TOOL <<< %s", name)
                 return JSONResponse(
                     {
@@ -1808,6 +1890,9 @@ async def mcp(request: dict) -> JSONResponse:
             except Exception as exc:
                 logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
                 return _mcp_error_response(request_id, -32000, str(exc))
+
+        if name == "release_tracker_update:invalid":
+            return _mcp_error_response(request_id, -32602, "action must be 'store' or 'delete'")
 
         logger.warning("TOOL xxx %s (not found)", name)
         return _mcp_error_response(request_id, -32601, "Tool not found")

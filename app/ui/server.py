@@ -300,9 +300,9 @@ def _scan_started_response(scan: ScanPlan) -> dict:
     instructions = [
         "Tell the user the scan has started in the background.",
         "Ask the user if they want to check progress. Do not call any tool automatically.",
-        "If the user says yes, call 'get move new downloads scan progress' with this scanId once.",
+        "If the user says yes, call 'downloads_scan_progress' with this scanId once.",
         "If still running, tell the user and ask if they want to check again later.",
-        "Only after status='completed', call 'get move new downloads scan report' to review planned moves/replaces/skips.",
+        "Only after status='completed', call 'downloads_scan_report' to review planned moves/replaces/skips.",
         "Do not call the confirm tool until the report has been reviewed and the user approves.",
     ]
     if is_cross_drive_transfer():
@@ -338,9 +338,9 @@ def _confirm_started_response(scan: ScanPlan) -> dict:
             "Tell the user the confirm was queued behind the running move and will start automatically when it finishes.",
             "The user does not need to do anything else — do not call the confirm tool again.",
             "Ask the user if they want to check progress. Do not call any tool automatically.",
-            "If the user says yes, call 'get move new downloads confirm progress' with this scanId once.",
+            "If the user says yes, call 'downloads_confirm_progress' with this scanId once.",
             "If still running, tell the user and ask if they want to check again later.",
-            "After the queued confirm is done, call 'get move new downloads scan report' to see the results.",
+            "After the queued confirm is done, call 'downloads_scan_report' to see the results.",
         ]
         if is_cross_drive_transfer():
             instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer. Warn the user about this.")
@@ -364,9 +364,9 @@ def _confirm_started_response(scan: ScanPlan) -> dict:
     instructions = [
         "Tell the user the confirm has started in the background.",
         "Ask the user if they want to check progress. Do not call any tool automatically.",
-        "If the user says yes, call 'get move new downloads confirm progress' with this scanId once.",
+        "If the user says yes, call 'downloads_confirm_progress' with this scanId once.",
         "If still running, tell the user and ask if they want to check again later.",
-        "After confirm is done, call 'get move new downloads scan report' to see the results.",
+        "After confirm is done, call 'downloads_scan_report' to see the results.",
     ]
     if is_cross_drive_transfer():
         instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer. Warn the user about this.")

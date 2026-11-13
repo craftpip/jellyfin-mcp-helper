@@ -94,7 +94,7 @@ roots with descriptions, and per-item move tables) for review.
 Before confirming, callers can:
 
 - Re-fetch the report.
-- Update individual item targets (`update move new downloads scan` /
+- Update individual item targets (`downloads_scan_update` /
   `PATCH`-style REST), validated to stay inside the configured roots and use
   known video extensions.
 

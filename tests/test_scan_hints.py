@@ -157,7 +157,7 @@ def test_additive_unhinted_folder_classifies_as_before(tmp_path) -> None:
 
 def test_mcp_scan_tool_accepts_hints_and_hint_scope() -> None:
     tools = _mcp_tools()
-    tool = next(t for t in tools if t["name"] == "move new downloads scan")
+    tool = next(t for t in tools if t["name"] == "downloads_scan_start")
     props = tool["inputSchema"]["properties"]
     assert "hints" in props
     assert props["hintScope"]["enum"] == ["additive", "only"]

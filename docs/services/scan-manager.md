@@ -1,7 +1,7 @@
 # Scan Manager — `app/services/scan_manager.py`
 
 Owns the modern **scan → plan → confirm** workflow and the actual file moves. It
-is the service behind the `move new downloads scan` / `confirm move new
+is the service behind the `downloads_scan_start` / `confirm move new
 downloads scan` MCP tools and the `/scans` REST endpoints.
 
 ## `ScanManager`
@@ -161,7 +161,7 @@ and mentions the queue in `next`. See [web-ui/store](../web-ui/store.md).
 ### `delete_items(scan_id, item_ids)`
 
 Permanently deletes the source files for the given items and removes them from
-the plan (backing `delete move new downloads scan items`).
+the plan (backing `downloads_scan_delete_items`).
 
 ### `delete_scan()`
 

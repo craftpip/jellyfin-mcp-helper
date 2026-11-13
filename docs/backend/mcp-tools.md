@@ -1,21 +1,38 @@
 # MCP Tools Reference
 
-18 tools are registered in `app/main.py` (`_mcp_tools()`). Tools fall into four
+16 tools are registered in `app/main.py` (`_mcp_tools()`). Tools fall into four
 groups: **Organizer** (scan workflow), **Filesystem/Library browsing**,
 **Jellyfin**, and **Release Tracker**.
+
+## Conventions
+
+- **Names** follow the MCP spec (`^[a-zA-Z0-9_-]{1,64}$`, snake_case). The old
+  spaced names (`move new downloads scan`, `get jellyfin library items`, …) are
+  **not advertised** but stay callable as aliases (`MCP_TOOL_ALIASES` +
+  `_resolve_tool_name` in `app/main.py`), so older clients keep working.
+- **Annotations:** every tool carries `title` and `annotations`
+  (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint=false`).
+  Read-only: progress/report/browse/lookup tools. Destructive:
+  `downloads_scan_confirm` (moves/replaces files), `downloads_scan_delete_items`,
+  `release_tracker_update` (its `action=delete`).
+- **Errors:** a failing tool returns a normal `result` with `isError: true` and
+  `content[0].text = {"error": "..."}` so the model can read it and retry. Only
+  an unknown tool name is a JSON-RPC protocol error (`-32601`).
+- **Token budget:** list tools stay compact; detail is a separate call
+  (`jellyfin_library_items` → `jellyfin_item_details`).
 
 ## Organizer workflow
 
 Core flow:
 
-1. `move new downloads scan`
-2. `get move new downloads scan progress` (poll, ≥10s apart)
-3. `get move new downloads scan report`
-4. Optional: `update move new downloads scan` (redirect items)
-5. `confirm move new downloads scan`
-6. Optional: `get move new downloads confirm progress`
+1. `downloads_scan_start`
+2. `downloads_scan_progress` (poll, ≥10s apart)
+3. `downloads_scan_report`
+4. Optional: `downloads_scan_update` (redirect items)
+5. `downloads_scan_confirm`
+6. Optional: `downloads_confirm_progress`
 
-### `move new downloads scan`
+### `downloads_scan_start`
 
 - **Purpose:** start a background scan of configured download folders.
 - **Read-only:** classifies candidates and prepares a move plan; does **not**
@@ -25,25 +42,25 @@ Core flow:
 - **Returns:** compact progress payload with `scan_id`, `status`,
   `what_happens_now`, `available_now`, `llm_instructions`, `next`.
 
-### `get move new downloads scan progress`
+### `downloads_scan_progress`
 
 - **Arguments:** `scanId` (optional; defaults to the current active scan).
 - **Returns:** status, current file, processed/total counts, elapsed time, ETA.
 
-### `get move new downloads confirm progress`
+### `downloads_confirm_progress`
 
 - **Arguments:** `scanId` (optional).
 - **Returns:** confirm status (phase), current file, processed/total, elapsed,
   ETA.
 
-### `get move new downloads scan report`
+### `downloads_scan_report`
 
 - **Arguments:** `scanId` (optional).
 - **Returns:** final report — summary counts, available movie/series roots with
   descriptions, per-item move/replace/skip tables, LLM path-validation guidance.
   If the scan is still running, returns compact progress guidance instead.
 
-### `update move new downloads scan`
+### `downloads_scan_update`
 
 - **Purpose:** redirect planned items to a different root **before** confirming.
 - **Read-only** (does not move files).
@@ -52,14 +69,14 @@ Core flow:
   or series root.
 - **Note:** fetch the report again after updating to verify, then confirm.
 
-### `delete move new downloads scan items`
+### `downloads_scan_delete_items`
 
 - **Purpose:** permanently delete the source download file for one or more
   planned items and remove them from the plan.
 - **Destructive** — cannot be undone.
 - **Arguments:** `scanId`, `itemIds` (both required).
 
-### `confirm move new downloads scan`
+### `downloads_scan_confirm`
 
 - **Purpose:** apply a completed scan plan (moves files, may stop active
   downloads first).
@@ -71,17 +88,17 @@ Core flow:
 
 ## Filesystem / library browsing
 
-### `get recently added download files`
+### `downloads_recent_files`
 
 - **Purpose:** list video files in download folders added/modified in the last
   N hours. Reads the filesystem, not Jellyfin.
 - **Arguments:** `hours` (number, default `24`, clamped to 0.5 – 720).
-- **Returns:** items shaped like `get jellyfin library items` (name, type,
+- **Returns:** items shaped like `jellyfin_library_items` (name, type,
   path; movies add year + empty audio/subtitle arrays, series add
   season/episode counts), plus `count`, `rootsChecked` and any filesystem
   `errors`. Read-only.
 
-### `get recently added in library`
+### `jellyfin_recently_added`
 
 - **Purpose:** list the individual files most recently added to a Jellyfin
   library, sorted by `DateCreated` descending. Reads Jellyfin's index, not the
@@ -93,7 +110,7 @@ Core flow:
 
 ## Jellyfin
 
-### `trigger jellyfin library scan`
+### `jellyfin_library_scan`
 
 - **Purpose:** trigger a Jellyfin metadata refresh / library scan for a named
   library.
@@ -105,23 +122,42 @@ Core flow:
 - **Implementation note:** resolves the library via `GET /Library/VirtualFolders`
   then calls `/Items/{ItemId}/Refresh` with the refresh-mode query params.
 
-### `get available jellyfin libraries list`
+### `jellyfin_libraries`
 
 - **Purpose:** list all Jellyfin libraries available to the configured user.
 - **Arguments:** none.
 - **Note:** its description is augmented with the cached library list hint when
   available.
 
-### `get jellyfin library items`
+### `jellyfin_library_items`
 
-- **Purpose:** compact browse/search of movies and series, newest first.
+- **Purpose:** compact browse/search of movies and series, most recently added
+  first (`DateCreated` descending).
 - **Arguments:** `libraryName` (required), `search` (optional fuzzy search with
   client-side token overlap + similarity scoring), `ongoingOnly` (default
   `false`), `limit` (default `10`).
-- **Returns:** absolute directory path per item; movies include
-  `audio_languages`/`subtitle_languages`; series include season/episode counts.
+- **Returns (kept small on purpose):** movies `name/type/year/path`; series
+  `name/type/ongoing/path/season_count/episode_count`. No languages, no
+  per-season data. Series totals come from **one** library-wide Season query
+  (`_library_season_totals`), not one request per series.
 
-### `get ongoing jellyfin series latest episodes`
+### `jellyfin_item_details`
+
+- **Purpose:** detail for ONE movie or series (best fuzzy match).
+- **Arguments:** `libraryName`, `name` (required; legacy `seriesName` accepted),
+  `season` (optional, series only).
+- **Series returns** per season: `episode_numbers` (ranges like `1-12, 14`),
+  `missing_episodes` (gaps up to the highest on-disk episode),
+  `aired_not_downloaded` / `upcoming` (only when Jellyfin has virtual
+  missing-episode metadata), `audio_languages`, `subtitle_languages`,
+  `language_groups` (only when episodes differ). With `season`: only that
+  season plus `episode_list` (number, title, languages). Season 0 = specials.
+- **Movie returns:** `year`, `runtime_minutes`, `versions[]` with `path`,
+  `size_gb`, `container`, `resolution`, `video_codec`, `audio_tracks`,
+  `audio_languages`, `subtitle_languages`.
+- One `/Shows/{id}/Episodes` call (series) or one `/Items?Ids=` call (movie).
+
+### `jellyfin_ongoing_latest_episodes`
 
 - **Purpose:** list only ongoing series with their latest available episode.
 - **Arguments:** `libraryName` (required), `search` (optional; `all`/omitted =
@@ -133,19 +169,21 @@ Local next-release markers stored in `config/ongoing_releases.json`. The
 intended workflow is **local-first**: read the tracker before Jellyfin or the
 web when the user asks about a tracked series.
 
-| Tool | Purpose | Required args |
+Two tools (the five old ones are aliases):
+
+| Tool | Mode | Args |
 | --- | --- | --- |
-| `store ongoing series next release` | Store/update one marker. | `libraryName`, `seriesName`, `nextReleaseDate` |
-| `get ongoing series next release` | Single-marker lookup (local-memory lookup tool). | `libraryName`, `seriesName` |
-| `get due ongoing series releases` | Markers due now/overdue. | optional `libraryName`, `before` (default `now`), `limit` (default `50`) |
-| `get ongoing series next releases` | List all tracked upcoming markers. | optional `libraryName`, `limit` (default `100`) |
-| `delete ongoing series next release` | Delete one marker. | `libraryName`, `seriesName` |
+| `release_tracker_lookup` | `seriesName` given → the one stored marker (local-memory lookup, use first). | `libraryName`, `seriesName`, optional `seriesId` |
+| `release_tracker_lookup` | `dueOnly=true` → markers due now/overdue. | optional `libraryName`, `before` (default `now`), `limit` (default `50`) |
+| `release_tracker_lookup` | neither → list all stored markers. | optional `libraryName`, `limit` (default `100`) |
+| `release_tracker_update` | `action=store` (default) → create/update one marker. | `libraryName`, `seriesName`, `nextReleaseDate` |
+| `release_tracker_update` | `action=delete` → remove one marker. | `libraryName`, `seriesName` |
 
 Details:
 
 - `nextReleaseDate` accepts an ISO datetime (`2026-06-28T18:00:00+09:00`) or a
   plain date (`2026-06-28`, treated as due at the start of that date).
 - `seriesId` is the preferred key (names can change) and is returned by
-  `get ongoing jellyfin series latest episodes`.
+  `jellyfin_ongoing_latest_episodes`.
 - Optional fields on store: `nextSeason`, `nextEpisode`, `timezone` (IANA),
   `source` (e.g. `llm`, `manual`, website name), `notes`.

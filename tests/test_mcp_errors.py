@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -27,9 +28,9 @@ def test_mcp_scan_report_invalid_scan_id_returns_http_200_with_jsonrpc_error() -
         )
 
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["error"]["code"] == -32000
-    assert payload["error"]["message"] == "Scan not found. Run 'scan library' first."
+    result = response.json()["result"]
+    assert result["isError"] is True
+    assert json.loads(result["content"][0]["text"])["error"] == "Scan not found. Run 'scan library' first."
 
 
 def test_mcp_confirm_missing_scan_id_returns_http_200_with_jsonrpc_error() -> None:
@@ -59,9 +60,9 @@ def test_mcp_confirm_missing_scan_id_returns_http_200_with_jsonrpc_error() -> No
         )
 
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["error"]["code"] == -32000
-    assert "No active scan" in payload["error"]["message"]
+    result = response.json()["result"]
+    assert result["isError"] is True
+    assert "No active scan" in json.loads(result["content"][0]["text"])["error"]
 
 
 def test_mcp_tools_list_includes_scan_progress_tool() -> None:
@@ -74,13 +75,25 @@ def test_mcp_tools_list_includes_scan_progress_tool() -> None:
     assert response.status_code == 200
     payload = response.json()["result"]
     tool_names = [tool["name"] for tool in payload["tools"]]
-    assert "get move new downloads scan progress" in tool_names
-    assert "get jellyfin library items" in tool_names
-    assert "get ongoing jellyfin series latest episodes" in tool_names
-    assert "store ongoing series next release" in tool_names
-    assert "get ongoing series next release" in tool_names
-    assert "get due ongoing series releases" in tool_names
-    assert "get ongoing series next releases" in tool_names
+    assert "downloads_scan_progress" in tool_names
+    assert "jellyfin_library_items" in tool_names
+    assert "jellyfin_ongoing_latest_episodes" in tool_names
+    assert "release_tracker_update" in tool_names
+    assert "release_tracker_lookup" in tool_names
+    assert "jellyfin_item_details" in tool_names
+    # MCP spec name format; legacy spaced names are call-only aliases, not advertised.
+    assert all(re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", n) for n in tool_names)
+    assert not any(" " in n for n in tool_names)
+    assert len(tool_names) == len(set(tool_names)) == 16
+    for tool in payload["tools"]:
+        ann = tool["annotations"]
+        assert set(ann) == {"readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"}
+        assert tool["title"]
+    by_name = {t["name"]: t["annotations"] for t in payload["tools"]}
+    assert by_name["downloads_scan_report"]["readOnlyHint"] is True
+    assert by_name["downloads_scan_confirm"]["destructiveHint"] is True
+    assert by_name["downloads_scan_delete_items"]["destructiveHint"] is True
+    assert by_name["release_tracker_update"]["readOnlyHint"] is False
     assert "Release Tracker answers questions about what is stored" in payload["llm_instructions"][0]
 
 
@@ -194,15 +207,15 @@ def test_jellyfin_list_library_items_fuzzy_search(monkeypatch) -> None:
     async def fake_api_get_user(self) -> str:
         return "user-1"
 
-    async def fake_get_series_seasons(slf, series_id: str, user_id: str) -> dict:
-        return {"total_seasons": 1, "total_episodes": 12, "seasons": [{"season": 1, "episodes": 12}]}
+    async def fake_season_totals(slf, library_id: str, user_id: str) -> dict:
+        return {"s1": (1, 12), "s2": (1, 12), "s3": (1, 12), "s4": (1, 12)}
 
     async def fake_resolve_library(slf, name: str) -> dict:
         return {"name": name, "id": "lib-1"}
 
     monkeypatch.setattr(JellyfinClient, "_api_get", fake_api_get)
     monkeypatch.setattr(JellyfinClient, "_get_user_id", fake_api_get_user)
-    monkeypatch.setattr(JellyfinClient, "_get_series_seasons", fake_get_series_seasons)
+    monkeypatch.setattr(JellyfinClient, "_library_season_totals", fake_season_totals)
     monkeypatch.setattr(JellyfinClient, "_resolve_library", fake_resolve_library)
 
     client = JellyfinClient("http://jellyfin.local:8096", "secret", "Movies", "Shows")
@@ -268,7 +281,7 @@ def test_jellyfin_notify_media_updated_posts_path_payload(monkeypatch) -> None:
     assert result == {"updated_paths": ["/media/shows/episode1.mkv"]}
     assert calls["url"] == "http://jellyfin.local:8096/Library/Media/Updated"
     assert calls["json"] == {"updates": [{"path": "/media/shows/episode1.mkv"}]}
-    assert calls["headers"] == {"X-Emby-Token": "secret"}
+    assert calls["headers"] == {"Authorization": 'MediaBrowser Token="secret"'}
 
 
 def test_mcp_get_jellyfin_library_items_requires_library_name() -> None:
@@ -287,9 +300,9 @@ def test_mcp_get_jellyfin_library_items_requires_library_name() -> None:
         )
 
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["error"]["code"] == -32602
-    assert payload["error"]["message"] == "libraryName is required"
+    result = response.json()["result"]
+    assert result["isError"] is True
+    assert json.loads(result["content"][0]["text"])["error"] == "libraryName is required"
 
 
 def test_mcp_trigger_jellyfin_library_scan_calls_jellyfin_scan(monkeypatch) -> None:
@@ -413,9 +426,9 @@ def test_mcp_get_ongoing_jellyfin_series_latest_episodes_requires_library_name()
         )
 
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["error"]["code"] == -32602
-    assert payload["error"]["message"] == "libraryName is required"
+    result = response.json()["result"]
+    assert result["isError"] is True
+    assert json.loads(result["content"][0]["text"])["error"] == "libraryName is required"
 
 
 def test_mcp_store_ongoing_series_next_release(monkeypatch, tmp_path) -> None:
@@ -692,7 +705,7 @@ def test_mcp_get_ongoing_series_next_release_returns_not_found(monkeypatch, tmp_
     assert payload["found"] is False
     assert payload["record"] is None
     assert payload["dataOrigin"] == "release_tracker"
-    assert "store ongoing series next release" in payload["next"]
+    assert "release_tracker_update" in payload["next"]
 
 
 def test_mcp_scan_start_response_instructs_llm_to_use_progress_tool(monkeypatch) -> None:
@@ -720,8 +733,8 @@ def test_mcp_scan_start_response_instructs_llm_to_use_progress_tool(monkeypatch)
     payload = json.loads(content)
     instructions = " ".join(payload["llm_instructions"])
     assert payload["status"] == "running"
-    assert "get move new downloads scan progress" in instructions
-    assert "get move new downloads scan report" in instructions
+    assert "downloads_scan_progress" in instructions
+    assert "downloads_scan_report" in instructions
     assert "Do not call the confirm tool before the scan has completed" in instructions
     assert payload["next"].startswith("Do not ask the user")
 

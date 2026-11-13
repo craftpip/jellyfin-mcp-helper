@@ -310,7 +310,7 @@ def report_llm_instructions(scan: ScanPlan, movie_roots_info: list[dict], series
     ])
 
     instructions.append(
-        "To redirect an item, call 'update move new downloads scan' "
+        "To redirect an item, call 'downloads_scan_update' "
         "with items=[{\"confirmId\": \"...\", \"targetPath\": \"<new full path>\"}]. "
         "Then fetch this report again, then confirm."
     )
@@ -322,13 +322,13 @@ def report_next_step(scan: ScanPlan) -> str:
     unconfirmed = len([item for item in scan.items if not item.confirmed and item.action in ("move", "replace")])
 
     if unconfirmed == 0 or scan.status == "confirmed":
-        parts = ["All items done. Run 'move new downloads scan' for a new scan."]
+        parts = ["All items done. Run 'downloads_scan_start' for a new scan."]
     else:
         parts = [
             f"{unconfirmed} items pending.",
             "If the user asked to move/organize these downloads, that request IS the approval: sanity-check the "
-            "target paths and roots yourself, fix any wrong target with 'update move new downloads scan', then "
-            "call 'confirm move new downloads scan' right away (use sourcePrefixes or confirmIds to limit it to "
+            "target paths and roots yourself, fix any wrong target with 'downloads_scan_update', then "
+            "call 'downloads_scan_confirm' right away (use sourcePrefixes or confirmIds to limit it to "
             "the release the user asked for). Do not ask the user to approve; only ask if a target is genuinely "
             "ambiguous and none of the candidateTargets fit.",
         ]
@@ -449,7 +449,7 @@ def format_confirm_progress(scan: ScanPlan) -> dict:
     )
     if scan.confirm_status == "running":
         next_step = (
-            "Confirm is running. Do not ask the user. Immediately call 'get move new downloads confirm progress' "
+            "Confirm is running. Do not ask the user. Immediately call 'downloads_confirm_progress' "
             "again (it waits up to waitSeconds for the move to finish) and repeat until confirm_status is not running."
         )
         if scan.confirm_queue_length:
@@ -457,10 +457,10 @@ def format_confirm_progress(scan: ScanPlan) -> dict:
                 f"Confirm is running. {scan.confirm_queue_length} more confirm(s) "
                 f"({scan.confirm_queue_items} item(s)) are queued and will start "
                 "automatically when the current move finishes. Keep calling "
-                "'get move new downloads confirm progress' until everything is done; do not ask the user."
+                "'downloads_confirm_progress' until everything is done; do not ask the user."
             )
     elif scan.confirm_status == "idle":
-        next_step = "No confirm has been started. Use 'confirm move new downloads scan' first."
+        next_step = "No confirm has been started. Use 'downloads_scan_confirm' first."
 
     return {
         "tool_purpose": "Reports progress for a running confirm operation. This tool is read-only and does not move files.",
@@ -533,18 +533,18 @@ def format_scan_progress(scan: ScanPlan) -> dict:
         eta_seconds = seconds_per_item * (total - processed)
 
     next_step = (
-        "Scan is complete. Now call 'get move new downloads scan report' (pass search=<release/show name> to "
+        "Scan is complete. Now call 'downloads_scan_report' (pass search=<release/show name> to "
         "fetch only the release the user cares about), then continue to confirm without asking the user."
     )
     if scan.status == "running":
         next_step = (
-            "Scan is still running. Do not ask the user. Immediately call 'get move new downloads scan progress' "
+            "Scan is still running. Do not ask the user. Immediately call 'downloads_scan_progress' "
             "again (it waits up to waitSeconds for the scan to finish) and repeat until status is completed."
         )
     elif scan.status == "cancelled":
         next_step = "Scan was cancelled because a newer scan was started. Check progress for the newer scan."
     elif scan.status == "failed":
-        next_step = "Scan failed. Review the error, then run 'move new downloads scan' again after fixing the issue."
+        next_step = "Scan failed. Review the error, then run 'downloads_scan_start' again after fixing the issue."
 
     return {
         "tool_purpose": "Reports progress for a background download-organizer scan. This progress tool is read-only and does not move files.",
@@ -670,10 +670,10 @@ def format_scan_report(scan: ScanPlan, format: str = "markdown", group_by: str =
             "progress": progress,
             "llm_instructions": [
                 "The scan is still running, so there is no report yet. Do not ask the user anything.",
-                "Call 'get move new downloads scan progress' with this scanId (it waits up to waitSeconds); repeat until status is completed.",
+                "Call 'downloads_scan_progress' with this scanId (it waits up to waitSeconds); repeat until status is completed.",
                 "Then call this report tool again and continue the workflow.",
             ],
-            "next": "Scan is still running. Do not ask the user; keep calling 'get move new downloads scan progress' until it completes.",
+            "next": "Scan is still running. Do not ask the user; keep calling 'downloads_scan_progress' until it completes.",
         }
 
     items_by_action = {"move": [], "replace": [], "skip": []}
@@ -736,7 +736,7 @@ def format_scan_report(scan: ScanPlan, format: str = "markdown", group_by: str =
             report["search_hint"] = (
                 f"No unconfirmed items match '{search}'. Try a shorter search (just the show name), or check "
                 "whether it was already moved. If the download finished after this scan, run "
-                "'move new downloads scan' again."
+                "'downloads_scan_start' again."
             )
 
     if scan.service_errors:

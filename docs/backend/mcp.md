@@ -49,48 +49,58 @@ Successful tool calls return the standard MCP `result` envelope with `content`
 }
 ```
 
-Errors use the JSON-RPC `error` envelope:
+A tool that fails (bad arguments, scan not found, Jellyfin not configured, …)
+returns a normal result with `isError: true`, so the model sees the message:
+
+```json
+{"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "text": "{\"error\": \"libraryName is required\"}"}], "isError": true}}
+```
+
+Protocol-level failures (unknown method or tool) use the JSON-RPC `error` envelope:
 
 ```json
 {"jsonrpc": "2.0", "id": 2, "error": {"code": -32601, "message": "Tool not found"}}
 ```
 
+The conversion happens in one place: `mcp()` wraps `_mcp_dispatch()` and turns
+any `tools/call` JSON-RPC error except `-32601` into an `isError` result. The
+activity log treats `isError` results as failures (`❌ … reason`).
+
 ## Supported methods
 
 | Method | Behavior |
 | --- | --- |
-| `initialize` | Handshake. Returns `protocolVersion 2024-11-05`, `capabilities.tools`, `serverInfo: {name: JellySort, version}`. |
+| `initialize` | Handshake. Negotiates `protocolVersion`: echoes the client's version when supported (`2025-06-18`, `2025-03-26`, `2024-11-05`), else `2024-11-05`. Returns `capabilities.tools`, `serverInfo: {name: JellySort, version}`. |
 | `notifications/initialized` | Acknowledged with HTTP 204. |
 | `ping` | Health. Returns `result: {}`. |
-| `tools/list` | Returns `tools` (18 tool definitions) plus `llm_instructions` (`RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS`). |
+| `tools/list` | Returns `tools` (16 tool definitions, snake_case names with `title` + `annotations`) plus `llm_instructions` (`RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS`). |
 | `tools/call` | Dispatches the named tool with `arguments`. |
 
 ## Error codes
 
 | Code | Meaning |
 | --- | --- |
-| `-32000` | Server error (e.g. an `HTTPException` raised by a tool). |
-| `-32601` | Method not found / Tool not found. |
-| `-32602` | Invalid params (e.g. missing `scanId`). |
+| `-32601` | Method not found / Tool not found (JSON-RPC error). |
+| `-32000`, `-32602` | Used internally by tool handlers; returned to clients as `isError: true` results, not JSON-RPC errors. |
 
 ## Logging
 
 Every `/mcp` request is logged by the middleware as a compact activity line:
 
-- Success: `✅ tools/call move new downloads scan — 12ms, HTTP 200, from IP`
+- Success: `✅ tools/call downloads_scan_start — 12ms, HTTP 200, from IP`
 - Error: `❌ ... — reason, 12ms, HTTP 200, from IP`
 - Unknown tool: `⚠️ TOOL xxx <name> (not found)` warnings are emitted by the
   dispatch handler (`app/main.py:1909`).
 
 ## Tool call conventions
 
-- Tools that start background work (`move new downloads scan`,
-  `confirm move new downloads scan`) **return immediately** and include
+- Tools that start background work (`downloads_scan_start`,
+  `downloads_scan_confirm`) **return immediately** and include
   `what_happens_now`, `available_now`, `llm_instructions`, and `next` guidance
   in the JSON payload.
 - Progress tools explicitly instruct clients to **wait at least 10 seconds**
   between polls.
-- Read-only tools never move files; `confirm move new downloads scan` and
-  `delete move new downloads scan items` are the only write tools.
+- Read-only tools never move files; `downloads_scan_confirm` and
+  `downloads_scan_delete_items` are the only write tools.
 
 See [mcp-tools.md](mcp-tools.md) for the complete tool reference.

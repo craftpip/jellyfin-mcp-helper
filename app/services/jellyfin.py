@@ -267,6 +267,13 @@ class JellyfinClient:
         ongoing_only: bool = False,
         hours: float | None = None,
     ) -> dict:
+        """Compact list of movies and series, most recently added first.
+
+        Deliberately small: no languages, no per-season data. Use
+        ``get_item_details`` for one item's episodes, files and languages.
+        Series totals come from one library-wide Season query instead of
+        one ``/Shows/{id}/Seasons`` call per series.
+        """
         library = await self._resolve_library(library_name)
         user_id = await self._get_user_id()
 
@@ -276,7 +283,7 @@ class JellyfinClient:
             "ParentId": library["id"],
             "Recursive": "true",
             "IncludeItemTypes": "Series,Movie",
-            "Fields": "ProductionYear,EndDate,Status,MediaStreams,Path,DateCreated",
+            "Fields": "ProductionYear,EndDate,Status,Path,DateCreated",
             "Limit": str(fetch_limit),
             "UserId": user_id,
             "SortBy": "DateCreated",
@@ -295,61 +302,52 @@ class JellyfinClient:
                 if (created := item.get("DateCreated"))
                 and datetime.fromisoformat(created.replace("Z", "+00:00")).astimezone(timezone.utc) >= cutoff
             ]
-        result_items: list[dict] = []
 
+        selected: list[tuple[dict, float]] = []
         for item in items:
             item_type = item.get("Type", "").lower()
-            item_name = item.get("Name", "")
-
+            if item_type not in ("movie", "series"):
+                continue
+            score = 0.0
             if search:
-                score = self._fuzzy_score(search, item_name)
+                score = self._fuzzy_score(search, item.get("Name", ""))
                 if score < 0.3:
                     continue
+            if ongoing_only and (item_type != "series" or not self._is_ongoing_series(item)):
+                continue
+            selected.append((item, score))
 
-            streams = item.get("MediaStreams") or []
+        if search:
+            selected.sort(key=lambda pair: pair[1], reverse=True)
+            selected = selected[:limit]
 
-            if item_type == "movie":
-                entry: dict = {
+        season_totals: dict[str, tuple[int, int]] = {}
+        if any(it.get("Type", "").lower() == "series" for it, _ in selected):
+            try:
+                season_totals = await self._library_season_totals(library["id"], user_id)
+            except Exception as exc:
+                logger.warning("Failed to fetch season totals for library %s: %s", library_name, exc)
+
+        result_items: list[dict] = []
+        for item, _score in selected:
+            item_name = item.get("Name", "")
+            if item.get("Type", "").lower() == "movie":
+                result_items.append({
                     "name": item_name,
                     "type": "movie",
                     "year": item.get("ProductionYear"),
                     "path": item.get("Path") or "",
-                    "audio_languages": sorted(set(s.get("Language") or "und" for s in streams if s.get("Type") == "Audio")),
-                    "subtitle_languages": sorted(set(s.get("Language") or "und" for s in streams if s.get("Type") == "Subtitle")),
-                }
-                if search:
-                    entry["_score"] = score
-                result_items.append(entry)
-            elif item_type == "series":
-                series_id = item.get("Id")
-                ongoing = self._is_ongoing_series(item)
-
-                if ongoing_only and not ongoing:
-                    continue
-
-                seasons_info = {"total_seasons": 0, "total_episodes": 0, "seasons": []}
-                try:
-                    seasons_info = await self._get_series_seasons(series_id, user_id)
-                except Exception as exc:
-                    logger.warning("Failed to fetch seasons for series %s (%s): %s", series_id, item_name, exc)
-
-                entry = {
+                })
+            else:
+                seasons, episodes = season_totals.get(item.get("Id"), (0, 0))
+                result_items.append({
                     "name": item_name,
                     "type": "series",
-                    "ongoing": ongoing,
+                    "ongoing": self._is_ongoing_series(item),
                     "path": item.get("Path") or "",
-                    "season_count": seasons_info["total_seasons"],
-                    "episode_count": seasons_info["total_episodes"],
-                }
-                if search:
-                    entry["_score"] = score
-                result_items.append(entry)
-
-        if search:
-            result_items.sort(key=lambda x: x.get("_score", 0), reverse=True)
-            result_items = result_items[:limit]
-            for r in result_items:
-                r.pop("_score", None)
+                    "season_count": seasons,
+                    "episode_count": episodes,
+                })
 
         return {
             "library_name": library_name,
@@ -359,55 +357,127 @@ class JellyfinClient:
             "items": result_items,
         }
 
-    async def get_series_details(
+    async def _library_season_totals(self, library_id: str, user_id: str) -> dict[str, tuple[int, int]]:
+        """``{series_id: (season_count, episode_count)}`` for a whole library in one call.
+
+        Specials (season 0) and
+        unnumbered seasons are excluded; episode count is the sum of
+        season ``ChildCount``.
+        """
+        data = await self._api_get("/Items", {
+            "ParentId": library_id,
+            "Recursive": "true",
+            "IncludeItemTypes": "Season",
+            "Fields": "ChildCount",
+            "UserId": user_id,
+        })
+        totals: dict[str, tuple[int, int]] = {}
+        for season in data.get("Items", []):
+            series_id = season.get("SeriesId")
+            if not series_id or season.get("IndexNumber") in (None, 0):
+                continue
+            seasons, episodes = totals.get(series_id, (0, 0))
+            totals[series_id] = (seasons + 1, episodes + (season.get("ChildCount") or 0))
+        return totals
+
+    async def get_item_details(
         self,
         library_name: str,
-        series_name: str,
+        name: str,
         season: int | None = None,
     ) -> dict:
-        """Episode-level breakdown for one series (best fuzzy name match).
+        """Detailed view of ONE movie or series (best fuzzy name match).
 
-        Per season: episode numbers present, missing gaps, audio/subtitle
-        languages (and which episodes have which set when they differ).
-        With ``season``, only that season is returned, plus one row per
-        episode with its title and languages.
+        Series: per season the episode numbers present, gaps, aired-but-not-
+        downloaded and upcoming episodes (when Jellyfin has that metadata),
+        audio/subtitle languages and which episodes have which set. With
+        ``season``, only that season plus one row per episode.
+
+        Movie: year, runtime and each file/version with size, container,
+        resolution, video codec, audio tracks and subtitle languages.
         """
         library = await self._resolve_library(library_name)
         user_id = await self._get_user_id()
         data = await self._api_get("/Items", {
             "ParentId": library["id"],
             "Recursive": "true",
-            "IncludeItemTypes": "Series",
-            "Fields": "Path,Status,EndDate",
+            "IncludeItemTypes": "Series,Movie",
+            "Fields": "Path,Status,EndDate,ProductionYear",
             "UserId": user_id,
         })
         scored = sorted(
-            ((self._fuzzy_score(series_name, it.get("Name", "")), it) for it in data.get("Items", [])),
+            ((self._fuzzy_score(name, it.get("Name", "")), it) for it in data.get("Items", [])),
             key=lambda pair: pair[0],
             reverse=True,
         )
         if not scored or scored[0][0] < 0.3:
-            raise ValueError(f"No series matching '{series_name}' in library '{library_name}'")
+            raise ValueError(f"No movie or series matching '{name}' in library '{library_name}'")
         best = scored[0][1]
-        details = await self._get_series_episodes(best["Id"], user_id, episode_detail_season=season)
-        seasons = details["seasons"]
-        if season is not None:
-            seasons = [s for s in seasons if s["season"] == season]
-        result: dict = {
-            "library_name": library_name,
-            "name": best.get("Name", ""),
-            "path": best.get("Path") or "",
-            "ongoing": self._is_ongoing_series(best),
-            "season_count": details["total_seasons"],
-            "episode_count": details["total_episodes"],
-            "seasons": seasons,
-        }
-        if season is not None and not seasons:
-            available = [s["season"] for s in details["seasons"]]
-            result["message"] = f"Season {season} not found; available seasons: {available}"
         others = [it.get("Name", "") for sc, it in scored[1:4] if sc >= 0.5]
+
+        if best.get("Type", "").lower() == "movie":
+            result = await self._movie_details(best, user_id)
+        else:
+            details = await self._get_series_episodes(best["Id"], user_id, episode_detail_season=season)
+            seasons = details["seasons"]
+            if season is not None:
+                seasons = [s for s in seasons if s["season"] == season]
+            result = {
+                "type": "series",
+                "name": best.get("Name", ""),
+                "path": best.get("Path") or "",
+                "ongoing": self._is_ongoing_series(best),
+                "season_count": details["total_seasons"],
+                "episode_count": details["total_episodes"],
+                "seasons": seasons,
+            }
+            if season is not None and not seasons:
+                available = [s["season"] for s in details["seasons"]]
+                result["message"] = f"Season {season} not found; available seasons: {available}"
+        result = {"library_name": library_name, **result}
         if others:
             result["other_matches"] = others
+        return result
+
+    async def _movie_details(self, movie: dict, user_id: str) -> dict:
+        data = await self._api_get("/Items", {
+            "Ids": movie["Id"],
+            "Fields": "MediaSources,Path,ProductionYear",
+            "UserId": user_id,
+        })
+        full = (data.get("Items") or [movie])[0]
+        versions = []
+        for src in full.get("MediaSources") or []:
+            streams = src.get("MediaStreams") or []
+            video = next((s for s in streams if s.get("Type") == "Video"), {})
+            version: dict = {
+                "path": src.get("Path") or "",
+                "size_gb": round((src.get("Size") or 0) / 1024**3, 2),
+                "container": src.get("Container"),
+            }
+            if src.get("Name") and len(full.get("MediaSources") or []) > 1:
+                version["version"] = src["Name"]
+            if video:
+                if video.get("Width") and video.get("Height"):
+                    version["resolution"] = f"{video['Width']}x{video['Height']}"
+                version["video_codec"] = video.get("Codec")
+            version["audio_tracks"] = [
+                s.get("DisplayTitle") or (s.get("Language") or "und")
+                for s in streams if s.get("Type") == "Audio"
+            ]
+            version["audio_languages"] = _stream_languages(streams, "Audio")
+            version["subtitle_languages"] = _stream_languages(streams, "Subtitle")
+            versions.append(version)
+        ticks = full.get("RunTimeTicks") or movie.get("RunTimeTicks")
+        result: dict = {
+            "type": "movie",
+            "name": full.get("Name") or movie.get("Name", ""),
+            "year": full.get("ProductionYear") or movie.get("ProductionYear"),
+            "path": full.get("Path") or movie.get("Path") or "",
+        }
+        if ticks:
+            result["runtime_minutes"] = round(ticks / 600_000_000)
+        result["versions"] = versions
         return result
 
     async def recently_added_items(
@@ -551,36 +621,6 @@ class JellyfinClient:
 
         return parsed_end_date >= datetime.now(UTC)
 
-    async def _get_series_seasons(self, series_id: str, user_id: str) -> dict:
-        params: dict[str, str] = {
-            "UserId": user_id,
-            "Fields": "ChildCount,IndexNumber",
-        }
-        data = await self._api_get(f"/Shows/{series_id}/Seasons", params)
-        seasons = data.get("Items", [])
-
-        season_list: list[dict] = []
-        total_episodes = 0
-
-        for season in seasons:
-            season_number = season.get("IndexNumber")
-            if season_number is None or season_number == 0:
-                continue
-            child_count = season.get("ChildCount", 0) or 0
-            season_list.append({
-                "season": season_number,
-                "episodes": child_count,
-            })
-            total_episodes += child_count
-
-        season_list.sort(key=lambda s: s["season"])
-
-        return {
-            "total_seasons": len(season_list),
-            "total_episodes": total_episodes,
-            "seasons": season_list,
-        }
-
     async def _get_series_episodes(
         self, series_id: str, user_id: str, episode_detail_season: int | None = None
     ) -> dict:
@@ -595,15 +635,31 @@ class JellyfinClient:
         """
         params: dict[str, str] = {
             "UserId": user_id,
-            "Fields": "IndexNumber,ParentIndexNumber,MediaStreams",
-            "IsMissing": "false",
+            "Fields": "IndexNumber,ParentIndexNumber,MediaStreams,PremiereDate",
         }
         data = await self._api_get(f"/Shows/{series_id}/Episodes", params)
 
+        now = datetime.now(UTC)
         seasons: dict[int, list[dict]] = {}
+        # Virtual (metadata-only) episodes: aired but not on disk, or upcoming.
+        # Jellyfin only has these when missing-episode metadata is available.
+        not_downloaded: dict[int, set[int]] = {}
+        upcoming: dict[int, list[dict]] = {}
         for ep in data.get("Items", []):
             season_number = ep.get("ParentIndexNumber")
             if season_number is None:
+                continue
+            if ep.get("LocationType") == "Virtual" or ep.get("IsMissing"):
+                number = ep.get("IndexNumber")
+                if number is None:
+                    continue
+                premiere = _parse_jf_date(ep.get("PremiereDate"))
+                if premiere is not None and premiere > now:
+                    upcoming.setdefault(season_number, []).append(
+                        {"episode": number, "title": ep.get("Name", ""), "air_date": premiere.date().isoformat()}
+                    )
+                else:
+                    not_downloaded.setdefault(season_number, set()).add(number)
                 continue
             streams = ep.get("MediaStreams") or []
             seasons.setdefault(season_number, []).append({
@@ -616,8 +672,8 @@ class JellyfinClient:
 
         season_list: list[dict] = []
         total_episodes = 0
-        for season_number in sorted(seasons):
-            eps = seasons[season_number]
+        for season_number in sorted(set(seasons) | set(not_downloaded) | set(upcoming)):
+            eps = seasons.get(season_number, [])
             numbers: set[int] = set()
             groups: dict[tuple[tuple[str, ...], tuple[str, ...]], set[int]] = {}
             audio_all: set[str] = set()
@@ -644,6 +700,11 @@ class JellyfinClient:
                 missing = sorted(set(range(1, ordered[-1] + 1)) - numbers)
                 if missing:
                     entry["missing_episodes"] = _compact_ranges(missing)
+            aired = sorted(not_downloaded.get(season_number, set()) - numbers)
+            if aired:
+                entry["aired_not_downloaded"] = _compact_ranges(aired)
+            if upcoming.get(season_number):
+                entry["upcoming"] = sorted(upcoming[season_number], key=lambda e: e["episode"])
             if len(groups) > 1:
                 entry["language_groups"] = [
                     {
@@ -698,6 +759,16 @@ class JellyfinClient:
             "episode": episode.get("IndexNumber"),
             "title": episode.get("Name", ""),
         }
+
+
+def _parse_jf_date(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _stream_languages(streams: list[dict], stream_type: str) -> list[str]:

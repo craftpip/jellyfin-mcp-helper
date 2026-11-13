@@ -46,7 +46,7 @@ Full scan used by the scan/plan workflow:
 
 ### `recent_video_files(paths_config, hours, errors) -> list[RecentFile]`
 
-Bounded listing for `get recently added download files`: walks each download
+Bounded listing for `downloads_recent_files`: walks each download
 root's top-level entries (and their children), keeping only video files whose
 mtime is within the last `hours` hours, newest first. Dotfiles, skipped
 directories, and errors handled the same way as `scan_candidates`.

@@ -42,9 +42,7 @@ def test_build_recent_file_items_matches_jellyfin_item_shape() -> None:
     assert movie["name"] == "Good Movie"
     assert movie["year"] == 2026
     assert movie["path"] == "/downloads/Good.Movie.2026.1080p.mkv"
-    assert movie["audio_languages"] == []
-    assert movie["subtitle_languages"] == []
-    assert set(movie.keys()) == {"name", "type", "year", "path", "audio_languages", "subtitle_languages"}
+    assert set(movie.keys()) == {"name", "type", "year", "path"}
 
     series = next(i for i in items if i["type"] == "series")
     assert series["name"] == "Fine Show"

@@ -14,7 +14,7 @@ The `lifespan` async context manager wires up singletons at startup:
 - Web UI — mounted at `/` on this app when `WEB_UI_ENABLED=true`, so UI and MCP
   share the single port `18328` (`create_ui_app(...)` from `app/ui/server.py`).
 - Jellyfin library list — fetched once and cached to augment the
-  `get available jellyfin libraries list` tool description.
+  `jellyfin_libraries` tool description.
 
 The Jellyfin client is **not** an app-level singleton — it is built on demand
 from env settings (`JellyfinClient.from_env()`) inside the tool handlers.

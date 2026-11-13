@@ -14,7 +14,7 @@ uses snake_case while the wire format uses camelCase.
 
 ## ScanRequest
 
-Input for `POST /scans` and `move new downloads scan`.
+Input for `POST /scans` and `downloads_scan_start`.
 
 | Field | Wire alias | Default | Meaning |
 | --- | --- | --- | --- |
