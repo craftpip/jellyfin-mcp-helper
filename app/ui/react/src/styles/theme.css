@@ -218,6 +218,11 @@ input, select, textarea {
 }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--jf-primary); box-shadow: 0 0 0 3px var(--jf-primary-glow); }
 input::placeholder { color: var(--jf-text-faint); }
+/* Native dropdown popups inherit the select's background; transparent
+   selects (e.g. .target-root-select) render as a white popup with light
+   text in Chromium, so give options an explicit solid dark surface. */
+select option, select optgroup { background-color: var(--jf-surface-solid); color: var(--jf-text); }
+select optgroup { color: var(--jf-text-muted); font-style: normal; }
 .field { margin-bottom: 8px; }
 .field label { display: block; margin-bottom: 3px; }
 
