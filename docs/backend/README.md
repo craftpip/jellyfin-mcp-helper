@@ -5,7 +5,7 @@ endpoint, legacy REST endpoints, and hosts the service singletons.
 
 - [Application entrypoint](main.md) — app lifecycle, middleware, wiring.
 - [MCP protocol](mcp.md) — JSON-RPC 2.0 over HTTP, request/response shape.
-- [MCP tools reference](mcp-tools.md) — all 16 tools with inputs and outputs.
+- [MCP tools reference](mcp-tools.md) — all 17 tools with inputs and outputs.
 - [REST API](api.md) — health, scans, runs endpoints.
 - [Auth and admin](auth.md) — MCP API keys, env management, `/api/admin/*`.
 - [Data models](models.md) — the Pydantic schemas.

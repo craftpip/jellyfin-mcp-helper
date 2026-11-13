@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-16 tools are registered in `app/main.py` (`_mcp_tools()`). Tools fall into four
+17 tools are registered in `app/main.py` (`_mcp_tools()`). Tools fall into four
 groups: **Organizer** (scan workflow), **Filesystem/Library browsing**,
 **Jellyfin**, and **Release Tracker**.
 
@@ -128,6 +128,20 @@ Core flow:
 - **Arguments:** none.
 - **Note:** its description is augmented with the cached library list hint when
   available.
+
+### `jellysort_panel_link`
+
+- **Purpose:** the web panel's LAN URL (IP + port) plus `pages.scan`,
+  `pages.history`, `pages.settings` links — for "give me the panel link".
+- **Arguments:** none.
+- **Resolution order** (`_panel_link` in `app/main.py`; the container cannot see
+  the host LAN IP or the published port): `PANEL_PUBLIC_URL` → the `Host`
+  header the MCP client used (ignored when loopback or the internal container
+  port `18327`) → `JELLYFIN_BASE_URL` host + `PANEL_PORT` (default `18328`,
+  returned with a `note` that it is a guess). Fails with `isError` asking for
+  `PANEL_PUBLIC_URL` when none works.
+- **Returns:** `url`, `pages`, `source`, `login_required` (panel password set),
+  `warning` when `WEB_UI_ENABLED=false`.
 
 ### `jellyfin_library_items`
 

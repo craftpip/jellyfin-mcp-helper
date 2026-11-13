@@ -73,7 +73,7 @@ activity log treats `isError` results as failures (`❌ … reason`).
 | `initialize` | Handshake. Negotiates `protocolVersion`: echoes the client's version when supported (`2025-06-18`, `2025-03-26`, `2024-11-05`), else `2024-11-05`. Returns `capabilities.tools`, `serverInfo: {name: JellySort, version}`. |
 | `notifications/initialized` | Acknowledged with HTTP 204. |
 | `ping` | Health. Returns `result: {}`. |
-| `tools/list` | Returns `tools` (16 tool definitions, snake_case names with `title` + `annotations`) plus `llm_instructions` (`RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS`). |
+| `tools/list` | Returns `tools` (17 tool definitions, snake_case names with `title` + `annotations`) plus `llm_instructions` (`RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS`). |
 | `tools/call` | Dispatches the named tool with `arguments`. |
 
 ## Error codes

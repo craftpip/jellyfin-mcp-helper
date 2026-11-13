@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from app.core.auth import MCPUnauthorizedError, require_mcp_auth
-from app.core.config import get_config
+from app.core.config import get_config, get_settings
 from app.core.logging import configure_logging, set_request_id
 from app.core.version import VERSION
 from app.models.schemas import ScanPlan, ScanRequest, SortHint
@@ -726,6 +726,13 @@ def _mcp_tools() -> list[dict[str, object]]:
             },
         },
         {
+            "name": "jellysort_panel_link",
+            "title": "JellySort panel link",
+            "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
+            "description": "Return the JellySort web panel URL on the LAN (IP and port) plus direct links to its Scan, History and Settings pages. Use when the user asks for the panel/UI/dashboard link; give them the url as a clickable link.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
             "name": "jellyfin_library_items",
             "title": "Jellyfin library items",
             "annotations": {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
@@ -926,6 +933,61 @@ def _negotiate_protocol_version(request: dict) -> str:
     return requested if requested in MCP_SUPPORTED_PROTOCOL_VERSIONS else MCP_SUPPORTED_PROTOCOL_VERSIONS[-1]
 
 
+MCP_CONTAINER_PORT = 18327  # port inside the container; never reachable from the LAN
+PANEL_PAGES = {"scan": "/", "history": "/history", "settings": "/settings"}
+
+
+def _is_loopback_host(host: str) -> bool:
+    host = host.strip("[]").lower()
+    return host in ("localhost", "::1", "0.0.0.0") or host.startswith("127.")
+
+
+def _panel_link(http_request: Request | None, settings) -> dict:
+    """Best LAN URL for the web panel.
+
+    Order: PANEL_PUBLIC_URL (explicit) -> the Host the MCP client used, when
+    it is a LAN address on the published port -> JELLYFIN_BASE_URL host +
+    PANEL_PORT (assumes Jellyfin runs on the same machine; flagged a guess).
+    """
+    from urllib.parse import urlsplit
+
+    base, source, exact = "", "", True
+    explicit = (settings.panel_public_url or "").strip().rstrip("/")
+    if explicit:
+        base, source = (explicit if "://" in explicit else f"http://{explicit}"), "PANEL_PUBLIC_URL"
+    elif http_request is not None and (host_header := http_request.headers.get("host")):
+        parsed = urlsplit(f"//{host_header}")
+        if parsed.hostname and not _is_loopback_host(parsed.hostname) and parsed.port != MCP_CONTAINER_PORT:
+            scheme = http_request.headers.get("x-forwarded-proto") or http_request.url.scheme or "http"
+            base, source = f"{scheme}://{host_header}", "MCP request Host header"
+    if not base and settings.jellyfin_base_url:
+        jf = urlsplit(settings.jellyfin_base_url)
+        if jf.hostname and not _is_loopback_host(jf.hostname):
+            base = f"http://{jf.hostname}:{settings.panel_port}"
+            source, exact = "JELLYFIN_BASE_URL host + PANEL_PORT", False
+    if not base:
+        raise ValueError(
+            "Could not determine the panel's LAN address. Set PANEL_PUBLIC_URL in Settings (e.g. http://<lan-ip>:18328)."
+        )
+
+    result: dict = {
+        "url": base + "/",
+        "pages": {name: base + path for name, path in PANEL_PAGES.items()},
+        "source": source,
+        "login_required": bool(settings.ui_panel_password),
+    }
+    if not exact:
+        result["note"] = (
+            "Guessed from the Jellyfin host; set PANEL_PUBLIC_URL in Settings if this is not the machine running JellySort."
+        )
+    if not settings.web_ui_enabled:
+        result["warning"] = "WEB_UI_ENABLED is false, so the panel is not being served."
+    result["next"] = "Give the user the url as a clickable link" + (
+        " and mention the panel asks for its password." if result["login_required"] else "."
+    )
+    return result
+
+
 def _resolve_tool_name(name: object, arguments: dict) -> object:
     """Map an advertised (or legacy) tool name to its internal handler key."""
     if name == "release_tracker_lookup":
@@ -963,8 +1025,8 @@ def _tool_error_result(request_id: object, message: str) -> JSONResponse:
 
 
 @app.post("/mcp", dependencies=[Depends(require_mcp_auth)])
-async def mcp(request: dict) -> Response:
-    response = await _mcp_dispatch(request)
+async def mcp(request: dict, http_request: Request) -> Response:
+    response = await _mcp_dispatch(request, http_request)
     if request.get("method") != "tools/call" or not isinstance(response, JSONResponse):
         return response
     try:
@@ -978,7 +1040,7 @@ async def mcp(request: dict) -> Response:
     return response
 
 
-async def _mcp_dispatch(request: dict) -> Response:
+async def _mcp_dispatch(request: dict, http_request: Request | None = None) -> Response:
     method = request.get("method")
     request_id = request.get("id")
 
@@ -1890,6 +1952,20 @@ async def _mcp_dispatch(request: dict) -> Response:
             except Exception as exc:
                 logger.error("TOOL xxx %s (%s)", name, str(exc), exc_info=True)
                 return _mcp_error_response(request_id, -32000, str(exc))
+
+        if name == "jellysort_panel_link":
+            try:
+                result = _panel_link(http_request, get_settings())
+            except ValueError as exc:
+                return _mcp_error_response(request_id, -32000, str(exc))
+            logger.info("TOOL <<< %s (%s)", name, result["source"])
+            return JSONResponse(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {"content": [{"type": "text", "text": json.dumps(result)}], "isError": False},
+                }
+            )
 
         if name == "release_tracker_update:invalid":
             return _mcp_error_response(request_id, -32602, "action must be 'store' or 'delete'")

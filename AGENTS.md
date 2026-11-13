@@ -668,13 +668,14 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 - **Names** are snake_case (`^[a-zA-Z0-9_-]{1,64}$`). Old spaced names are call-only aliases (`MCP_TOOL_ALIASES`; internal dispatch keys are still the old names). Hint/description text must reference the new names. Release tracker = `release_tracker_lookup` (`seriesName` → one marker, `dueOnly` → due, neither → list) + `release_tracker_update` (`action=store|delete`), routed by `_resolve_tool_name`.
 - **Every tool has `title` + `annotations`** (`readOnlyHint`/`destructiveHint`/`idempotentHint`/`openWorldHint`). Destructive: `downloads_scan_confirm`, `downloads_scan_delete_items`, `release_tracker_update`.
 - **Tool failures are `isError: true` results** (`{"error": msg}` text), converted in one place: `mcp()` wraps `_mcp_dispatch()`; only unknown tool (`-32601`) stays a JSON-RPC error. Handlers may keep using `_mcp_error_response`. The activity log reads `isError` as ❌.
+- **`jellysort_panel_link`** returns the panel LAN URL + Scan/History/Settings links. Resolution: `PANEL_PUBLIC_URL` → MCP request `Host` header (skipped when loopback or the internal port 18327) → `JELLYFIN_BASE_URL` host + `PANEL_PORT` (flagged as a guess). Never hardcode an IP (see the dynamic-domain rule). Tests: `tests/test_mcp_panel_link.py`.
 - `initialize` echoes a supported client `protocolVersion` (`2025-06-18`/`2025-03-26`/`2024-11-05`).
 
-**Verification:** `tests/test_jellyfin_item_details.py` (details, batching, aliases, routing, isError, protocol), `tests/test_mcp_errors.py::test_mcp_tools_list_includes_scan_progress_tool` (names, count 16, annotations).
+**Verification:** `tests/test_jellyfin_item_details.py` (details, batching, aliases, routing, isError, protocol), `tests/test_mcp_errors.py::test_mcp_tools_list_includes_scan_progress_tool` (names, count 17, annotations).
 
 ### Test suite counts
 
-Backend `python3 -m pytest tests/` runs **498 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **112 tests**. Keep both green after changes.
+Backend `python3 -m pytest tests/` runs **509 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **112 tests**. Keep both green after changes.
 
 ### Browse + retarget (smart correction UI)
 

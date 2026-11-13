@@ -84,7 +84,7 @@ def test_mcp_tools_list_includes_scan_progress_tool() -> None:
     # MCP spec name format; legacy spaced names are call-only aliases, not advertised.
     assert all(re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", n) for n in tool_names)
     assert not any(" " in n for n in tool_names)
-    assert len(tool_names) == len(set(tool_names)) == 16
+    assert len(tool_names) == len(set(tool_names)) == 17
     for tool in payload["tools"]:
         ann = tool["annotations"]
         assert set(ann) == {"readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"}

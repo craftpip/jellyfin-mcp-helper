@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     web_ui_enabled: bool = Field(default=False, alias="WEB_UI_ENABLED")
     web_ui_port: int = Field(default=18329, alias="WEB_UI_PORT")
 
+    # Panel link for the 'jellysort_panel_link' MCP tool. The container cannot
+    # see the host's LAN IP or published port, so the tool prefers this
+    # explicit URL, then the MCP request's Host header, then the
+    # JELLYFIN_BASE_URL host + PANEL_PORT as a best guess.
+    panel_public_url: str = Field(default="", alias="PANEL_PUBLIC_URL")
+    panel_port: int = Field(default=18328, alias="PANEL_PORT")
+
     # Web UI panel auth. Empty (default) = direct login, no password prompt.
     ui_panel_password: str = Field(default="", alias="UI_PANEL_PASSWORD")
 

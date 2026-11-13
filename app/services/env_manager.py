@@ -35,6 +35,8 @@ ENV_SPEC: list[dict[str, Any]] = [
     {"key": "ENABLE_INCOMPLETE_DOWNLOAD_DETECTION", "section": "download", "type": "bool", "secret": False, "apply": "live", "description": "Skip downloads that are still in progress by looking for incomplete-file markers on disk."},
 
     # ── Web UI ──
+    {"key": "PANEL_PUBLIC_URL", "section": "web", "type": "str", "secret": False, "apply": "live", "description": "Panel URL the MCP 'jellysort_panel_link' tool returns, e.g. http://192.168.1.10:18328. Empty = auto-detect from the request / Jellyfin host."},
+    {"key": "PANEL_PORT", "section": "web", "type": "int", "secret": False, "apply": "live", "description": "Host port the panel is published on (docker-compose 'ports'), used when auto-detecting the panel link."},
     {"key": "UI_PANEL_PASSWORD", "section": "web", "type": "str", "secret": True, "apply": "live", "description": "Panel login password. Empty = direct login."},
 
     # ── Jellyfin Integration ──
