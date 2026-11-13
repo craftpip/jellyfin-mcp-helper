@@ -647,6 +647,14 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 **Verification:** `python3 -m pytest tests/` (388 backend tests incl. `test_mcp_auth.py`, `test_env_manager.py`, admin endpoint tests in `test_ui_api.py`). Frontend: `npm test` in `app/ui/react` (112 tests).
 
+### Library items stay compact; series detail is a separate tool
+
+**Problem:** `get jellyfin library items` returned only totals per series (`season_count`, `episode_count`), so an LLM could not tell which episodes exist in a season or which languages they have. Adding that to the list tool would bloat every browse/search response.
+
+**Rule:** keep `get jellyfin library items` compact (series keys: `name/type/ongoing/path/season_count/episode_count` only — asserted by `test_library_items_stays_compact`). Detail lives in `get jellyfin series details` (`JellyfinClient.get_series_details` → `_get_series_episodes`, one `/Shows/{id}/Episodes` call with `MediaStreams`): per season `episode_numbers` as ranges (`"1-12, 14"`), `missing_episodes` gaps, `audio_languages`/`subtitle_languages`, `language_groups` only when episodes differ; `season` arg adds a per-episode `episode_list` (number, title, languages). Multi-episode files expand via `IndexNumberEnd`; season 0 is flagged `specials` and excluded from totals.
+
+**Verification:** `tests/test_jellyfin_series_details.py`.
+
 ### Test suite counts
 
 Backend `python3 -m pytest tests/` runs **418 tests** (uses the container: `docker exec jellysort python3 -m pytest`). Frontend `npm test` in `app/ui/react` runs **112 tests**. Keep both green after changes.

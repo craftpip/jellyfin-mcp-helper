@@ -359,6 +359,57 @@ class JellyfinClient:
             "items": result_items,
         }
 
+    async def get_series_details(
+        self,
+        library_name: str,
+        series_name: str,
+        season: int | None = None,
+    ) -> dict:
+        """Episode-level breakdown for one series (best fuzzy name match).
+
+        Per season: episode numbers present, missing gaps, audio/subtitle
+        languages (and which episodes have which set when they differ).
+        With ``season``, only that season is returned, plus one row per
+        episode with its title and languages.
+        """
+        library = await self._resolve_library(library_name)
+        user_id = await self._get_user_id()
+        data = await self._api_get("/Items", {
+            "ParentId": library["id"],
+            "Recursive": "true",
+            "IncludeItemTypes": "Series",
+            "Fields": "Path,Status,EndDate",
+            "UserId": user_id,
+        })
+        scored = sorted(
+            ((self._fuzzy_score(series_name, it.get("Name", "")), it) for it in data.get("Items", [])),
+            key=lambda pair: pair[0],
+            reverse=True,
+        )
+        if not scored or scored[0][0] < 0.3:
+            raise ValueError(f"No series matching '{series_name}' in library '{library_name}'")
+        best = scored[0][1]
+        details = await self._get_series_episodes(best["Id"], user_id, episode_detail_season=season)
+        seasons = details["seasons"]
+        if season is not None:
+            seasons = [s for s in seasons if s["season"] == season]
+        result: dict = {
+            "library_name": library_name,
+            "name": best.get("Name", ""),
+            "path": best.get("Path") or "",
+            "ongoing": self._is_ongoing_series(best),
+            "season_count": details["total_seasons"],
+            "episode_count": details["total_episodes"],
+            "seasons": seasons,
+        }
+        if season is not None and not seasons:
+            available = [s["season"] for s in details["seasons"]]
+            result["message"] = f"Season {season} not found; available seasons: {available}"
+        others = [it.get("Name", "") for sc, it in scored[1:4] if sc >= 0.5]
+        if others:
+            result["other_matches"] = others
+        return result
+
     async def recently_added_items(
         self,
         library_name: str,
@@ -530,6 +581,101 @@ class JellyfinClient:
             "seasons": season_list,
         }
 
+    async def _get_series_episodes(
+        self, series_id: str, user_id: str, episode_detail_season: int | None = None
+    ) -> dict:
+        """Per-season breakdown built from the episodes actually on disk.
+
+        Each season lists its episode numbers (compacted to ranges like
+        ``"1-12, 14"``), the gaps between 1 and the highest episode, and the
+        audio/subtitle languages. When episodes in a season differ in
+        languages, ``language_groups`` says which episodes have which set.
+        ``episode_detail_season`` additionally returns one row per episode
+        (number, title, languages) for that season.
+        """
+        params: dict[str, str] = {
+            "UserId": user_id,
+            "Fields": "IndexNumber,ParentIndexNumber,MediaStreams",
+            "IsMissing": "false",
+        }
+        data = await self._api_get(f"/Shows/{series_id}/Episodes", params)
+
+        seasons: dict[int, list[dict]] = {}
+        for ep in data.get("Items", []):
+            season_number = ep.get("ParentIndexNumber")
+            if season_number is None:
+                continue
+            streams = ep.get("MediaStreams") or []
+            seasons.setdefault(season_number, []).append({
+                "start": ep.get("IndexNumber"),
+                "end": ep.get("IndexNumberEnd"),
+                "title": ep.get("Name", ""),
+                "audio": _stream_languages(streams, "Audio"),
+                "subs": _stream_languages(streams, "Subtitle"),
+            })
+
+        season_list: list[dict] = []
+        total_episodes = 0
+        for season_number in sorted(seasons):
+            eps = seasons[season_number]
+            numbers: set[int] = set()
+            groups: dict[tuple[tuple[str, ...], tuple[str, ...]], set[int]] = {}
+            audio_all: set[str] = set()
+            subs_all: set[str] = set()
+            for ep in eps:
+                audio_all.update(ep["audio"])
+                subs_all.update(ep["subs"])
+                if ep["start"] is None:
+                    continue
+                span = range(ep["start"], max(ep["start"], ep["end"] or ep["start"]) + 1)
+                numbers.update(span)
+                groups.setdefault((tuple(ep["audio"]), tuple(ep["subs"])), set()).update(span)
+
+            ordered = sorted(numbers)
+            count = len(ordered) + sum(1 for ep in eps if ep["start"] is None)
+            entry: dict = {
+                "season": season_number,
+                "episodes": count,
+                "episode_numbers": _compact_ranges(ordered),
+                "audio_languages": sorted(audio_all),
+                "subtitle_languages": sorted(subs_all),
+            }
+            if ordered:
+                missing = sorted(set(range(1, ordered[-1] + 1)) - numbers)
+                if missing:
+                    entry["missing_episodes"] = _compact_ranges(missing)
+            if len(groups) > 1:
+                entry["language_groups"] = [
+                    {
+                        "episodes": _compact_ranges(sorted(nums)),
+                        "audio_languages": list(audio),
+                        "subtitle_languages": list(subs),
+                    }
+                    for (audio, subs), nums in sorted(groups.items(), key=lambda g: min(g[1]))
+                ]
+            if season_number == episode_detail_season:
+                entry["episode_list"] = [
+                    {
+                        "episode": ep["start"],
+                        **({"episode_end": ep["end"]} if ep["end"] and ep["end"] != ep["start"] else {}),
+                        "title": ep["title"],
+                        "audio_languages": ep["audio"],
+                        "subtitle_languages": ep["subs"],
+                    }
+                    for ep in sorted(eps, key=lambda e: (e["start"] is None, e["start"] or 0))
+                ]
+            if season_number == 0:
+                entry["specials"] = True
+            season_list.append(entry)
+            if season_number != 0:
+                total_episodes += count
+
+        return {
+            "total_seasons": sum(1 for s in season_list if s["season"] != 0),
+            "total_episodes": total_episodes,
+            "seasons": season_list,
+        }
+
     async def _get_latest_episode(self, series_id: str, user_id: str) -> dict | None:
         params: dict[str, str] = {
             "UserId": user_id,
@@ -552,3 +698,20 @@ class JellyfinClient:
             "episode": episode.get("IndexNumber"),
             "title": episode.get("Name", ""),
         }
+
+
+def _stream_languages(streams: list[dict], stream_type: str) -> list[str]:
+    return sorted({s.get("Language") or "und" for s in streams if s.get("Type") == stream_type})
+
+
+def _compact_ranges(numbers: list[int]) -> str:
+    """Render sorted ints as ``"1-3, 5, 7-9"``."""
+    parts: list[str] = []
+    i = 0
+    while i < len(numbers):
+        j = i
+        while j + 1 < len(numbers) and numbers[j + 1] == numbers[j] + 1:
+            j += 1
+        parts.append(str(numbers[i]) if i == j else f"{numbers[i]}-{numbers[j]}")
+        i = j + 1
+    return ", ".join(parts)

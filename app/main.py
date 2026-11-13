@@ -623,7 +623,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get jellyfin library items",
-                        "description": "List compact Jellyfin library items for movies and series, sorted by most recently added first (descending DateCreated). This tool is for existence checks, lightweight library browsing, and LLM-friendly summaries. It supports optional fuzzy search (client-side token overlap and similarity scoring handles typos and partial name matches) and optional ongoing-series filtering. For each item, it returns the absolute directory path on disk. For movies, it also returns audio_languages and subtitle_languages arrays listing available language codes from the media streams. For series, it returns total season count, total episode count, and per-season episode counts.",
+                        "description": "List compact Jellyfin library items for movies and series, sorted by most recently added first (descending DateCreated). This tool is for existence checks, lightweight library browsing, and LLM-friendly summaries. It supports optional fuzzy search (client-side token overlap and similarity scoring handles typos and partial name matches) and optional ongoing-series filtering. For each item, it returns the absolute directory path on disk. For movies, it also returns audio_languages and subtitle_languages arrays listing available language codes from the media streams. For series, it returns only the total season count and total episode count — to see which episodes exist in each season, missing episodes, or per-episode audio/subtitle languages, call 'get jellyfin series details' for that show.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -647,6 +647,28 @@ def _mcp_tools() -> list[dict[str, object]]:
                     },
                 },
                 "required": ["libraryName"]
+            },
+        },
+        {
+            "name": "get jellyfin series details",
+            "description": "Detailed episode view of ONE Jellyfin series (best fuzzy name match). Use after 'get jellyfin library items' when you need to know which episodes exist in a season, which are missing, or what audio/subtitle languages are available. Per season it returns episode_numbers as compact ranges (e.g. '1-12, 14'), missing_episodes (gaps between 1 and the highest episode on disk), audio_languages and subtitle_languages, and language_groups when episodes in a season differ (which episodes have which languages). Pass 'season' to get only that season plus an episode_list with each episode's number, title and languages. Season 0 is specials.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "libraryName": {
+                        "type": "string",
+                        "description": "The Jellyfin series library name, for example 'Shows'."
+                    },
+                    "seriesName": {
+                        "type": "string",
+                        "description": "Series name; fuzzy matched (typos and partial names are fine)."
+                    },
+                    "season": {
+                        "type": "integer",
+                        "description": "Optional season number. When set, only that season is returned, with a per-episode list (number, title, audio/subtitle languages)."
+                    },
+                },
+                "required": ["libraryName", "seriesName"]
             },
         },
         {
@@ -1385,6 +1407,47 @@ async def mcp(request: dict) -> JSONResponse:
                                     "text": json.dumps(result),
                                 }
                             ],
+                            "isError": False,
+                        },
+                    }
+                )
+            except Exception as exc:
+                return _mcp_error_response(request_id, -32000, str(exc))
+
+        if name == "get jellyfin series details":
+            library_name = arguments.get("libraryName")
+            series_name = arguments.get("seriesName")
+            if not library_name or not series_name:
+                return _mcp_error_response(request_id, -32602, "libraryName and seriesName are required")
+            season = arguments.get("season")
+            if season is not None:
+                try:
+                    season = int(season)
+                except (TypeError, ValueError):
+                    return _mcp_error_response(request_id, -32602, "season must be an integer")
+
+            client = JellyfinClient.from_env()
+            if not client:
+                return _mcp_error_response(
+                    request_id,
+                    -32000,
+                    "Jellyfin integration is not configured. Set ENABLE_JELLYFIN_INTEGRATION=true and JELLYFIN_API_KEY in .env",
+                )
+            try:
+                result = await client.get_series_details(
+                    library_name=library_name,
+                    series_name=series_name,
+                    season=season,
+                )
+                if season is None:
+                    result["next"] = "Pass 'season' to get a per-episode list (title + audio/subtitle languages) for one season."
+                logger.info("TOOL <<< %s (library=%s, series=%s)", name, library_name, series_name)
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "content": [{"type": "text", "text": json.dumps(result)}],
                             "isError": False,
                         },
                     }
