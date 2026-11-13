@@ -722,7 +722,8 @@ def test_mcp_scan_start_response_instructs_llm_to_use_progress_tool(monkeypatch)
     assert payload["status"] == "running"
     assert "get move new downloads scan progress" in instructions
     assert "get move new downloads scan report" in instructions
-    assert "Do not call the confirm tool" in instructions
+    assert "Do not call the confirm tool before the scan has completed" in instructions
+    assert payload["next"].startswith("Do not ask the user")
 
 
 def test_mcp_confirm_response_uses_source_path_alias(monkeypatch) -> None:

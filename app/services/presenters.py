@@ -325,8 +325,12 @@ def report_next_step(scan: ScanPlan) -> str:
         parts = ["All items done. Run 'move new downloads scan' for a new scan."]
     else:
         parts = [
-            f"{unconfirmed} items pending. Review each item below.",
-            "Check that target paths are correct and roots match the content description before confirming.",
+            f"{unconfirmed} items pending.",
+            "If the user asked to move/organize these downloads, that request IS the approval: sanity-check the "
+            "target paths and roots yourself, fix any wrong target with 'update move new downloads scan', then "
+            "call 'confirm move new downloads scan' right away (use sourcePrefixes or confirmIds to limit it to "
+            "the release the user asked for). Do not ask the user to approve; only ask if a target is genuinely "
+            "ambiguous and none of the candidateTargets fit.",
         ]
 
     next_step = " ".join(parts)
@@ -439,14 +443,21 @@ def format_confirm_progress(scan: ScanPlan) -> dict:
         seconds_per_item = elapsed_seconds / processed
         eta_seconds = seconds_per_item * (total - processed)
 
-    next_step = "Confirm finished. Call 'get move new downloads scan report' to see results."
+    next_step = (
+        "Confirm finished. Jellyfin library scans were triggered automatically for the moved items. "
+        "Tell the user the result (what moved where, and any failures). The task is complete."
+    )
     if scan.confirm_status == "running":
-        next_step = "Confirm is running. Call 'get move new downloads confirm progress' again later."
+        next_step = (
+            "Confirm is running. Do not ask the user. Immediately call 'get move new downloads confirm progress' "
+            "again (it waits up to waitSeconds for the move to finish) and repeat until confirm_status is not running."
+        )
         if scan.confirm_queue_length:
             next_step = (
                 f"Confirm is running. {scan.confirm_queue_length} more confirm(s) "
                 f"({scan.confirm_queue_items} item(s)) are queued and will start "
-                "automatically when the current move finishes."
+                "automatically when the current move finishes. Keep calling "
+                "'get move new downloads confirm progress' until everything is done; do not ask the user."
             )
     elif scan.confirm_status == "idle":
         next_step = "No confirm has been started. Use 'confirm move new downloads scan' first."
@@ -521,9 +532,15 @@ def format_scan_progress(scan: ScanPlan) -> dict:
         seconds_per_item = elapsed_seconds / processed
         eta_seconds = seconds_per_item * (total - processed)
 
-    next_step = "Scan is complete. Call 'get move new downloads scan report' to review planned moves before confirming."
+    next_step = (
+        "Scan is complete. Now call 'get move new downloads scan report' (pass search=<release/show name> to "
+        "fetch only the release the user cares about), then continue to confirm without asking the user."
+    )
     if scan.status == "running":
-        next_step = "Scan is still running. Tell the user and ask if they want to check progress again later."
+        next_step = (
+            "Scan is still running. Do not ask the user. Immediately call 'get move new downloads scan progress' "
+            "again (it waits up to waitSeconds for the scan to finish) and repeat until status is completed."
+        )
     elif scan.status == "cancelled":
         next_step = "Scan was cancelled because a newer scan was started. Check progress for the newer scan."
     elif scan.status == "failed":
@@ -625,7 +642,23 @@ def format_report_grouped(items_by_action: dict[str, list[ScannedItem]]) -> list
     return sorted(grouped.values(), key=lambda g: _group_max_id(g), reverse=True)
 
 
-def format_scan_report(scan: ScanPlan, format: str = "markdown", group_by: str = "sourceFolder") -> dict:
+def _item_matches_search(item, search: str) -> bool:
+    """Case-insensitive token match against an item's name, source and target paths.
+
+    Punctuation is ignored so ``neutral show s01`` matches ``Neutral.Show.S01E01...``.
+    Every search token must appear somewhere in the haystack.
+    """
+    def norm(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", value.lower())
+
+    haystack = norm(" ".join(filter(None, [
+        item.name, item.source_path, item.target_path, item.source_folder, item.container_path,
+    ])))
+    compact = haystack.replace(" ", "")
+    return all(tok in haystack or tok in compact for tok in norm(search).split())
+
+
+def format_scan_report(scan: ScanPlan, format: str = "markdown", group_by: str = "sourceFolder", search: str | None = None) -> dict:
     if scan.status == "running":
         progress = format_scan_progress(scan)
         return {
@@ -636,19 +669,19 @@ def format_scan_report(scan: ScanPlan, format: str = "markdown", group_by: str =
             },
             "progress": progress,
             "llm_instructions": [
-                "Do not review or summarize the full report yet because the scan is still running.",
-                "Tell the user the scan is still running and ask if they want to check progress.",
-                "If the user says yes, call 'get move new downloads scan progress' with this scanId.",
-                "If still running, tell the user and ask if they want to check again later.",
-                "After progress status is completed, call this report tool again to review planned actions.",
-                "Do not confirm/apply anything until the completed report has been reviewed and the user explicitly approves.",
+                "The scan is still running, so there is no report yet. Do not ask the user anything.",
+                "Call 'get move new downloads scan progress' with this scanId (it waits up to waitSeconds); repeat until status is completed.",
+                "Then call this report tool again and continue the workflow.",
             ],
-            "next": "Scan is still running. Tell the user and ask if they want progress.",
+            "next": "Scan is still running. Do not ask the user; keep calling 'get move new downloads scan progress' until it completes.",
         }
 
     items_by_action = {"move": [], "replace": [], "skip": []}
+    search = (search or "").strip()
     for item in scan.items:
         if item.confirmed:
+            continue
+        if search and not _item_matches_search(item, search):
             continue
         if item.action in items_by_action:
             items_by_action[item.action].append(item)
@@ -695,6 +728,16 @@ def format_scan_report(scan: ScanPlan, format: str = "markdown", group_by: str =
         report["groups"] = format_report_grouped(items_by_action)
     else:
         report["report_md"] = format_report_md(items_by_action, movie_roots_info, series_roots_info)
+
+    if search:
+        report["search"] = search
+        report["summary"]["matched"] = sum(len(v) for v in items_by_action.values())
+        if not report["summary"]["matched"]:
+            report["search_hint"] = (
+                f"No unconfirmed items match '{search}'. Try a shorter search (just the show name), or check "
+                "whether it was already moved. If the download finished after this scan, run "
+                "'move new downloads scan' again."
+            )
 
     if scan.service_errors:
         report["service_errors"] = scan.service_errors

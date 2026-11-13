@@ -647,6 +647,17 @@ The scan report still uses the cumulative `scan.counts` (unchanged), so the post
 
 **Verification:** `python3 -m pytest tests/` (388 backend tests incl. `test_mcp_auth.py`, `test_env_manager.py`, admin endpoint tests in `test_ui_api.py`). Frontend: `npm test` in `app/ui/react` (112 tests).
 
+### MCP hints must drive the agent autonomously (never "ask the user")
+
+**Problem:** Agents using the MCP stopped after every tool call ("Want me to check progress?", "Should I confirm?") because the server's own `next`/`llm_instructions` said "Ask the user if they want to check progress. Do not call any tool automatically." They also grepped a huge report to find one release.
+
+**Rule:** A user request to scan/move downloads is the approval for the whole chain: scan → progress → report → confirm → confirm progress → summary. Hints in `app/main.py` (tool handlers, `MCP_SERVER_INSTRUCTIONS` returned from `initialize`) and `app/services/presenters.py` (`format_scan_progress`, `format_confirm_progress`, `format_scan_report`, `report_next_step`) must tell the agent to continue, never to ask. Only ask on genuine ambiguity or before `delete move new downloads scan items`.
+
+- Progress tools take `waitSeconds` (default 30, clamped 0–55; `_wait_while_running` polls once a second and returns as soon as the scan/confirm stops running), so one call is the "sleep 30s and check" step. The agent doesn't need its own sleep tool.
+- Report tool takes `search` (`_item_matches_search`: every token must match name/source/target, case- and punctuation-insensitive, glued spelling allowed) → `summary.matched`, `search_hint` when empty.
+
+**Verification:** `tests/test_mcp_autonomous_workflow.py`.
+
 ### Library items stay compact; series detail is a separate tool
 
 **Problem:** `get jellyfin library items` returned only totals per series (`season_count`, `episode_count`), so an LLM could not tell which episodes exist in a season or which languages they have. Adding that to the list tool would bloat every browse/search response.

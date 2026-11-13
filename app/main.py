@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -69,6 +70,61 @@ RELEASE_TRACKER_LOCAL_FIRST_INSTRUCTIONS = [
     "Only use Jellyfin or an external source when the user explicitly asks for live verification/current availability, or when no stored Release Tracker marker exists.",
     "When answering, clearly label whether the date came from Release Tracker local storage, Jellyfin library state, or an external source.",
 ]
+
+
+MCP_SERVER_INSTRUCTIONS = """JellySort moves finished downloads into the Jellyfin library.
+
+Work autonomously. When the user asks to scan, sort, organize, or move downloads into the library, that request is
+the approval for the whole workflow. Run every step back-to-back without asking "want me to check progress?",
+"should I confirm?", or announcing what you are about to do. Report once, at the end.
+
+Workflow:
+1. 'move new downloads scan' - starts a background scan and returns immediately.
+2. 'get move new downloads scan progress' - this call waits server-side (waitSeconds, default 30) until the scan
+   finishes. If status is still 'running', call it again immediately. Repeat until 'completed'. Never ask the user
+   whether to keep checking. (If your client times out on long tool calls, pass a smaller waitSeconds and sleep
+   ~30 seconds between calls yourself.)
+3. 'get move new downloads scan report' with search=<show or release name> to get only the items the user asked
+   about (the full report can be large). Check targetPath/root for obvious mistakes; fix with
+   'update move new downloads scan' if needed.
+4. 'confirm move new downloads scan' with itemIds = the matching confirmId values (or sourcePrefixes = the release folder) so only
+   the requested release moves. Omit filters only when the user asked to move everything.
+5. 'get move new downloads confirm progress' - waits like step 2; repeat until confirm_status is not 'running'.
+   Jellyfin library scans are triggered automatically after the move; you do not need to trigger one.
+6. Tell the user what moved where, plus any skipped or failed items.
+
+Only stop to ask the user when something is genuinely ambiguous (e.g. a suspect item with no fitting
+candidateTargets, or the requested release is not in the report even after a rescan) or before destructive
+deletes ('delete move new downloads scan items')."""
+
+MCP_PROGRESS_MAX_WAIT_SECONDS = 55
+MCP_PROGRESS_DEFAULT_WAIT_SECONDS = 30
+
+
+def _progress_wait_seconds(arguments: dict) -> float:
+    """Clamp the optional waitSeconds argument for progress tools."""
+    raw = arguments.get("waitSeconds", MCP_PROGRESS_DEFAULT_WAIT_SECONDS)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = MCP_PROGRESS_DEFAULT_WAIT_SECONDS
+    return max(0.0, min(value, MCP_PROGRESS_MAX_WAIT_SECONDS))
+
+
+async def _wait_while_running(get_scan, is_running, wait_seconds: float, interval: float = 1.0):
+    """Poll ``get_scan()`` until ``is_running(scan)`` is false or ``wait_seconds`` elapse.
+
+    Lets the agent do a single "wait ~30s and check" call instead of needing its own sleep tool.
+    """
+    scan = get_scan()
+    deadline = asyncio.get_running_loop().time() + wait_seconds
+    while scan is not None and is_running(scan):
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(interval, remaining))
+        scan = get_scan()
+    return scan
 
 
 def _mcp_request_body(request_body: bytes) -> dict[str, object]:
@@ -335,7 +391,7 @@ def _mcp_tools() -> list[dict[str, object]]:
     return [
         {
             "name": "move new downloads scan",
-            "description": "Start a new background organizer scan of the configured download folders. This tool is read-only: it classifies candidates and prepares a move plan, but it does not move files. By default scans are incremental: only new files not already in the report are added; existing edits (retargets, etc.) are preserved. Use fullRescan to overwrite the report. After calling this tool, use the progress tool until the scan completes, then use the report tool to review planned actions before confirming. IMPORTANT: When polling the progress tool, wait at least 10 seconds between calls. Do not poll more than once per second or the LLM will appear stuck in a loop.",
+            "description": "Start a new background organizer scan of the configured download folders. This tool is read-only: it classifies candidates and prepares a move plan, but it does not move files. By default scans are incremental: only new files not already in the report are added; existing edits (retargets, etc.) are preserved. Use fullRescan to overwrite the report. After calling this tool, without asking the user, call 'get move new downloads scan progress' repeatedly (each call waits up to 30s server-side) until the scan completes, then fetch the report (use search to narrow it) and confirm the requested items.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -435,7 +491,7 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "confirm move new downloads scan",
-            "description": "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. Use it only after the scan report has been reviewed and approved. If you need to redirect items to a different root, call 'update move new downloads scan' first, then fetch the report again, then confirm.",
+            "description": "Apply a completed organizer scan plan. This tool performs write actions: it moves files into the library. A user request to move/organize downloads counts as approval - call this right after checking the report, without asking again. Limit it to the requested release with itemIds (confirmId values) or sourcePrefixes. If you need to redirect items to a different root, call 'update move new downloads scan' first. After calling, poll 'get move new downloads confirm progress' until done; Jellyfin scans are triggered automatically.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -464,39 +520,51 @@ def _mcp_tools() -> list[dict[str, object]]:
         },
         {
             "name": "get move new downloads scan progress",
-            "description": "Check progress for an organizer scan that is currently running or has already finished. Returns status, current file, processed and total counts, elapsed time, and ETA when available. Use this after starting a scan and before asking for the final report. IMPORTANT: Wait at least 10 seconds between calls. Polling faster just wastes turns and the LLM will appear stuck in a loop.",
+            "description": "Check progress for an organizer scan that is currently running or has already finished. Returns status, current file, processed and total counts, elapsed time, and ETA when available. This call waits up to waitSeconds (default 30) for the scan to finish, so call it again immediately while status is 'running' - do not ask the user whether to keep checking. When completed, fetch the report.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
                         "description": "Optional scan_id to check a specific scan. If omitted, the current active scan is used."
+                    },
+                    "waitSeconds": {
+                        "type": "number",
+                        "description": "Seconds to wait server-side for the operation to finish before returning (0-55, default 30). Returns as soon as it is done. Use a smaller value only if your client times out on long tool calls."
                     }
                 }
             },
         },
         {
             "name": "get move new downloads confirm progress",
-            "description": "Check progress for a confirm operation that is currently running or has already finished. Returns confirm status, current file, processed and total counts, elapsed time, and ETA when available. Use this after starting a confirm and before asking for the final report. IMPORTANT: Wait at least 10 seconds between calls. Polling faster just wastes turns.",
+            "description": "Check progress for a confirm operation that is currently running or has already finished. Returns confirm status, current file, processed and total counts, elapsed time, and ETA when available. This call waits up to waitSeconds (default 30) for the move to finish, so call it again immediately while confirm_status is 'running' - do not ask the user whether to keep checking.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
                         "description": "Optional scan_id to check confirm progress for a specific scan. If omitted, the current active scan is used."
+                    },
+                    "waitSeconds": {
+                        "type": "number",
+                        "description": "Seconds to wait server-side for the operation to finish before returning (0-55, default 30). Returns as soon as it is done. Use a smaller value only if your client times out on long tool calls."
                     }
                 }
             },
         },
         {
             "name": "get move new downloads scan report",
-            "description": "Get the final organizer scan report after a scan completes. Returns planned items and actions such as move, replace, or skip. If the scan is still running, this tool returns compact progress guidance instead of a full report. Use format=json to get grouped JSON by source folder instead of markdown.",
+            "description": "Get the final organizer scan report after a scan completes. Returns planned items and actions such as move, replace, or skip. If the scan is still running, this tool returns compact progress guidance instead of a full report. Use format=json to get grouped JSON by source folder instead of markdown. Pass search with the show/release name to return only matching items - the full report can be very large.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "scanId": {
                         "type": "string",
                         "description": "Optional scan_id to fetch a specific scan report. If omitted, the current active scan is used."
+                    },
+                    "search": {
+                        "type": "string",
+                        "description": "Optional filter: only return items whose name, source path, or target path contains every word of this text (case- and punctuation-insensitive), e.g. 'Neutral Show' or 'show name s01'."
                     },
                     "format": {
                         "type": "string",
@@ -844,6 +912,7 @@ async def mcp(request: dict) -> JSONResponse:
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "JellySort", "version": VERSION},
+                    "instructions": MCP_SERVER_INSTRUCTIONS,
                 },
             }
         )
@@ -898,17 +967,16 @@ async def mcp(request: dict) -> JSONResponse:
                     "elapsed time and ETA when enough progress exists",
                 ]
                 instructions = [
-                    "Tell the user the scan has started in the background.",
-                    "Ask the user if they want to check progress. Do not call any tool automatically.",
-                    "If the user says yes, call 'get move new downloads scan progress' with this scanId once.",
-                    "If still running, tell the user and ask if they want to check again later.",
-                    "Only after status='completed', call 'get move new downloads scan report' to review planned moves/replaces/skips.",
-                    "Do not call the confirm tool until the report has been reviewed and the user approves.",
+                    "Do not stop to ask the user anything. Continue the workflow yourself.",
+                    "Call 'get move new downloads scan progress' with this scanId now. It waits up to 30s server-side; if status is still 'running', call it again immediately. Repeat until 'completed'.",
+                    "Then call 'get move new downloads scan report' with search=<the show/release the user asked about>.",
+                    "Then confirm the matching items (the user's request to move them is the approval) and poll 'get move new downloads confirm progress' until done.",
+                    "Do not call the confirm tool before the scan has completed.",
                 ]
                 if _is_cross_drive_transfer():
-                    instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer. Warn the user about this.")
+                    instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer; keep polling progress, and mention it in your final summary.")
                 response["llm_instructions"] = instructions
-                response["next"] = "Tell the user the scan started and ask if they want progress."
+                response["next"] = "Do not ask the user. Call 'get move new downloads scan progress' now and keep calling it until the scan completes."
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -1000,7 +1068,7 @@ async def mcp(request: dict) -> JSONResponse:
                         f"({response.get('queue_items', 0)} item(s) behind the current move) and will "
                         "start automatically when the current move finishes."
                     )
-                    response["tool_purpose"] = "Apply a completed organizer scan plan. This tool performs write actions: it moves files and may stop active downloads before moving them. A move was already running, so this confirm was queued and will start automatically when the current move finishes."
+                    response["tool_purpose"] = "Apply a completed organizer scan plan. This tool performs write actions: it moves files. A move was already running, so this confirm was queued and will start automatically when the current move finishes."
                     response["what_happens_now"] = [
                         "The confirm was added to the queue behind the currently running move.",
                         "It will start automatically when the current move finishes, without further action.",
@@ -1014,17 +1082,15 @@ async def mcp(request: dict) -> JSONResponse:
                         "processed/total counters for the running move",
                     ]
                     instructions = [
-                        "Tell the user the confirm was queued behind the running move and will start automatically when it finishes.",
+                        "The confirm was queued behind the running move and will start automatically when it finishes.",
                         "The user does not need to do anything else — do not call the confirm tool again.",
-                        "Ask the user if they want to check progress. Do not call any tool automatically.",
-                        "If the user says yes, call 'get move new downloads confirm progress' with this scanId once.",
-                        "If still running, tell the user and ask if they want to check again later.",
-                        "After the queued confirm is done, call 'get move new downloads scan report' to see the results.",
+                        "Call 'get move new downloads confirm progress' with this scanId now and keep calling it until confirm_status is not 'running'. Do not ask the user.",
+                        "Then tell the user what was moved.",
                     ]
                     if _is_cross_drive_transfer():
-                        instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer. Warn the user about this.")
+                        instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer; keep polling progress, and mention it in your final summary.")
                     response["llm_instructions"] = instructions
-                    response["next"] = "Tell the user the confirm was queued and will start automatically."
+                    response["next"] = "Confirm was queued and will start automatically. Keep calling 'get move new downloads confirm progress' until it is done; do not ask the user."
                     return JSONResponse(
                         {
                             "jsonrpc": "2.0",
@@ -1054,16 +1120,14 @@ async def mcp(request: dict) -> JSONResponse:
                     "elapsed time and ETA when enough progress exists",
                 ]
                 instructions = [
-                    "Tell the user the confirm has started in the background.",
-                    "Ask the user if they want to check progress. Do not call any tool automatically.",
-                    "If the user says yes, call 'get move new downloads confirm progress' with this scanId once.",
-                    "If still running, tell the user and ask if they want to check again later.",
-                    "After confirm is done, call 'get move new downloads scan report' to see the results.",
+                    "Do not stop to ask the user anything.",
+                    "Call 'get move new downloads confirm progress' with this scanId now. It waits up to 30s server-side; if confirm_status is still 'running', call it again immediately. Repeat until done.",
+                    "Jellyfin library scans are triggered automatically after the move. When done, tell the user what moved where and any failures.",
                 ]
                 if _is_cross_drive_transfer():
-                    instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer. Warn the user about this.")
+                    instructions.insert(0, "This is a cross-drive transfer (downloads and media folders are on different drives). Moving files will take longer; keep polling progress, and mention it in your final summary.")
                 response["llm_instructions"] = instructions
-                response["next"] = "Tell the user the confirm started and ask if they want progress."
+                response["next"] = "Do not ask the user. Call 'get move new downloads confirm progress' now and keep calling it until the move finishes."
                 return JSONResponse(
                     {
                         "jsonrpc": "2.0",
@@ -1085,13 +1149,14 @@ async def mcp(request: dict) -> JSONResponse:
         if name == "get move new downloads scan progress":
             scan_id = arguments.get("scanId")
             try:
-                if scan_id:
-                    scan = manager.get_scan(scan_id)
-                else:
-                    scan = manager.get_current_scan()
+                scan = await _wait_while_running(
+                    (lambda: manager.get_scan(scan_id)) if scan_id else manager.get_current_scan,
+                    lambda sc: sc.status == "running",
+                    _progress_wait_seconds(arguments),
+                )
                 if not scan:
                     logger.info("TOOL <<< %s (no active scan)", name)
-                    payload = {"hint": "No scan found. Ask the user if they want to start a new scan before doing anything."}
+                    payload = {"hint": "No scan found. If the user asked to scan or move downloads, call 'move new downloads scan' now; otherwise ask what they want."}
                 else:
                     payload = _format_scan_progress(scan)
                 return JSONResponse(
@@ -1115,13 +1180,14 @@ async def mcp(request: dict) -> JSONResponse:
         if name == "get move new downloads confirm progress":
             scan_id = arguments.get("scanId")
             try:
-                if scan_id:
-                    scan = manager.get_scan(scan_id)
-                else:
-                    scan = manager.get_current_scan()
+                scan = await _wait_while_running(
+                    (lambda: manager.get_scan(scan_id)) if scan_id else manager.get_current_scan,
+                    lambda sc: sc.confirm_status == "running",
+                    _progress_wait_seconds(arguments),
+                )
                 if not scan:
                     logger.info("TOOL <<< %s (no active scan)", name)
-                    payload = {"hint": "No scan found. Ask the user if they want to start a new scan before doing anything."}
+                    payload = {"hint": "No scan found. If the user asked to scan or move downloads, call 'move new downloads scan' now; otherwise ask what they want."}
                 else:
                     logger.info("TOOL <<< %s", name)
                     payload = _format_confirm_progress(scan)
@@ -1150,6 +1216,8 @@ async def mcp(request: dict) -> JSONResponse:
             if fmt not in ("markdown", "json"):
                 fmt = "markdown"
             group_by = str(arguments.get("groupBy") or "sourceFolder")
+            search = arguments.get("search")
+            search = str(search) if isinstance(search, str) else None
             try:
                 if scan_id:
                     scan = manager.get_scan(scan_id)
@@ -1164,7 +1232,7 @@ async def mcp(request: dict) -> JSONResponse:
                                 "content": [
                                     {
                                         "type": "text",
-                                        "text": json.dumps({"hint": "No scan found. Ask the user if they want to start a new scan before doing anything."}),
+                                        "text": json.dumps({"hint": "No scan found. If the user asked to scan or move downloads, call 'move new downloads scan' now; otherwise ask what they want."}),
                                     }
                                 ],
                                 "isError": False,
@@ -1179,7 +1247,7 @@ async def mcp(request: dict) -> JSONResponse:
                             "content": [
                                 {
                                     "type": "text",
-                                    "text": json.dumps(_format_scan_report(scan, format=fmt, group_by=group_by)),
+                                    "text": json.dumps(_format_scan_report(scan, format=fmt, group_by=group_by, search=search)),
                                 }
                             ],
                             "isError": False,
